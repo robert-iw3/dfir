@@ -1,0 +1,92 @@
+# Boundary controller — the identity-aware session broker into the enclave.
+#
+# Rendered by deploy.sh; do not edit the generated file.
+#
+# The analyst's hop into the enclave is a session: bound to a principal, checked against one named
+# target, auditable. This process decides whether a session may exist. It does not carry one — a
+# separate worker does that, so the component holding the database and the encryption roots is not
+# also the component sitting in the data path.
+#
+# Controller and worker are separate PROCESSES because they are separate here. A combined
+# controller+worker infers the embedded worker's upstream from the cluster listener and rejects any
+# value that is not the cluster address or is unspecified, so a cluster listener reachable across
+# the tier boundary and combined mode cannot both be had.
+disable_mlock = true
+
+controller {
+  name        = "ir-controller"
+  description = "IR platform access controller"
+
+  # What the controller TELLS workers to dial, which is not what the cluster listener binds.
+  # Without it the controller advertises the listener's own address — 0.0.0.0:9201 — and a worker
+  # that has already authenticated adopts it, cannot dial it, and drops back. The result is a
+  # worker that alternates between registered and unreachable every few seconds, with sessions
+  # succeeding or hanging depending on which state it is in when one is authorized.
+  public_cluster_addr = "__BOUNDARY_CONTROLLER__:9201"
+
+  database {
+    # From the environment: this file is written to the working tree and the URL carries the
+    # database password.
+    url = "env://BOUNDARY_POSTGRES_URL"
+  }
+}
+
+# The listener the session client authenticates against, and the one flow whose TLS Boundary
+# leaves to the operator. It carries the analyst's password and the session token; the certificate
+# is pinned by every client (BOUNDARY_CACERT), so there is no CA whose compromise substitutes for
+# holding this key.
+listener "tcp" {
+  address       = "0.0.0.0:9200"
+  purpose       = "api"
+  tls_cert_file = "/boundary/certs/boundary.crt"
+  tls_key_file  = "/boundary/certs/boundary.key"
+  tls_min_version = "tls12"
+}
+
+# Where workers register and hold their control connection.
+#
+# No TLS settings, and none are missing: `cluster` negotiates its own ephemeral, mutually
+# authenticated TLS from the worker-auth key below. `tls_disable` is silently IGNORED on this
+# purpose, so setting it would describe a cleartext channel that does not exist.
+#
+# 0.0.0.0, not loopback: the worker is a separate container and reaches this by name.
+listener "tcp" {
+  address = "0.0.0.0:9201"
+  purpose = "cluster"
+}
+
+# Health only, and bound to loopback on purpose: it is read by this container's own probe through
+# `exec`, never across a network. A listener that no network can reach needs no certificate, and
+# giving it one would mean every health check carried trust material to verify it with.
+listener "tcp" {
+  address     = "127.0.0.1:9203"
+  purpose     = "ops"
+  tls_disable = true
+}
+
+# From the environment. These are Boundary's encryption roots and its no-account provisioning
+# path, so they must not sit in the working tree.
+kms "aead" {
+  purpose   = "root"
+  aead_type = "aes-gcm"
+  key       = "__BOUNDARY_ROOT_KEY__"
+  key_id    = "global_root"
+}
+
+# Shared with the egress worker, which is how that worker authenticates and auto-registers. Both
+# processes are in the enclave, so this key never leaves the trusted tier.
+kms "aead" {
+  purpose   = "worker-auth"
+  aead_type = "aes-gcm"
+  key       = "__BOUNDARY_WORKER_AUTH_KEY__"
+  key_id    = "global_worker-auth"
+}
+
+# Recovery provisions with no account at all. deploy.sh uses it once to create the scope, target
+# and auth method; nothing else should.
+kms "aead" {
+  purpose   = "recovery"
+  aead_type = "aes-gcm"
+  key       = "__BOUNDARY_RECOVERY_KEY__"
+  key_id    = "global_recovery"
+}

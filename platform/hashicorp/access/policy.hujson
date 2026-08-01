@@ -1,0 +1,23 @@
+// Headscale ACL policy for the IR Platform — DENY BY DEFAULT.
+//
+// An analyst workstation may reach the bastion ONLY on the brokered frontend port.
+// There are NO subnet routes in this design, so a workstation can never address an
+// internal host directly (not Postgres, not MinIO, not the API, not Keycloak) — its
+// sole path is the bastion's brokered port below, which lands on the SSO-gated
+// frontend. Operator DB access, when needed, is brokered separately by Boundary.
+{
+  "acls": [
+    {
+      // The SSO-gated platform frontend (Traefik :443), brokered by the bastion.
+      "action": "accept",
+      "src": ["analyst@"],
+      "dst": ["bastion@:8443"]
+    },
+    {
+      // Boundary controller API + proxy — operator/DB access only, still brokered.
+      "action": "accept",
+      "src": ["operator@"],
+      "dst": ["bastion@:9200", "bastion@:9202"]
+    }
+  ]
+}

@@ -1,0 +1,474 @@
+/* Dark theme — single source of truth for the platform's look.
+ *
+ * Near-black with a teal cast. Severity keeps warm hues (amber, red) so it never competes
+ * with the accent for meaning: teal marks where you are and what is interactive, and colour
+ * on a verdict always means severity.
+ */
+:root {
+  /* Deep blue-black base. */
+  --bg: #0d1020;
+  --bg-elev: #141930;
+  --bg-elev-2: #1b2240;
+  --border: #27305a;
+  --border-soft: #1e2544;
+
+  --text: #e6eaf5;
+  --text-dim: #8d97b8;
+
+  /* Teal is primary: where you are, what is interactive, what is confirmed. */
+  --accent: #2dd4bf;
+  --accent-strong: #5eead4;
+  --accent-dim: #0f766e;
+  --accent-wash: rgba(45, 212, 191, 0.10);
+
+  /* Violet is secondary: derived and computed views — correlation, campaign, timeline —
+     so a conclusion the platform inferred never wears the same colour as a fact it
+     collected. */
+  --accent-2: #8b5cf6;
+  --accent-2-strong: #a78bfa;
+  --accent-2-wash: rgba(139, 92, 246, 0.12);
+
+  /* Severity stays warm and is never used for navigation or state. Colour on a verdict
+     always means severity, so it cannot be mistaken for emphasis. */
+  --good: #34d399;
+  --warn: #e0a83a;
+  --bad: #f2635c;
+  --crit: #ff5c78;
+
+  --radius: 12px;
+  --radius-sm: 8px;
+  --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+.app { display: flex; min-height: 100vh; }
+
+.sidebar {
+  width: 230px;
+  background: var(--bg-elev);
+  border-right: 1px solid var(--border-soft);
+  padding: 20px 14px;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+}
+.brand {
+  font-weight: 700;
+  font-size: 16px;
+  letter-spacing: 0.4px;
+  margin-bottom: 4px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.brand .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 12px var(--accent); }
+.brand-sub { color: var(--text-dim); font-size: 11px; margin-bottom: 22px; text-transform: uppercase; letter-spacing: 1px; }
+.nav a {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  border-radius: var(--radius-sm);
+  color: var(--text-dim);
+  margin-bottom: 3px;
+  font-weight: 500;
+  border: 1px solid transparent;
+}
+/* Icons are line art on currentColor, so they take the link's state colour without a
+   second rule per state. */
+.nav a svg { width: 17px; height: 17px; flex: none; stroke: currentColor; }
+.nav a:hover { background: var(--bg-elev-2); color: var(--text); text-decoration: none; }
+.nav a.active {
+  background: var(--accent-wash);
+  border-color: rgba(45, 212, 191, 0.28);
+  color: var(--accent-strong);
+}
+
+.main { flex: 1; padding: 28px 34px; max-width: 1200px; }
+h1 { font-size: 22px; margin: 0 0 4px; }
+h2 { font-size: 16px; margin: 26px 0 12px; color: var(--text); }
+.page-sub { color: var(--text-dim); margin: 0 0 22px; }
+
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 14px; }
+.card {
+  background: linear-gradient(180deg, var(--bg-elev) 0%, var(--bg) 140%);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+  padding: 16px 18px;
+}
+.card .num { font-size: 28px; font-weight: 700; }
+.card .lbl { color: var(--text-dim); font-size: 12px; text-transform: uppercase; letter-spacing: 0.6px; }
+.card.accent .num { color: var(--accent); }
+.card.bad .num { color: var(--bad); }
+.card.good .num { color: var(--good); }
+.card.warn .num { color: var(--warn); }
+
+.panel {
+  background: var(--bg-elev);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+  overflow: hidden;
+  margin-bottom: 20px;
+}
+
+table { width: 100%; border-collapse: collapse; }
+th, td { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--border); }
+th { color: var(--text-dim); font-size: 11px; text-transform: uppercase; letter-spacing: 0.6px; font-weight: 600; }
+tbody tr:hover { background: var(--bg-elev-2); }
+td.mono, .mono { font-family: var(--mono); font-size: 12.5px; }
+
+/* The investigation engine's rationale is prose, several sentences long. It needs to wrap
+   inside its cell rather than force the table wider than the viewport. */
+td.wrap { white-space: pre-wrap; max-width: 46ch; font-size: 12px; line-height: 1.45; }
+/* A control that reads as a link but acts on the page — chain drill-down, panel close. */
+.linkish {
+  background: none; border: 0; padding: 0 0 0 8px; color: var(--accent);
+  font: inherit; cursor: pointer; text-decoration: underline;
+}
+.linkish:hover { color: var(--text); }
+/* Long event lists scroll within their panel instead of growing the page. */
+.panel.scroll-y { max-height: 60vh; overflow-y: auto; }
+
+/* A process verdict and, on the row beneath it, the reasoning behind it. The reasoning is
+   prose of unbounded length, so it gets the full width rather than one column. */
+.verdict-row > td { border-bottom: 0; padding-bottom: 4px; }
+.rationale-row > td { padding-top: 0; padding-left: 14px; }
+.rationale-conclusion {
+  white-space: pre-wrap; font-size: 12.5px; line-height: 1.5; color: var(--text-dim);
+  border-left: 2px solid var(--border); padding-left: 10px; max-width: 110ch;
+}
+.rationale-signals {
+  margin: 8px 0 0; padding-left: 22px; max-height: 340px; overflow-y: auto;
+  font-size: 12px; line-height: 1.5; color: var(--text-dim);
+}
+.rationale-signals li { margin-bottom: 5px; }
+
+/* Says the platform underneath this tab changed. Deliberately not a modal: it must be
+   impossible to miss and equally impossible for it to interrupt what someone is writing. */
+.deploy-banner {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  margin: 0 0 18px; padding: 11px 14px; border-radius: 8px; font-size: 13px;
+  background: rgba(79,156,255,.10); border: 1px solid rgba(79,156,255,.40);
+  color: var(--text);
+}
+.deploy-banner.offline {
+  background: rgba(210,153,34,.10); border-color: rgba(210,153,34,.45);
+}
+.deploy-banner .btn { margin-left: auto; }
+
+/* Recording an entry in the investigation record. The structured fields sit above the
+   body because they are what make the entry findable later, not decoration on it. */
+.entry-form { padding: 14px; display: flex; flex-direction: column; gap: 10px; }
+.entry-row { display: flex; gap: 14px; flex-wrap: wrap; }
+.entry-row label {
+  display: flex; flex-direction: column; gap: 4px;
+  font-size: 11px; text-transform: uppercase; letter-spacing: 0.6px; color: var(--text-dim);
+}
+.entry-form input, .entry-form select, .entry-form textarea {
+  background: var(--bg-elev-2); color: var(--text);
+  border: 1px solid var(--border); border-radius: 6px; padding: 7px 10px;
+  font: inherit; font-size: 13px;
+}
+.entry-form textarea { resize: vertical; font-family: inherit; }
+.entry-form .entry-summary { width: 100%; }
+.entry-form .btn { align-self: flex-start; }
+
+.badge {
+  display: inline-block; padding: 2px 9px; border-radius: 999px;
+  font-size: 11px; font-weight: 600; border: 1px solid transparent;
+}
+.badge.v-true-positive { background: rgba(242,99,92,.15); color: var(--bad); border-color: rgba(242,99,92,.42); }
+.badge.v-likely-true-positive { background: rgba(224,168,58,.15); color: var(--warn); border-color: rgba(224,168,58,.42); }
+.badge.v-indeterminate { background: rgba(141,151,184,.12); color: var(--text-dim); border-color: var(--border); }
+.badge.v-likely-false-positive, .badge.v-false-positive { background: rgba(52,211,153,.12); color: var(--good); border-color: rgba(52,211,153,.35); }
+.sev-high, .sev-critical { color: var(--bad); font-weight: 600; }
+.sev-medium { color: var(--warn); }
+.sev-low { color: var(--text-dim); }
+
+.status-pill { font-size: 11px; padding: 2px 8px; border-radius: 6px; background: var(--bg-elev-2); border: 1px solid var(--border); }
+.status-completed { color: var(--good); }
+.status-running, .status-queued { color: var(--accent); }
+.status-failed { color: var(--bad); }
+.status-PARTIAL { color: var(--warn); }
+
+.pill-synthetic { background: rgba(224,168,58,.15); color: var(--warn); border: 1px solid rgba(224,168,58,.4); font-size: 10px; padding: 1px 7px; border-radius: 6px; }
+
+.btn {
+  background: linear-gradient(135deg, var(--accent-dim) 0%, #12857a 100%);
+  color: #04211e; border: 1px solid rgba(45,212,191,.35); padding: 8px 14px;
+  border-radius: var(--radius-sm); font-weight: 600; cursor: pointer; font-size: 13px;
+}
+.btn:hover {
+  background: linear-gradient(135deg, var(--accent) 0%, var(--accent-strong) 100%);
+  text-decoration: none;
+}
+.btn:disabled { opacity: .45; cursor: default; }
+/* Derived views carry the secondary accent — see the palette note on why. */
+.btn.secondary {
+  background: var(--accent-2-wash); color: var(--accent-2-strong);
+  border-color: rgba(139,92,246,.4);
+}
+.btn.secondary:hover { background: rgba(139,92,246,.22); }
+/* Recessive: sign-out and other actions that should not draw the eye. */
+.btn.ghost {
+  background: var(--bg-elev-2); color: var(--text-dim); border-color: var(--border);
+}
+.btn.ghost:hover { background: var(--border); color: var(--text); }
+
+.search { display: flex; gap: 10px; margin-bottom: 18px; }
+.search input {
+  flex: 1; background: var(--bg-elev); border: 1px solid var(--border);
+  border-radius: 8px; padding: 10px 14px; color: var(--text); font-size: 14px;
+}
+.search input:focus { outline: none; border-color: var(--accent); }
+
+/* Dashboard drill-down facet panels */
+.facet-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 14px; }
+.facet-panel { background: var(--bg-elev); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+.facet-title { padding: 10px 14px; font-size: 12px; text-transform: uppercase; letter-spacing: .6px; color: var(--text-dim); border-bottom: 1px solid var(--border); font-weight: 600; }
+.facet-list { max-height: 260px; overflow-y: auto; }
+.facet-item {
+  display: flex; justify-content: space-between; align-items: center; gap: 8px; width: 100%;
+  background: none; border: none; border-bottom: 1px solid var(--border); color: var(--text);
+  padding: 9px 14px; font-size: 13px; cursor: pointer; text-align: left; font-family: inherit;
+}
+.facet-item:hover { background: var(--bg-elev-2); }
+.facet-item.on { background: var(--accent-dim); color: #fff; }
+.facet-item.on .facet-meta { color: #dbe9ff; }
+.facet-meta { color: var(--text-dim); font-size: 11px; font-family: var(--mono); white-space: nowrap; }
+
+/* Searchable / filterable table controls */
+.table-controls { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
+.table-search {
+  flex: 1; min-width: 220px; background: var(--bg-elev); border: 1px solid var(--border);
+  border-radius: 8px; padding: 9px 13px; color: var(--text); font-size: 13px;
+}
+.table-search:focus { outline: none; border-color: var(--accent); }
+.table-controls select {
+  background: var(--bg-elev); border: 1px solid var(--border); border-radius: 8px;
+  padding: 9px 12px; color: var(--text); font-size: 12.5px; cursor: pointer;
+}
+.table-controls select:focus { outline: none; border-color: var(--accent); }
+.table-count { color: var(--text-dim); font-size: 12px; font-family: var(--mono); }
+.table-clear {
+  background: none; border: 1px solid var(--border); color: var(--text-dim);
+  border-radius: 8px; padding: 8px 12px; font-size: 12px; cursor: pointer;
+}
+.table-clear:hover { color: var(--text); border-color: var(--accent); }
+
+.muted { color: var(--text-dim); }
+.kv { display: grid; grid-template-columns: 160px 1fr; gap: 6px 16px; }
+.kv dt { color: var(--text-dim); }
+.kv dd { margin: 0; }
+.empty { color: var(--text-dim); padding: 26px; text-align: center; }
+.tag { font-family: var(--mono); font-size: 11px; background: var(--bg-elev-2); padding: 1px 6px; border-radius: 5px; margin-right: 4px; }
+
+/* Row highlighted because its host is selected in the attack graph. */
+.row-on td { background: var(--bg-elev-2); }
+
+/* Sortable column headers — a real button so the sort is keyboard reachable. */
+.th-sort {
+  background: none; border: 0; padding: 0; margin: 0; cursor: pointer;
+  color: inherit; font: inherit; letter-spacing: inherit; text-transform: inherit;
+  display: inline-flex; align-items: center; gap: 4px;
+}
+.th-sort:hover { color: var(--text); }
+.th-arrow { color: var(--text-dim); font-size: 10px; }
+.th-sort:focus-visible, .facet-item:focus-visible, .btn:focus-visible,
+.table-search:focus-visible, select:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 2px;
+}
+
+/* Server-side paging controls. */
+.pager {
+  display: flex; align-items: center; gap: 12px;
+  margin-top: 12px; justify-content: flex-end;
+}
+.pager .btn { padding: 6px 14px; }
+.pager .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* Admin operations console: metric rows, bars and health dots. */
+.metric-row {
+  display: flex; align-items: center; gap: 12px; padding: 4px 0;
+}
+.metric-label { flex: 0 0 220px; font-size: 13px; display: flex; align-items: center; gap: 8px; }
+.metric-track {
+  flex: 1; height: 8px; background: var(--bg-elev-2);
+  border-radius: 4px; overflow: hidden; min-width: 60px;
+}
+.metric-fill { height: 100%; background: var(--accent); border-radius: 4px; }
+.metric-value { flex: 0 0 260px; text-align: right; font-size: 12px; color: var(--text-dim); }
+.health-dot {
+  width: 9px; height: 9px; border-radius: 50%; display: inline-block; flex: none;
+}
+@media (max-width: 900px) {
+  .metric-label { flex-basis: 130px; }
+  .metric-value { flex-basis: 130px; }
+}
+
+/* Bulk triage action bar and inline result notice. */
+.bulk-bar {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 10px 14px; margin-bottom: 12px;
+  background: var(--bg-elev-2); border: 1px solid var(--accent-dim);
+  border-radius: var(--radius);
+}
+.notice {
+  padding: 8px 14px; margin-bottom: 12px;
+  background: var(--bg-elev); border-left: 3px solid var(--accent);
+  border-radius: 4px; font-size: 13px;
+}
+
+/* Display preferences: density toggle and time zone, in the sidebar footer. */
+.prefs { display: flex; gap: 6px; margin-bottom: 8px; }
+.pref-btn {
+  flex: 1; padding: 4px 6px; font-size: 11px; cursor: pointer;
+  background: var(--bg-elev-2); color: var(--text-dim);
+  border: 1px solid var(--border); border-radius: 6px;
+}
+.pref-btn[aria-pressed="true"] { color: var(--text); border-color: var(--accent-dim); }
+.pref-btn:hover { color: var(--text); }
+
+/* Compact density: more rows on screen for triage scanning. */
+:root[data-density="compact"] td,
+:root[data-density="compact"] th { padding-top: 4px; padding-bottom: 4px; }
+:root[data-density="compact"] .card { padding: 10px 12px; }
+:root[data-density="compact"] .num { font-size: 22px; }
+:root[data-density="compact"] body { font-size: 13px; }
+
+/* Below kiosk width the fixed sidebar would squeeze the tables out of view. */
+@media (max-width: 860px) {
+  .app { flex-direction: column; }
+  .sidebar {
+    width: auto; border-right: 0; border-bottom: 1px solid var(--border);
+    padding: 12px 14px;
+  }
+  .sidebar .nav { display: flex; flex-wrap: wrap; gap: 6px; }
+  .sidebar > div[style] { position: static !important; margin-top: 10px; }
+  .main { padding: 16px; }
+  .table-controls { flex-wrap: wrap; }
+}
+
+/* Wide tables scroll inside their panel rather than the page. */
+.panel { overflow-x: auto; }
+
+/* --- Component Health -------------------------------------------------------
+   Capacity and resource reporting. Colour carries severity, but never alone: every
+   state is also stated in words, so the page reads the same to an operator who
+   cannot distinguish the hues. */
+.ch-page .ch-summary { border-radius: 8px; padding: 1rem 1.25rem; margin: 1rem 0 1.5rem; }
+.ch-page .ch-summary.ch-ok { border: 1px solid var(--accent, #2fbf8f); }
+.ch-page .ch-summary.ch-warning { border: 1px solid #d8a13a; }
+.ch-page .ch-summary.ch-critical { border: 1px solid #d85a5a; }
+.ch-page .ch-summary h3 { margin: 0 0 .6rem; font-size: 1rem; }
+
+.ch-alerts { list-style: none; margin: 0; padding: 0; display: grid; gap: .5rem; }
+.ch-alert { display: flex; flex-wrap: wrap; align-items: baseline; gap: .5rem;
+            padding: .45rem .6rem; border-radius: 6px; background: rgba(255,255,255,.03); }
+.ch-alert-level { text-transform: uppercase; font-size: .68rem; letter-spacing: .06em;
+                  padding: .1rem .4rem; border-radius: 3px; font-weight: 600; }
+.ch-alert.ch-warning .ch-alert-level { background: #d8a13a; color: #1a1a1a; }
+.ch-alert.ch-critical .ch-alert-level { background: #d85a5a; color: #fff; }
+.ch-alert-component { font-size: .8rem; opacity: .85; }
+.ch-alert-message { flex: 1 1 20rem; }
+.ch-alert-action { flex-basis: 100%; font-size: .85rem; opacity: .75; }
+
+.ch-grid { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(22rem, 1fr)); }
+.ch-card { border: 1px solid var(--border, #2a2f3a); border-radius: 8px; padding: 1rem; }
+.ch-card-stale { opacity: .72; border-style: dashed; }
+.ch-card-head { display: flex; justify-content: space-between; align-items: flex-start;
+                gap: 1rem; margin-bottom: .75rem; }
+.ch-card-head h3 { margin: 0; font-size: .95rem; }
+.ch-tier { font-size: .7rem; text-transform: uppercase; letter-spacing: .06em; opacity: .6; }
+.ch-reported { text-align: right; font-size: .78rem; display: grid; gap: .25rem; }
+.ch-stale-badge { background: #d8a13a; color: #1a1a1a; border-radius: 3px; padding: .1rem .4rem;
+                  font-size: .68rem; text-transform: uppercase; font-weight: 600; justify-self: end; }
+.ch-stale-note { font-size: .82rem; opacity: .8; margin: 0 0 .75rem; }
+
+.ch-metrics { display: grid; gap: 1rem; }
+/* Each group leads with its worst-case bar, then the detail lines beneath. The bar is the
+   scan target; the numbers are for once something has caught the eye. */
+.ch-group-head { display: flex; align-items: center; gap: .75rem; margin: 0 0 .4rem;
+                 padding-bottom: .3rem; border-bottom: 1px solid rgba(255,255,255,.06); }
+.ch-metric-group h4 { margin: 0; font-size: .72rem; text-transform: uppercase;
+                      letter-spacing: .07em; opacity: .6; font-weight: 600;
+                      flex: 0 0 auto; white-space: nowrap; }
+.ch-group-summary { margin-left: auto; font-size: .74rem; opacity: .6; }
+/* One line per metric, and it must stay one line. The label is the only part allowed to
+   give way: a wrapped value drops underneath and collides with the bar's percentage. */
+.ch-metric { display: flex; align-items: baseline; gap: .6rem; padding: .12rem 0 .12rem .1rem;
+             font-size: .82rem; flex-wrap: nowrap; }
+.ch-metric-label { flex: 0 1 auto; min-width: 4rem; opacity: .72; font-size: .78rem;
+                   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 11rem; }
+.ch-metric-value { margin-left: auto; font-size: .82rem; white-space: nowrap; flex: 0 0 auto; }
+.ch-warning-text { color: #e0b062; }
+
+/* Track and figure sit side by side. A percentage centred over the fill is illegible at
+   exactly the values that matter, because the fill edge crosses the text mid-range. */
+.ch-bar-wrap { display: flex; align-items: center; gap: .5rem; flex: 1 1 auto;
+               margin-left: auto; max-width: 11rem; }
+.ch-bar { flex: 1 1 auto; height: .7rem; min-width: 3rem; border-radius: 3px;
+          background: rgba(255,255,255,.07); overflow: hidden; display: block; }
+.ch-bar-fill { display: block; height: 100%; border-radius: 3px 0 0 3px; }
+.ch-bar-fill.ch-ok { background: var(--accent, #2fbf8f); }
+.ch-bar-fill.ch-warning { background: #d8a13a; }
+.ch-bar-fill.ch-critical { background: #d85a5a; }
+.ch-bar-pct { flex: 0 0 auto; min-width: 2.9rem; text-align: right; font-size: .74rem;
+              opacity: .85; }
+
+.ch-last-error { font-size: .75rem; opacity: .75; margin: .35rem 0 0; word-break: break-word; }
+.ch-declarations { margin: 0 0 1.5rem; }
+.ch-declarations h3 { margin: 0 0 .35rem; font-size: 1rem; }
+.ch-table { width: 100%; border-collapse: collapse; margin-top: .6rem; font-size: .85rem; }
+.ch-table th, .ch-table td { text-align: left; padding: .35rem .6rem;
+                             border-bottom: 1px solid var(--border, #2a2f3a); }
+.ch-table th { font-size: .7rem; text-transform: uppercase; letter-spacing: .06em; opacity: .6; }
+
+/* ---------------------------------------------------------------------------
+   Service mesh authorization matrix.
+
+   Colour carries the same meaning as everywhere else in the platform (good /
+   warn / bad), and the glyph carries it again — a matrix read by someone who
+   cannot distinguish red from green must still be readable, and this one states
+   who can reach the evidence.
+   --------------------------------------------------------------------------- */
+.mesh-matrix th { font-weight: 500; font-size: 12px; color: var(--muted); }
+.mesh-matrix .mesh-col {
+  /* Vertical headings keep the grid square at seven-plus services; horizontal
+     ones force a column as wide as the longest service name. */
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+  white-space: nowrap;
+  padding: 6px 2px;
+  font-family: var(--mono, monospace);
+}
+.mesh-cell {
+  text-align: center;
+  font-weight: 700;
+  width: 34px;
+  padding: 6px 0;
+}
+.mesh-allow   { color: var(--good); background: color-mix(in srgb, var(--good) 12%, transparent); }
+.mesh-deny    { color: var(--bad);  background: color-mix(in srgb, var(--bad) 12%, transparent); }
+.mesh-default { color: var(--muted); }
+.mesh-self    { color: var(--muted); opacity: 0.4; }
+.mesh-key {
+  display: inline-block;
+  padding: 0 5px;
+  border-radius: 3px;
+  font-weight: 700;
+}

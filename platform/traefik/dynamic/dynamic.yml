@@ -1,0 +1,29 @@
+# Traefik dynamic config — routes HTTPS to the React SPA (which itself proxies /api,
+# /admin, /static to the backend). This is the single ingress for the web UI.
+#
+# Plain TLS ingress, no SSO. The SSO-gated variant is traefik/dynamic-sso/.
+http:
+  routers:
+    ir-web:
+      rule: "PathPrefix(`/`)"
+      entryPoints:
+        - websecure
+      service: ir-frontend
+      tls: {}
+
+  services:
+    ir-frontend:
+      loadBalancer:
+        servers:
+          - url: "http://frontend:8080"
+
+
+tls:
+  stores:
+    default:
+      defaultCertificate:
+        certFile: /certs/ir-platform.crt
+        keyFile: /certs/ir-platform.key
+  certificates:
+    - certFile: /certs/ir-platform.crt
+      keyFile: /certs/ir-platform.key

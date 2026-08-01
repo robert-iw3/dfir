@@ -1,0 +1,39 @@
+# DMZ administrative access — opened on demand, closed when the task is done.
+#
+# Not part of the deployment. `admin/adminctl.sh up dmz` starts it; management interfaces
+# are unreachable at every other moment.
+#
+# This container joins the DMZ networks ONLY. It has no membership in the enclave network,
+# so it cannot reach an enclave service regardless of what is listed below — an admin
+# working on the DMZ cannot pivot inward from here, which is the same containment the
+# evidence path relies on.
+services:
+  adminfwd:
+    # Carries socat already: these tiers have no internet gateway to install it from.
+    image: docker.io/alpine/socat:latest
+    container_name: ir-dmz_adminfwd_1
+    environment:
+      ADMIN_TIER: dmz
+      # Resolved by admin/adminctl.sh to each container's address on this tier's
+      # network, so a target that is not on that network simply has no forwarder.
+      # Covers: evidence receiver, headscale control.
+      ADMIN_TARGETS: "${ADMIN_TARGETS}"
+      ADMIN_TTL: "${ADMIN_TTL:-}"
+    volumes:
+      - ../../admin/adminfwd.sh:/adminfwd.sh:ro,z
+    entrypoint: ["sh"]
+    command: ["/adminfwd.sh"]
+    # Bound to the management address, never every interface.
+    ports:
+      - "${IR_MGMT_BIND:-127.0.0.1}:18090:18090"   # evidence receiver health/queue
+      - "${IR_MGMT_BIND:-127.0.0.1}:18081:18081"   # headscale control
+    # `edge` only. dmzlink is the DMZ↔enclave link and carries enclave services
+    # (traefik, keycloak) — joining it would give an admin working on the DMZ reach into
+    # the enclave, which is the pivot this split exists to prevent. Every DMZ target below
+    # is reachable on edge.
+    networks: [edge]
+
+networks:
+  edge:
+    external: true
+    name: ir-edge

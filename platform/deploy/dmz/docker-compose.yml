@@ -1,0 +1,180 @@
+# ===========================================================================
+# TIER: DMZ — deploys to its own hardware, separate from the enclave.
+#
+# Everything untrusted parties touch lives here and NOTHING here holds internal
+# credentials or has a route into the enclave:
+#   * ir-ingest RECEIVER — the only thing a (possibly compromised) endpoint can reach
+#   * bastion broker     — a Boundary session client; one target, the enclave's SSO ingress
+#   * headscale          — tailnet control plane, deny-by-default allow-list
+#   * CoreDNS            — answers one name, REFUSES everything else (no DNS exfil)
+#
+#   podman-compose -p ir-dmz --env-file ../.env -f docker-compose.yml up -d
+# ===========================================================================
+networks:
+  # Faces untrusted parties: endpoints shipping evidence, analyst workstations.
+  # No gateway — nothing on this side may reach the internet through us.
+  edge:
+    external: true
+    name: ir-edge
+  # Faces the enclave hardware. In a real deployment this is the routed link between
+  # the DMZ and enclave segments, firewalled to the flows in NETWORKING.md.
+  dmzlink:
+    external: true
+    name: ir-dmzlink
+
+services:
+  # Untrusted-facing evidence receiver. Verifies custody, holds opaque blobs for the
+  # enclave to pull. Deliberately NOT on any enclave-bound network.
+  receiver:
+    build:
+      context: ../..
+      dockerfile: dmz/Dockerfile.receiver
+    image: localhost/ir-receiver:latest
+    env_file: ../.env
+    environment:
+      RECEIVER_HOLDING: /holding
+      # Evidence is a memory image: the host's credentials, keys and open files. The receiver
+      # refuses to start without these, because a receiver that quietly falls back to plaintext
+      # produces collections that look successful while the host's memory crossed the wire in
+      # the clear — and nobody finds out until it no longer matters.
+      RECEIVER_TLS_CERT: /certs/receiver.crt
+      RECEIVER_TLS_KEY: /certs/receiver.key
+    volumes:
+      - ../../dmz/certs:/certs:ro,z
+      - receiver-holding:/holding
+      # Symbol bundles are held apart from evidence: different origin, different checks.
+      - receiver-isf:/holding-isf
+    networks: [edge, dmzlink]
+    ports:
+      - "${RECEIVER_PORT}:8090"
+
+  # The bastion's tailnet node. This is the WireGuard endpoint an analyst workstation
+  # connects to, and the only member of the tailnet on this side.
+  #
+  # A real tun device, not userspace networking: the tunnel has to be a network interface
+  # for the broker to bind to it, and for "the workstation cannot address an internal host"
+  # to be a routing fact rather than a claim. /dev/net/tun is world-writable on the host, so
+  # a rootless container can open it; NET_ADMIN is scoped to this container's own namespace
+  # and lets it create wg/tun inside that namespace only.
+  #
+  # It dials the control plane at HEADSCALE_ADDR, which is a NAME: the DMZ resolver forwards
+  # in-zone lookups to the runtime, so `headscale` resolves to wherever that container is now
+  # and survives a network recreate.
+  #
+  # It advertises no routes. There is deliberately no `--advertise-routes` here: subnet
+  # routes are exactly what would let a workstation reach Postgres or MinIO directly, and
+  # their absence is what makes the ACL's deny-by-default meaningful.
+  bastion:
+    image: docker.io/tailscale/tailscale:v1.98.10
+    hostname: bastion
+    dns: ["${DNS_EDGE_IP}"]          # the DMZ resolver is the ONLY resolver
+    dns_search: ["${RUNTIME_DNS_ZONE}"]
+    volumes:
+      - ../../hashicorp/access/certs/headscale.crt:/certs/headscale.crt:ro,z
+      - bastion-state:/var/lib/tailscale
+    environment:
+      # tailscaled is Go, and Go's TLS honors SSL_CERT_FILE. Pointing it at the control plane's
+      # certificate REPLACES the system trust pool for this process, so it will verify headscale
+      # and nothing else — which is the whole of what it should ever connect to.
+      SSL_CERT_FILE: /certs/headscale.crt
+      TS_AUTHKEY: "${TS_BASTION_AUTHKEY:-}"
+      TS_EXTRA_ARGS: "--login-server=${HEADSCALE_LOGIN_URL} --hostname=bastion --accept-routes=false"
+      TS_STATE_DIR: /var/lib/tailscale
+      TS_USERSPACE: "false"
+      # magic_dns is off on this tailnet, so there is nothing for tailscaled to
+      # publish — and letting it manage /etc/resolv.conf breaks resolution for
+      # every container sharing this namespace, the broker included.
+      TS_ACCEPT_DNS: "false"
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    cap_add: [NET_ADMIN, NET_RAW]
+    networks:
+      # The broker shares this namespace, so the analyst-facing address and name belong to
+      # the bastion now. Both paths then land on the same session listener: over the tunnel
+      # via the tailnet interface, or over the edge network by name for a workstation not
+      # yet enrolled. The tunnel is the intended route; this keeps enrollment from being a
+      # chicken-and-egg problem.
+      edge:
+        # The analyst-facing name resolves HERE, never to an internal host. No pinned address:
+        # the DMZ resolver rewrites the platform name to `bastion` and the runtime answers with
+        # wherever this container currently is.
+        aliases: [ir-platform.local]
+      dmzlink:
+
+  # The analyst's route into the enclave: a Boundary session held open on the brokered port.
+  #
+  # This is the whole of the DMZ's part in brokered access — a CLIENT. No worker runs here: a
+  # worker has to reach the target, and giving a DMZ container a route onto the enclave's internal
+  # network is the reach this tier split exists to deny. The egress worker sits in the enclave
+  # instead, and this dials it across the link.
+  #
+  # Shares the bastion's network namespace, so the listener binds the tailnet interface — the
+  # analyst reaches it over WireGuard and by no other path. The bastion has no route to the
+  # enclave's internal network; the session does.
+  #
+  # Holds no key material beyond the analyst credential it authenticates with. The controller,
+  # the database, the grants and the encryption roots are all in the enclave.
+  broker:
+    image: docker.io/hashicorp/boundary:0.21.3
+    network_mode: "service:bastion"
+    depends_on: [bastion]
+    environment:
+      # https, and pinned: this carries the analyst's password and the session token across the
+      # one link that leaves this tier. The script refuses a plaintext address outright.
+      BOUNDARY_ADDR: https://${BOUNDARY_HOST:-boundary}:9200   # controller, in the enclave
+      BOUNDARY_CACERT: /boundary/certs/boundary.crt
+      BOUNDARY_TARGET_ID: ${BOUNDARY_TARGET_ID:-}
+      BOUNDARY_AUTH_METHOD_ID: ${BOUNDARY_AUTH_METHOD_ID:-}
+      # Scopes the startup reap of this principal's abandoned sessions.
+      BOUNDARY_PROJECT_ID: ${BOUNDARY_PROJECT_ID:-}
+      BOUNDARY_ANALYST_LOGIN: ${BOUNDARY_ANALYST_LOGIN:-analyst}
+      BOUNDARY_ANALYST_PASSWORD: ${BOUNDARY_ANALYST_PASSWORD}
+      BROKER_LISTEN: ${BROKER_LISTEN}
+    volumes:
+      - ../../hashicorp/access/boundary_session.sh:/session.sh:ro,z
+      # The certificate only. The key stays in the enclave, on the controller.
+      - ../../hashicorp/access/certs/boundary.crt:/boundary/certs/boundary.crt:ro,z
+    entrypoint: ["/bin/sh", "/session.sh"]
+
+  headscale:
+    image: docker.io/headscale/headscale:v0.29.3
+    command: serve
+    volumes:
+      - ../../hashicorp/access/headscale.yaml:/etc/headscale/config.yaml:ro,z
+      # Serves the control-plane API and the embedded DERP relay. Tailscale refuses to use a
+      # relay that is not TLS, and says nothing when it declines — the node reports itself
+      # connected while having no fallback path at all.
+      - ../../hashicorp/access/certs:/etc/headscale/certs:ro,z
+      - ../../hashicorp/access/policy.hujson:/etc/headscale/policy.hujson:ro,z
+      - headscale-data:/var/lib/headscale
+    # Published, because analyst workstations are separate MACHINES. A workstation on its own
+    # laptop cannot join this host's container network and cannot address a container IP — it
+    # reaches the control plane at the DMZ's routable address, which is what HEADSCALE_ADDR
+    # carries. 3478/udp is STUN, used for the direct path; without it nodes fall back to
+    # relaying every packet.
+    ports:
+      - "${HEADSCALE_PORT}:8080"
+      - "${HEADSCALE_STUN_PORT}:3478/udp"
+    networks:
+      # On the edge network for the nodes that run beside it, and on dmzlink so the resolver
+      # and receiver share a segment. Addressed by name — `headscale` — which is what
+      # HEADSCALE_ADDR carries; off-host nodes use the published port instead.
+      edge:
+      dmzlink:
+
+  # The analyst side's ONLY resolver: one name answered, everything else REFUSED.
+  coredns:
+    image: docker.io/coredns/coredns:1.14.6
+    command: ["-conf", "/etc/coredns/Corefile"]
+    user: "0:0"
+    volumes:
+      - ../../hashicorp/access/Corefile:/etc/coredns/Corefile:ro,z
+    networks:
+      edge:
+        ipv4_address: ${DNS_EDGE_IP}
+
+volumes:
+  receiver-holding:
+  receiver-isf:
+  headscale-data:
+  bastion-state:

@@ -1,0 +1,155 @@
+<svg width="1400" height="900" viewBox="0 0 1400 900" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Helvetica,Arial,sans-serif">
+  <defs>
+    <marker id="e-n" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#8A8F98"/>
+    </marker>
+  </defs>
+  <style>
+    .card  { fill: #1F1F26; stroke-width: 1.6; rx: 10; }
+    .box   { fill: #26262E; stroke: #3F3F46; stroke-width: 1; rx: 6; }
+    .hT    { font-size: 15px; font-weight: 700; }
+    .hS    { font-size: 10.5px; fill: #A1A1AA; }
+    .rT    { font-size: 11.5px; font-weight: 600; fill: #F4F4F5; }
+    .rS    { font-size: 10px; fill: #A1A1AA; }
+    .prf   { font-size: 10.5px; font-weight: 700; }
+    .flowT { font-size: 11px; fill: #C9C9D1; }
+    .en    { stroke: #8A8F98; stroke-width: 1.3; fill: none; marker-end: url(#e-n); }
+  </style>
+
+  <rect x="0" y="0" width="1400" height="900" fill="#16161B"/>
+  <text x="20" y="30" font-size="18" font-weight="700" fill="#F4F4F5">IR Platform — the HashiCorp zero-trust layer, implemented</text>
+  <text x="20" y="49" font-size="11.5" fill="#A1A1AA">Four products, four controls, one composed path. Each card states what the product enforces in this deployment and the UAT that proves it. The component wiring is in architecture.svg; the generated structure is CODE_GRAPH.md.</text>
+
+  <!-- ============ Boundary ============ -->
+  <rect class="card" x="20" y="70" width="670" height="330" stroke="#1DAEFF"/>
+  <text class="hT" x="36" y="98" fill="#1DAEFF">Boundary — session-aware ingress</text>
+  <text class="hS" x="36" y="114">the analyst hop is an authenticated, authorized, auditable session — not a forwarder</text>
+
+  <rect class="box" x="36" y="126" width="305" height="76"/>
+  <text class="rT" x="48" y="144">Authority in the enclave</text>
+  <text class="rS" x="48" y="159">controller · database · grants · encryption roots</text>
+  <text class="rS" x="48" y="172">recovery key never leaves the tier · the DMZ runs</text>
+  <text class="rS" x="48" y="185">a session CLIENT and holds no authority</text>
+
+  <rect class="box" x="357" y="126" width="317" height="76"/>
+  <text class="rT" x="369" y="144">One target</text>
+  <text class="rS" x="369" y="159">the SSO gate, per session, per principal — every</text>
+  <text class="rS" x="369" y="172">other service has no target and no route · egress</text>
+  <text class="rS" x="369" y="185">worker in the enclave is the only DMZ-facing proxy</text>
+
+  <rect class="box" x="36" y="214" width="305" height="82"/>
+  <text class="rT" x="48" y="232">Supervised session</text>
+  <text class="rS" x="48" y="247">controller rebuilt, worker recreated, expiry, proxy</text>
+  <text class="rS" x="48" y="260">error — the client re-authenticates and re-establishes</text>
+  <text class="rS" x="48" y="273">unattended; a canceled session is replaced by a</text>
+  <text class="rS" x="48" y="286">NEW authorized one, never a lingering socket</text>
+
+  <rect class="box" x="357" y="214" width="317" height="82"/>
+  <text class="rT" x="369" y="232">Truthful access record</text>
+  <text class="rS" x="369" y="247">Brokered Sessions page = who, from where, to what,</text>
+  <text class="rS" x="369" y="260">how long, how much, why ended · abandoned sessions</text>
+  <text class="rS" x="369" y="273">are canceled, so "active" means active · the page's</text>
+  <text class="rS" x="369" y="286">credential can list and read — a cancel is REFUSED</text>
+
+  <text class="prf" x="36" y="322" fill="#1DAEFF">PROVEN: test/uat_boundary.sh — placement · no authority in the DMZ · one target · attribution ·</text>
+  <text class="prf" x="36" y="337" fill="#1DAEFF">traffic end to end · healing · the record matches the controller's own, read via a second authority</text>
+  <text class="rS" x="36" y="362">tailnet transport: headscale below · session data path: Boundary per-session mutual TLS</text>
+  <text class="rS" x="36" y="377">browser symptom of the down window is PR_END_OF_FILE_ERROR — the listener heals in seconds</text>
+
+  <!-- ============ Consul ============ -->
+  <rect class="card" x="710" y="70" width="670" height="330" stroke="#00CA8E"/>
+  <text class="hT" x="726" y="98" fill="#00CA8E">Consul — the service mesh that enforces</text>
+  <text class="hS" x="726" y="114">a compromised container must not reach the evidence just because it shares a network</text>
+
+  <rect class="box" x="726" y="126" width="305" height="76"/>
+  <text class="rT" x="738" y="144">Sidecars are the only listeners</text>
+  <text class="rS" x="738" y="159">Postgres and MinIO bind 127.0.0.1 ONLY — every</text>
+  <text class="rS" x="738" y="172">connection terminates at a Connect proxy: mutual</text>
+  <text class="rS" x="738" y="185">TLS, then an intention check, on every connection</text>
+
+  <rect class="box" x="1047" y="126" width="317" height="76"/>
+  <text class="rT" x="1059" y="144">Intentions — default-deny, converged</text>
+  <text class="rS" x="1059" y="159">policy in hashicorp/consul/config-entries/, written</text>
+  <text class="rS" x="1059" y="172">to Consul on EVERY deploy — bootstrap entries never</text>
+  <text class="rS" x="1059" y="185">update an existing cluster · UI shows the enforced matrix</text>
+
+  <rect class="box" x="726" y="214" width="305" height="82"/>
+  <text class="rT" x="738" y="232">Hardened control plane</text>
+  <text class="rS" x="738" y="247">TLS on every port, cleartext disabled · gossip</text>
+  <text class="rS" x="738" y="260">encrypted · ACLs default-deny · per-service tokens:</text>
+  <text class="rS" x="738" y="273">no service can edit the intention that governs it</text>
+  <text class="rS" x="738" y="286">read-only token for the UI's mesh page</text>
+
+  <rect class="box" x="1047" y="214" width="317" height="82"/>
+  <text class="rT" x="1059" y="232">Namespace convergence · multi-host</text>
+  <text class="rS" x="1059" y="247">a recreated service strands its proxy in a dead netns —</text>
+  <text class="rS" x="1059" y="260">deploy compares namespace inodes and repairs; the</text>
+  <text class="rS" x="1059" y="273">mesh-reattach repair does it on demand · per-host</text>
+  <text class="rS" x="1059" y="286">sidecar listeners via IR_MESH_ADDR_* / IR_MESH_PORT_*</text>
+
+  <text class="prf" x="726" y="322" fill="#00CA8E">PROVEN: test/uat_consul.sh — 49 assertions: cleartext closed · uncertified refused · untokened denied ·</text>
+  <text class="prf" x="726" y="337" fill="#00CA8E">denied pairs refused ON THE WIRE · allowed pairs carry traffic · per-sidecar namespace-inode match</text>
+  <text class="rS" x="726" y="362">open item, stated in SECURITY-MODEL.md: Redis is not on the mesh yet</text>
+
+  <!-- ============ Vault ============ -->
+  <rect class="card" x="20" y="420" width="670" height="270" stroke="#F5B841"/>
+  <text class="hT" x="36" y="448" fill="#F5B841">Vault — secrets with a lifecycle</text>
+  <text class="hS" x="36" y="464">no static credential worth stealing sits in a file the application tier reads</text>
+
+  <rect class="box" x="36" y="476" width="305" height="82"/>
+  <text class="rT" x="48" y="494">Dynamic database users</text>
+  <text class="rS" x="48" y="509">minted against a stable owning role (objects never</text>
+  <text class="rS" x="48" y="522">orphan) · delivered by Vault Agent render, read at</text>
+  <text class="rS" x="48" y="535">start · reconciled on every deploy, sealed or not</text>
+  <text class="rS" x="48" y="548">reached THROUGH the mesh, like any other client</text>
+
+  <rect class="box" x="357" y="476" width="317" height="82"/>
+  <text class="rT" x="369" y="494">Rotation and break-glass</text>
+  <text class="rS" x="369" y="509">rotate-app-creds.sh revokes, re-issues, restarts the</text>
+  <text class="rS" x="369" y="522">app tier in order (services, then their sidecars) ·</text>
+  <text class="rS" x="369" y="535">break-glass mints a temporary root from the unseal</text>
+  <text class="rS" x="369" y="548">key and revokes it after use · KV holds custody HMAC</text>
+
+  <text class="prf" x="36" y="584" fill="#F5B841">PROVEN: test/uat_vault.sh — 23 assertions, including a live credential minted through the mesh</text>
+  <text class="rS" x="36" y="608">sealed by design after restart — the Unseal Vault repair (or deploy.sh enclave) brings it back;</text>
+  <text class="rS" x="36" y="622">every credential the application tier needs is unavailable until then, and that is the point</text>
+  <text class="rS" x="36" y="646">provisioning uses a bounded ir-provisioner AppRole — the root token is never stored</text>
+
+  <!-- ============ headscale + agent ============ -->
+  <rect class="card" x="710" y="420" width="670" height="270" stroke="#A78BFA"/>
+  <text class="hT" x="726" y="448" fill="#A78BFA">headscale — the analyst transport · and the one privileged executor</text>
+  <text class="hS" x="726" y="464">WireGuard to exactly one port; repairs by name, never by command</text>
+
+  <rect class="box" x="726" y="476" width="305" height="82"/>
+  <text class="rT" x="738" y="494">Tailnet, deny-by-default</text>
+  <text class="rS" x="738" y="509">workstations enroll against a pinned control plane ·</text>
+  <text class="rS" x="738" y="522">DERP relay over TLS · no subnet routes advertised —</text>
+  <text class="rS" x="738" y="535">"cannot address an internal host" is a routing fact ·</text>
+  <text class="rS" x="738" y="548">the bastion is a broker, not a router</text>
+
+  <rect class="box" x="1047" y="476" width="317" height="82"/>
+  <text class="rT" x="1059" y="494">Remediation agent (ir-agent)</text>
+  <text class="rS" x="1059" y="509">network NONE · pid host · runtime socket only · its own</text>
+  <text class="rS" x="1059" y="522">compose project, so no repair can recreate its executor ·</text>
+  <text class="rS" x="1059" y="535">admin requests a NAME; the agent's own allow-list</text>
+  <text class="rS" x="1059" y="548">decides what that means · outcomes final, audited</text>
+
+  <text class="prf" x="726" y="584" fill="#A78BFA">PROVEN: test/uat_tailnet.sh — the tunnel carries the session and bounds it (no internal reach)</text>
+  <text class="prf" x="726" y="599" fill="#A78BFA">test/uat_repairs.sh — 18 assertions: posture, refusals, the loop, a repair that repairs, finality</text>
+  <text class="rS" x="726" y="622">all six repairs also executed from the UI — each recorded succeeded with output and exit code</text>
+
+  <!-- ============ composed path ============ -->
+  <rect x="20" y="710" width="1360" height="120" rx="10" fill="#1B1B21" stroke="#8A8F98" stroke-opacity=".5"/>
+  <text x="36" y="736" font-size="13" font-weight="700" fill="#C9C9D1" letter-spacing=".06em">THE COMPOSED PATH</text>
+
+  <text class="flowT" x="36" y="762">workstation ──WireGuard──▶ bastion listener ──Boundary session (per-session mTLS)──▶ egress worker ──▶ Traefik + oauth2-proxy ──OIDC──▶ Keycloak ──▶ app</text>
+  <text class="flowT" x="36" y="784">app / worker / puller ──sidecar mTLS + intention──▶ Postgres · MinIO</text>
+  <text class="flowT" x="640" y="784">Vault ──through the mesh──▶ dynamic credentials for all of them</text>
+  <text class="flowT" x="36" y="806">admin (UI) ──named request──▶ queue ──claimed──▶ remediation agent ──allow-list──▶ podman / deploy scripts</text>
+  <text class="flowT" x="1000" y="806">every hop above: TLS, attributable, tested</text>
+
+  <text x="20" y="856" font-size="11" font-weight="700" fill="#C9C9D1">Capstone:</text>
+  <text x="90" y="856" font-size="11" fill="#8A8F98">test/uat_e2e.sh — 32 assertions: collect → ship → pull → analyze → enforce → audit → carve → stage → reverse engineer, on both GUI workstations</text>
+  <text x="20" y="876" font-size="11" font-weight="700" fill="#C9C9D1">Model:</text>
+  <text x="90" y="876" font-size="11" fill="#8A8F98">SECURITY-MODEL.md P1–P10 — each principle names its enforcement and its proof</text>
+</svg>

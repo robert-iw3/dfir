@@ -1,0 +1,71 @@
+# SSO ingress — ONE origin, path-routed.
+#
+# Everything the analyst's browser touches is served from https://ir-platform.local:8443:
+#   /realms/irplatform/*  Keycloak login (the IdP; admin console is NOT exposed)
+#   /oauth2/*             oauth2-proxy callback + sign-in (must bypass forward-auth)
+#   /                     the app, gated by forward-auth
+#
+# One origin for the whole application: OAuth redirects and cookies are origin-sensitive,
+# and a single brokered port means a single firewall rule at the DMZ boundary.
+http:
+  routers:
+    # 1. The IdP's login endpoints. No forward-auth: this is what you use *to* log in.
+    #    Only the realm's own paths — the admin console and master realm are refused below.
+    idp-login:
+      rule: "PathPrefix(`/realms/irplatform`) || PathPrefix(`/resources/`)"
+      entryPoints: [websecure]
+      service: keycloak
+      priority: 300
+      tls: {}
+
+    # 2. Keycloak admin console / master realm / admin REST — denied to the analyst side.
+    #    Administration is an MGMT-VLAN activity (deploy/NETWORKING.md row 7).
+    idp-deny:
+      rule: "PathPrefix(`/admin`) || PathPrefix(`/realms/master`)"
+      entryPoints: [websecure]
+      service: keycloak
+      priority: 290
+      tls: {}
+      middlewares: [deny-all]
+
+    # 3. oauth2-proxy's own endpoints (callback, sign-in, sign-out). Must bypass the
+    #    forward-auth middleware or the login target would itself require login.
+    sso-endpoints:
+      rule: "PathPrefix(`/oauth2/`)"
+      entryPoints: [websecure]
+      service: oauth2-proxy
+      priority: 200
+      tls: {}
+
+    # 4. Everything else = the application, served through the SSO gate. oauth2-proxy
+    #    redirects unauthenticated users to Keycloak, handles the callback, then proxies
+    #    to the SPA with the authenticated identity attached as headers.
+    ir-web:
+      rule: "PathPrefix(`/`)"
+      entryPoints: [websecure]
+      service: oauth2-proxy
+      priority: 1
+      tls: {}
+
+  services:
+    oauth2-proxy:
+      loadBalancer:
+        servers: [{ url: "http://oauth2-proxy:4180" }]
+    keycloak:
+      loadBalancer:
+        servers: [{ url: "http://keycloak:8080" }]
+
+  middlewares:
+    deny-all:
+      ipAllowList:
+        sourceRange: ["127.0.0.1/32"]
+
+tls:
+  stores:
+    default:
+      defaultCertificate:
+        certFile: /certs/ir-platform.crt
+        keyFile: /certs/ir-platform.key
+  certificates:
+    - certFile: /certs/ir-platform.crt
+      keyFile: /certs/ir-platform.key

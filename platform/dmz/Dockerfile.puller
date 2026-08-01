@@ -1,0 +1,15 @@
+# ir-ingest PULLER (enclave). Holds the internal creds; bridges DMZ→internal by pulling.
+# Build with the platform/ dir as context (needs ingest/ir_ingest.py + shared/custody.py):
+#   podman build -f platform/dmz/Dockerfile.puller -t ir-puller platform/
+FROM docker.io/library/alpine:3.24
+ENV PYTHONUNBUFFERED=1 PATH="/venv/bin:$PATH"
+RUN apk add --no-cache python3 py3-pip ca-certificates \
+    && python3 -m venv /venv \
+    && /venv/bin/pip install --no-cache-dir boto3==1.43.56
+WORKDIR /opt/puller
+COPY dmz/puller.py ./puller.py
+COPY ingest/ir_ingest.py ./ir_ingest.py
+COPY shared/custody.py ./custody.py
+COPY shared/sysstats.py ./sysstats.py
+RUN python -c "import boto3; import ast; [ast.parse(open(f).read()) for f in ('puller.py','ir_ingest.py','custody.py')]; print('puller src OK')"
+ENTRYPOINT ["python", "puller.py"]

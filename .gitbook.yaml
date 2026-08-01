@@ -1,0 +1,22 @@
+# GitBook sync configuration.
+#
+# Without this file GitBook infers everything, and the inference is not stable across space
+# settings — which is how a repository can be fully committed and pushed while the published
+# docs sit at an older state, with nothing reporting a problem. Declaring the root and the two
+# structural files makes what gets published a property of the repository rather than of the
+# space's configuration.
+#
+# `root` is the repository root: docs live beside the code they describe (platform/,
+# playbooks/, tools/), not in a separate docs tree, so there is nothing narrower to point at.
+root: ./
+
+structure:
+  readme: README.md
+  summary: SUMMARY.md
+
+# Only pages listed in SUMMARY.md are published. A markdown file added to the repository and
+# omitted from the summary does not appear, and neither do its images — which reads as "assets
+# are broken" when the page itself was never published.
+redirects:
+  # The platform documentation moved under platform/ and is now indexed; keep older links alive.
+  platform: platform/README.md

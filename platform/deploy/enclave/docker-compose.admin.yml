@@ -1,0 +1,37 @@
+# Enclave administrative access — opened on demand, closed when the task is done.
+#
+# Not part of the deployment. `admin/adminctl.sh up enclave` starts it; management
+# interfaces are unreachable at every other moment.
+#
+# This container joins the enclave network ONLY. It has no membership in the DMZ networks,
+# so it cannot reach a DMZ service regardless of what is listed below — the tier isolation
+# is the network membership, not the target list.
+services:
+  adminfwd:
+    # Carries socat already: these tiers have no internet gateway to install it from.
+    image: docker.io/alpine/socat:latest
+    container_name: ir-enclave_adminfwd_1
+    environment:
+      ADMIN_TIER: enclave
+      # Resolved by admin/adminctl.sh to each container's address on this tier's
+      # network, so a target that is not on that network simply has no forwarder.
+      # Covers: MinIO console, Keycloak admin, Consul UI, PostgreSQL.
+      ADMIN_TARGETS: "${ADMIN_TARGETS}"
+      ADMIN_TTL: "${ADMIN_TTL:-}"
+    volumes:
+      - ../../admin/adminfwd.sh:/adminfwd.sh:ro,z
+    entrypoint: ["sh"]
+    command: ["/adminfwd.sh"]
+    # Bound to the management address, never every interface: an admin path on 0.0.0.0 is
+    # an admin path reachable from the analyst side.
+    ports:
+      - "${IR_MGMT_BIND:-127.0.0.1}:19001:19001"   # MinIO console
+      - "${IR_MGMT_BIND:-127.0.0.1}:18080:18080"   # Keycloak admin console
+      - "${IR_MGMT_BIND:-127.0.0.1}:18500:18500"   # Consul UI
+      - "${IR_MGMT_BIND:-127.0.0.1}:15432:15432"   # PostgreSQL (both stores)
+    networks: [internal]
+
+networks:
+  internal:
+    external: true
+    name: ir-enclave_internal

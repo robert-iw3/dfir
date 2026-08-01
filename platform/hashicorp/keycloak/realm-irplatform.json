@@ -1,0 +1,147 @@
+{
+  "realm": "irplatform",
+  "enabled": true,
+  "sslRequired": "none",
+  "registrationAllowed": false,
+  "loginWithEmailAllowed": true,
+  "attributes": {
+    "_note_users": "PINNED NOTE \u2014 the users[] at the bottom of this file are the DEFAULT BACKUP LOGINS, one per role: default-admin, default-analyst, default-auditor (passwords default-<role>-pw). They are seeded intentionally so every role always has a working break-glass login (e.g. if SSO provisioning or a normal account is misconfigured). SECURITY: change these passwords immediately on any real deployment, and DISABLE (set enabled:false) any role's default login you don't need. Normal users are NOT added here \u2014 an admin provisions them via the platform 'Create user' flow (POST /api/users/ \u2192 Keycloak Admin API) into the group matching their role. The groups[] and the tinyauth client ARE meant to be seeded here."
+  },
+  "groups": [
+    {
+      "name": "admin"
+    },
+    {
+      "name": "analyst"
+    },
+    {
+      "name": "auditor"
+    },
+    {
+      "name": "reverse_engineer",
+      "path": "/reverse_engineer"
+    }
+  ],
+  "clients": [
+    {
+      "clientId": "ir-platform",
+      "name": "IR Platform SSO",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "secret": "ir-platform-oidc-secret-dev",
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": true,
+      "serviceAccountsEnabled": false,
+      "redirectUris": [
+        "*"
+      ],
+      "webOrigins": [
+        "*"
+      ],
+      "protocolMappers": [
+        {
+          "name": "groups",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-group-membership-mapper",
+          "consentRequired": false,
+          "config": {
+            "full.path": "false",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true",
+            "claim.name": "groups"
+          }
+        },
+        {
+          "name": "audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "ir-platform",
+            "id.token.claim": "false",
+            "access.token.claim": "true"
+          }
+        }
+      ]
+    }
+  ],
+  "users": [
+    {
+      "username": "default-admin",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "default-admin@ir.local",
+      "firstName": "Default",
+      "lastName": "Admin",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "default-admin-pw",
+          "temporary": false
+        }
+      ],
+      "groups": [
+        "/admin"
+      ]
+    },
+    {
+      "username": "default-analyst",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "default-analyst@ir.local",
+      "firstName": "Default",
+      "lastName": "Analyst",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "default-analyst-pw",
+          "temporary": false
+        }
+      ],
+      "groups": [
+        "/analyst"
+      ]
+    },
+    {
+      "username": "default-auditor",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "default-auditor@ir.local",
+      "firstName": "Default",
+      "lastName": "Auditor",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "default-auditor-pw",
+          "temporary": false
+        }
+      ],
+      "groups": [
+        "/auditor"
+      ]
+    },
+    {
+      "username": "default-reverse-engineer",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "default-reverse-engineer@ir.local",
+      "firstName": "Default",
+      "lastName": "Reverse Engineer",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "default-reverse-engineer-pw",
+          "temporary": false
+        }
+      ],
+      "groups": [
+        "/reverse_engineer"
+      ]
+    }
+  ],
+  "loginTheme": "dfir",
+  "displayName": "DFIR_TOOLKIT",
+  "displayNameHtml": "<span>DFIR_TOOLKIT</span>"
+}

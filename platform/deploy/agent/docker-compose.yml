@@ -1,0 +1,40 @@
+# ===========================================================================
+# TIER: remediation agent — the executor for admin-requested repairs.
+#
+# Its OWN compose project, deliberately: the mesh-reattach repair runs `deploy.sh enclave`,
+# and an executor living inside the enclave project could be recreated by the very deploy it
+# is running — killing the repair mid-flight. Nothing in this project is ever touched by a
+# repair.
+#
+# The security posture:
+#   * network_mode: none — it has no address, accepts nothing, and dials nothing. It reaches
+#     the platform API the same way the repairs reach the runtime: exec through the socket.
+#   * The runtime socket is the ONLY authority it holds, and the only input that reaches it
+#     is an action NAME from the queue, matched against the allow-list in its own script.
+#   * pid: host — the deploy scripts verify mesh namespaces by reading /proc/<pid>/ns, and
+#     those are host pids.
+#
+#   deploy.sh agent   (exports IR_RUNTIME_SOCKET, IR_PLATFORM_DIR, IR_AGENT_HOST)
+# ===========================================================================
+services:
+  remediation-agent:
+    build:
+      context: ../..
+      dockerfile: troubleshooting/Dockerfile.agent
+    image: localhost/ir-remediation-agent:latest
+    network_mode: none
+    pid: host
+    # The socket and the checkout carry host SELinux labels; relabeling either would break
+    # the host, so labeling is disabled for this container instead.
+    security_opt: [label=disable]
+    volumes:
+      - ${IR_RUNTIME_SOCKET}:/run/podman/podman.sock
+      # At its HOST path, because -v arguments in the repair scripts are resolved by the
+      # host-side runtime — the same string has to mean the same file on both sides.
+      - ${IR_PLATFORM_DIR}:${IR_PLATFORM_DIR}
+    environment:
+      CONTAINER_HOST: unix:///run/podman/podman.sock
+      IR_AGENT_HOST: ${IR_AGENT_HOST}
+      IR_PLATFORM_DIR: ${IR_PLATFORM_DIR}
+    entrypoint: ["/bin/bash", "${IR_PLATFORM_DIR}/troubleshooting/remediation-agent.sh"]
+    restart: unless-stopped

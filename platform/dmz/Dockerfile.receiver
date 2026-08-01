@@ -1,0 +1,13 @@
+# ir-ingest RECEIVER (DMZ). Stdlib-only Python — no object-store or API creds/libs here.
+# Build with the platform/ dir as context (needs shared/custody.py):
+#   podman build -f platform/dmz/Dockerfile.receiver -t ir-receiver platform/
+FROM docker.io/library/alpine:3.24
+ENV PYTHONUNBUFFERED=1
+RUN apk add --no-cache python3
+WORKDIR /opt/receiver
+COPY dmz/receiver.py ./receiver.py
+COPY shared/custody.py ./custody.py
+COPY shared/sysstats.py ./sysstats.py
+RUN python3 -c "import ast; ast.parse(open('receiver.py').read()); ast.parse(open('custody.py').read()); print('receiver src OK')"
+EXPOSE 8090
+ENTRYPOINT ["python3", "receiver.py"]

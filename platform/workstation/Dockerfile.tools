@@ -1,0 +1,8 @@
+# Analyst-workstation test/diagnostic node.
+#
+# The edge network has NO internet gateway (by design), so tools cannot be installed at
+# run time — they are baked in here. This is the stand-in for an enrolled tailnet node
+# used to prove reachability (to the broker) and unreachability (to everything internal).
+FROM docker.io/library/alpine:3.24
+RUN apk add --no-cache curl bind-tools netcat-openbsd python3
+CMD ["sleep", "infinity"]

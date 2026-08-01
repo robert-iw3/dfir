@@ -1,0 +1,5 @@
+{+block-as-image}
+.mail.google.com/mail/
+# credible sources are not filtered here
+.mail.yahoo.com/config/login?login=&passwd=&pwd=XXX&.persistent=y
+.smtp.relay.example.net:587/

@@ -1,0 +1,18 @@
+# Connect sidecar — Envoy plus the Consul CLI that bootstraps it.
+#
+# Consul does not ship Envoy and Envoy cannot configure itself: `consul connect envoy` asks the
+# agent for this service's mesh configuration, writes an Envoy bootstrap, and execs Envoy against
+# it. Both binaries therefore have to sit in one image.
+#
+# Envoy 1.38 because Consul 2.0.x supports 1.38.x / 1.37.x / 1.35.x. The version check is left
+# ENABLED (no -ignore-envoy-compatibility): a mismatched proxy fails in ways that look like
+# policy — connections refused for reasons no intention explains.
+FROM docker.io/hashicorp/consul:2.0.2 AS consul
+
+FROM docker.io/envoyproxy/envoy:v1.38.0
+COPY --from=consul /bin/consul /usr/local/bin/consul
+
+# Envoy's image defaults to an entrypoint that assumes it is being handed Envoy flags. The
+# sidecar is launched by the Consul CLI instead, which execs Envoy itself.
+ENTRYPOINT []
+CMD ["/bin/sh", "-c", "consul connect envoy --help"]

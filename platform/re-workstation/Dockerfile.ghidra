@@ -1,0 +1,105 @@
+# Reverse-engineering workstation — Ghidra over carved memory regions.
+#
+# The alternative to the Binary Ninja image in this directory. Same threat model and the same
+# containment: carved regions are live malware, the session has no network namespace, and the
+# container is destroyed on exit. Which tool an analyst prefers is a preference; the boundary
+# around it is not.
+#
+# Ghidra is fetched at BUILD time. It needs no licence, activation or call-home, so a session
+# needs no route out — network exists only while this image is built.
+# Debian 13, for the JDK. Ghidra 12 requires Java 21 or newer and Debian 12 carries only 17,
+# where its launcher cannot find a usable JDK and falls back to prompting for a path — which in
+# a container has no TTY to prompt on, so every headless import fails before it starts.
+# The FULL JDK, not -headless. The headless package omits the AWT/Swing native libraries, so
+# Ghidra's GUI cannot start under it at any display setting — it reports itself as running "in a
+# headless environment", which reads as a missing X socket and sends you looking at the host.
+# Headless analysis (analyzeHeadless) works fine either way, so the import step gives no warning
+# that the interactive half of the tool is missing.
+FROM docker.io/library/debian:13
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# glibc, deliberately. Ghidra's public release ships prebuilt decompiler natives for
+# linux_x86_64 linked against glibc, so they run as shipped here. On a musl base they do not,
+# and the whole Gradle toolchain has to be installed to rebuild them — a much larger image and
+# a much longer build for a binary that already exists.
+#
+# A JDK rather than a JRE: Ghidra's launcher checks for a compiler it can find, and a
+# JRE-only install is rejected as unsuitable.
+RUN groupadd -g 1001 ghidra \
+    && useradd -u 1001 -g 1001 -m -s /bin/bash ghidra \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
+        bash ca-certificates coreutils locales unzip wget python3 \
+        openjdk-21-jdk \
+        libxrender1 libxtst6 libxi6 libxext6 libx11-6 libxcb1 \
+        fontconfig fonts-dejavu-core \
+    && sed -i 's/^# *en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen \
+    && locale-gen \
+    && printf 'LANG=en_US.UTF-8\n' > /etc/default/locale \
+    && rm -rf /var/lib/apt/lists/*
+
+ENV LANG=en_US.UTF-8 \
+    LC_ALL=en_US.UTF-8
+
+# Pinned by version AND digest. An unpinned build of a malware-analysis tool is a supply-chain
+# question mark in the one container that opens live samples, and the hash is what makes a
+# substituted archive fail the build instead of shipping.
+ENV GHIDRA_VERSION=12.1.2_PUBLIC \
+    GHIDRA_URL=https://github.com/NationalSecurityAgency/ghidra/releases/download/Ghidra_12.1.2_build/ghidra_12.1.2_PUBLIC_20260605.zip \
+    GHIDRA_SHA=b62e81a0390618466c019c60d8c2f796ced2509c4c1aea4a37644a77272cf99d
+
+RUN mkdir -p /regions \
+    && wget -q --progress=bar:force -O /tmp/ghidra.zip "${GHIDRA_URL}" \
+    && echo "${GHIDRA_SHA}  /tmp/ghidra.zip" | sha256sum -c - \
+    && unzip -q /tmp/ghidra.zip -d /opt \
+    && mv "/opt/ghidra_${GHIDRA_VERSION}" /ghidra \
+    && chmod +x /ghidra/ghidraRun /ghidra/support/analyzeHeadless \
+    && rm -f /tmp/ghidra.zip \
+    # Nothing here should extend what the tool does, and an extension directory is one more
+    # place a malicious sample could try to write into.
+    && rm -rf /ghidra/docs /ghidra/licenses /ghidra/Extensions/Eclipse /ghidra/Extensions/Ghidra \
+    && find /ghidra -type f -name '*src*.zip' -delete \
+    && chown -R ghidra:ghidra /ghidra /regions
+
+# Pin the JDK path in Ghidra's own launcher config.
+#
+# Ghidra searches for a JDK and, failing to find one it accepts, prompts for the path. A
+# container has no TTY to answer, so the launcher aborts and every import fails with an error
+# about the prompt rather than about Java. Recording the path here removes the search.
+#
+# It goes in launch.properties rather than ~/.ghidra, which is where Ghidra would save it
+# itself: the session mounts a tmpfs over the home directory so no analysis state from live
+# malware survives the container, and that would erase a path saved at build time.
+ENV JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64
+RUN test -x "${JAVA_HOME}/bin/java" \
+    && printf 'JAVA_HOME_OVERRIDE=%s\n' "${JAVA_HOME}" >> /ghidra/support/launch.properties
+
+# Prove the launcher works, not just that its files exist.
+#
+# The first version of this check ran the decompiler native directly and passed on an image
+# whose Java was too old to start Ghidra at all — it tested a binary nothing reaches except
+# through the launcher. Importing a real file through analyzeHeadless exercises the same path a
+# session does, so a broken JDK, a missing native or an unusable loader fails the build here
+# instead of at the analyst's first import.
+RUN set -eu; \
+    tmp="$(mktemp -d)"; \
+    head -c 4096 /dev/urandom > "${tmp}/smoke.bin"; \
+    /ghidra/support/analyzeHeadless "${tmp}" smoke \
+        -import "${tmp}/smoke.bin" \
+        -processor x86:LE:64:default \
+        -loader BinaryLoader -loader-baseAddr 0x400000 \
+        -noanalysis > "${tmp}/out.log" 2>&1 \
+      || { echo "analyzeHeadless failed to import:" >&2; tail -20 "${tmp}/out.log" >&2; exit 1; }; \
+    grep -q 'ERROR REPORT\|Import failed' "${tmp}/out.log" \
+      && { echo "analyzeHeadless reported an import error:" >&2; tail -20 "${tmp}/out.log" >&2; exit 1; }; \
+    test -f "${tmp}/smoke.gpr" \
+      || { echo "no project created despite a successful import" >&2; exit 1; }; \
+    echo "ghidra headless import OK"; rm -rf "${tmp}"
+
+COPY ghidra-session.sh /usr/local/bin/ghidra-session
+RUN chmod +x /usr/local/bin/ghidra-session
+
+USER ghidra
+WORKDIR /ghidra
+ENTRYPOINT ["/usr/local/bin/ghidra-session"]

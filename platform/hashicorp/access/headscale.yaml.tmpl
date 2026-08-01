@@ -1,0 +1,61 @@
+# headscale control server for the bastion. The embedded DERP relays the
+# workstation<->bastion tunnel, so no public Tailscale infrastructure is used — which matters
+# here because the analyst segment has no internet and could not reach the public DERP fleet
+# even if it were willing to.
+#
+# HTTPS, and not as a formality: tailscale REFUSES to use a DERP relay that is not served over
+# TLS, and says nothing about it. The node comes up, reports itself connected, and quietly has
+# no relay at all — fine until two peers cannot build a direct path, at which point the session
+# fails with no fallback. Serving TLS is what makes the embedded relay real.
+#
+# Rendered by deploy.sh. The same value appears in the URL below, in the certificate's SAN and
+# in the DERP region headscale advertises to every node; all three must agree, so all three come
+# from one variable. Nodes pin the certificate rather than trusting a public CA.
+server_url: https://__HEADSCALE_ADDR__
+tls_cert_path: /etc/headscale/certs/headscale.crt
+tls_key_path: /etc/headscale/certs/headscale.key
+listen_addr: 0.0.0.0:8080
+metrics_listen_addr: 0.0.0.0:9090
+grpc_listen_addr: 0.0.0.0:50443
+grpc_allow_insecure: false
+
+noise:
+  private_key_path: /var/lib/headscale/noise_private.key
+
+prefixes:
+  v4: 100.64.0.0/10
+  v6: fd7a:115c:a1e0::/48
+  allocation: sequential
+
+derp:
+  server:
+    enabled: true
+    region_id: 999
+    region_code: bastion
+    region_name: Bastion Embedded DERP
+    stun_listen_addr: 0.0.0.0:3478
+    private_key_path: /var/lib/headscale/derp_server_private.key
+    automatically_add_embedded_derp_region: true
+  urls: []
+  paths: []
+  auto_update_enabled: false
+
+database:
+  type: sqlite
+  sqlite:
+    path: /var/lib/headscale/db.sqlite
+
+# Deny-by-default access policy (see policy.hujson).
+policy:
+  mode: file
+  path: /etc/headscale/policy.hujson
+
+dns:
+  magic_dns: false
+  override_local_dns: false
+  base_domain: bastion.internal
+  nameservers:
+    global: []
+
+log:
+  level: warn

@@ -1,0 +1,201 @@
+/* DFIR_TOOLKIT login page.
+ *
+ * Layered on the stock Keycloak login theme: only presentation is defined here, so the forms,
+ * error states and alternate flows (OTP, password reset, consent) keep the upstream markup and
+ * behaviour and survive a Keycloak upgrade.
+ *
+ * TWO THINGS ABOUT THIS TEMPLATE DRIVE THE WHOLE FILE, and both are easy to get wrong:
+ *
+ *   1. The page renders <body class="">. The `login-pf` class the stock stylesheets hang their
+ *      layout on is NOT applied, so `body.login-pf` selectors match nothing and the card
+ *      inherits no width — it stretches edge to edge. Everything here is therefore anchored to
+ *      `.login-pf-page`, the outermost element that actually exists in the markup.
+ *
+ *   2. Keycloak STRIPS `${...}` from the realm's displayNameHtml instead of resolving it, so a
+ *      logo referenced there renders with a malformed src and shows as a broken box. The logo is
+ *      applied here as a background image, where the URL resolves relative to this stylesheet
+ *      and needs no templating.
+ *
+ * The background is a photograph, which makes contrast the hard problem: it changes with
+ * viewport size, so the form cannot rely on any particular part of the image being behind it.
+ * The image is dimmed and the card sits on its own near-opaque surface. An operator signing in
+ * mid-incident should never have to hunt for the password field.
+ */
+
+html, body {
+    height: 100%;
+    margin: 0;
+    background: #070b11;
+}
+
+/* The page wrapper carries the background and centres the card, because the body class the
+ * stock theme would have used is absent. */
+.login-pf-page {
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: flex-start;
+    padding: 4vh 1rem 4rem;
+    box-sizing: border-box;
+    background: #070b11 url("../img/background.jpeg") no-repeat center center fixed;
+    background-size: cover;
+    position: relative;
+}
+
+/* Dim layer between the photograph and the form. Without it, label contrast depends on which
+ * part of the image happens to sit behind the card at a given window size. */
+.login-pf-page::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    background: linear-gradient(160deg, rgba(5, 9, 15, 0.86), rgba(5, 9, 15, 0.72));
+    pointer-events: none;
+    z-index: 0;
+}
+
+.login-pf-page > * {
+    position: relative;
+    z-index: 1;
+}
+
+/* ---- brand header: logo beside the wordmark ---------------------------- */
+.login-pf-page-header {
+    width: 100%;
+    margin-bottom: 1.75rem;
+}
+
+#kc-header-wrapper {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.8rem;
+    /* The stock rules uppercase and letter-space this text, which mangles a wordmark that
+     * already carries its own casing. */
+    text-transform: none;
+    letter-spacing: 0.02em;
+    font-size: 1.8rem;
+    font-weight: 600;
+    color: #eaf1f9;
+    text-shadow: 0 2px 12px rgba(0, 0, 0, 0.7);
+    padding: 0;
+}
+
+/* The logo. A pseudo-element rather than an <img> in displayNameHtml, since Keycloak will not
+ * resolve a theme-resource path there. */
+#kc-header-wrapper::before {
+    content: "";
+    width: 2.2em;
+    height: 2.2em;
+    flex: 0 0 auto;
+    background: url("../img/logo.jpeg") no-repeat center center;
+    background-size: cover;
+    border-radius: 8px;
+    box-shadow: 0 2px 14px rgba(0, 0, 0, 0.6);
+}
+
+/* ---- the form card ----------------------------------------------------- */
+.card-pf {
+    width: 100%;
+    /* The constraint the missing body class would otherwise have supplied. */
+    max-width: 30rem;
+    margin: 0 auto;
+    background: rgba(15, 21, 30, 0.95);
+    border: 1px solid rgba(126, 158, 196, 0.22);
+    border-radius: 10px;
+    box-shadow: 0 18px 48px rgba(0, 0, 0, 0.6);
+    padding: 2rem 2.25rem 2.25rem;
+    box-sizing: border-box;
+}
+
+#kc-page-title,
+.login-pf-header h1 {
+    color: #eaf1f9;
+    font-size: 1.35rem;
+    font-weight: 500;
+    text-align: center;
+    margin: 0 0 1.5rem;
+}
+
+.pf-c-form__label,
+.pf-c-form__label-text,
+#kc-form-login label,
+label {
+    color: #c7d4e4;
+    font-size: 0.9rem;
+}
+
+/* Inputs: the stock styling assumes a light card and is unreadable on this one. */
+.pf-c-form-control,
+input[type="text"],
+input[type="password"],
+input[type="email"] {
+    background: rgba(7, 11, 17, 0.92);
+    border: 1px solid rgba(126, 158, 196, 0.3);
+    color: #eef3fa;
+    border-radius: 6px;
+    padding: 0.55rem 0.7rem;
+    width: 100%;
+    box-sizing: border-box;
+}
+
+.pf-c-form-control:focus,
+input[type="text"]:focus,
+input[type="password"]:focus {
+    border-color: #4b90d4;
+    outline: none;
+    box-shadow: 0 0 0 3px rgba(75, 144, 212, 0.28);
+}
+
+.pf-c-form-control::placeholder { color: #7d8b9d; }
+
+.form-group { margin-bottom: 1.1rem; }
+
+/* The show/password toggle sits in an input group; the stock control button is white-on-white
+ * against this card. */
+.pf-c-input-group { display: flex; }
+.pf-c-input-group .pf-c-button.pf-m-control {
+    background: rgba(7, 11, 17, 0.92);
+    border: 1px solid rgba(126, 158, 196, 0.3);
+    border-left: none;
+    color: #9db1c8;
+    border-radius: 0 6px 6px 0;
+}
+.pf-c-input-group .pf-c-form-control { border-radius: 6px 0 0 6px; }
+
+.pf-c-button.pf-m-primary,
+input[type="submit"] {
+    background: #2f6fb3;
+    border: 1px solid #2f6fb3;
+    color: #fff;
+    border-radius: 6px;
+    font-weight: 600;
+    padding: 0.6rem 1rem;
+    width: 100%;
+    cursor: pointer;
+}
+
+.pf-c-button.pf-m-primary:hover,
+input[type="submit"]:hover {
+    background: #3a83cf;
+    border-color: #3a83cf;
+}
+
+a, a:hover { color: #7fb3e8; }
+
+/* An authentication error is the one message a user must not miss, so it gets explicit
+ * contrast rather than inheriting a light-card default. */
+.alert-error, .pf-c-alert.pf-m-danger, #input-error, .kc-feedback-text {
+    background: rgba(120, 30, 36, 0.92);
+    border: 1px solid rgba(220, 90, 100, 0.5);
+    border-radius: 6px;
+    color: #ffe2e4;
+    padding: 0.6rem 0.8rem;
+    display: block;
+    margin-bottom: 1rem;
+}
+
+@media (max-width: 480px) {
+    #kc-header-wrapper { font-size: 1.25rem; gap: 0.55rem; }
+    .card-pf { padding: 1.5rem 1.25rem 1.75rem; }
+}

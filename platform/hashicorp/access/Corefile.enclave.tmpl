@@ -1,0 +1,89 @@
+# Enclave resolver — the egress BACKSTOP for the enclave tier.
+#
+# Rendered by deploy.sh from the deployment's addressing; do not edit the generated Corefile.
+#
+# It is NOT the resolver services are given, and cannot be: podman overrides a container's
+# `dns:` whenever its own resolver is enabled on the network, and disabling that resolver is
+# exactly what would force every service back to a pinned address. Dynamic names and a resolver
+# we control cannot both be had on this runtime.
+#
+# What podman does with `dns:` is make this the runtime resolver's UPSTREAM. While the network
+# is internal there is nothing to forward — in-zone names are answered directly and outside
+# names die there — so this file sees no traffic and the egress control is the network itself.
+#
+# It arms the moment a network gains a route out. Then every name the runtime cannot answer is
+# forwarded here and refused. That is not hypothetical: it is how the DMZ-link leak was caught,
+# with the enclave's own bridge container resolving live internet addresses because that one
+# network had been left non-internal.
+#
+# THE POLICY, in one sentence: enclave services resolve each other and exactly one DMZ name,
+# and every other query is REFUSED.
+#
+# Why REFUSED and not a silent failure: the enclave network is `internal: true`, so there is
+# already no upstream and an external lookup dies as NXDOMAIN. That is a property of the
+# network, not a decision anyone wrote down, and it disappears the moment someone attaches a
+# gateway to debug something. An explicit REFUSED states the intent, survives that change, and
+# is visible in a query log as a denial rather than as an absence.
+#
+# Addresses stay DYNAMIC. In-zone lookups are forwarded to the container runtime's own
+# resolver, which knows where each service currently is, so nothing here pins a service to an
+# address. The only pinned address in this design is this resolver's own, because resolv.conf
+# can hold nothing but a literal.
+
+# ---------------------------------------------------------------------------
+# The enclave's own services: backend, worker, db, redis, minio, keycloak,
+# traefik, oauth2-proxy, consul, frontend, puller.
+#
+# Forwarded to the runtime resolver on the enclave network. It answers only for containers
+# attached to that network, so this block cannot reach the DMZ or anything beyond it — the
+# scope of the answer set is the network itself, not a list maintained here.
+# ---------------------------------------------------------------------------
+__RUNTIME_ZONE__:53 {
+    errors
+    # Denials and answers are both worth seeing: a service that starts asking for names it
+    # should not need is the first sign of something wrong inside the enclave.
+    log
+    forward . __ENCLAVE_DNS__ {
+        # No fallback. If the runtime resolver cannot answer, the answer is "no" — never a
+        # second opinion from somewhere less trusted.
+        policy sequential
+        max_fails 0
+    }
+    cache 30
+}
+
+# ---------------------------------------------------------------------------
+# The single permitted cross-tier name: the DMZ evidence receiver.
+#
+# The puller dials it outbound — enclave to DMZ, the one direction the architecture allows —
+# so this name must resolve or evidence never comes inward. It is a MORE SPECIFIC zone than
+# the block above, so it wins for this name only; no other DMZ service is nameable from here.
+#
+# Nothing in the DMZ can resolve an enclave name in return. That asymmetry is deliberate: a
+# compromised DMZ host should not be able to enumerate what it might reach.
+# ---------------------------------------------------------------------------
+receiver.__RUNTIME_ZONE__:53 {
+    errors
+    log
+    forward . __DMZ_DNS__ {
+        policy sequential
+        max_fails 0
+    }
+    cache 30
+}
+
+# ---------------------------------------------------------------------------
+# Everything else: REFUSED.
+#
+# No recursion, no forwarders, no root hints. A name outside the two zones above has no
+# answer and no path to one, which closes DNS as an exfiltration channel from the tier that
+# holds the evidence — the worker parses hazardous memory images, and a resolver that would
+# look anything up for it is a way out.
+# ---------------------------------------------------------------------------
+.:53 {
+    errors
+    log
+    template ANY ANY {
+        rcode REFUSED
+    }
+}

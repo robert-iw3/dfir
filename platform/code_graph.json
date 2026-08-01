@@ -1,0 +1,2017 @@
+{
+ "api": {
+  "admin/component-health/": "ComponentHealthView",
+  "admin/mesh-health/": "MeshHealthView",
+  "admin/metrics/": "PlatformMetricsView",
+  "admin/remediation/": "RemediationView",
+  "admin/remediation/<int:pk>/": "RemediationDetailView",
+  "admin/remediation/queue/": "RemediationQueueView",
+  "admin/symbols/": "SymbolRequestView",
+  "admin/symbols/requisites/": "SymbolRequisitesView",
+  "audit/": "AuditLogView",
+  "audit/export/": "AuditExportView",
+  "brokered-sessions/": "BrokeredSessionsView",
+  "captures/<int:capture_id>/legal-hold/": "LegalHoldView",
+  "captures/<int:capture_id>/purge/": "CapturePurgeView",
+  "captures/<int:capture_id>/reanalyze/": "ReAnalyzeView",
+  "component-health/report/": "ComponentHealthReportView",
+  "ingest/": "IngestView",
+  "rescans/": "RescanRequestView",
+  "tasks/": "TaskStatusView",
+  "users/": "UsersView"
+ },
+ "edges": [
+  {
+   "from": "enclave/boundary",
+   "kind": "depends_on",
+   "to": "enclave/boundary-db"
+  },
+  {
+   "from": "enclave/boundary-egress",
+   "kind": "depends_on",
+   "to": "enclave/boundary"
+  },
+  {
+   "from": "enclave/vault-sidecar",
+   "kind": "shares_netns",
+   "to": "enclave/vault"
+  },
+  {
+   "from": "enclave/vault-sidecar",
+   "kind": "depends_on",
+   "to": "enclave/vault"
+  },
+  {
+   "from": "enclave/db-bootstrap",
+   "kind": "shares_netns",
+   "to": "enclave/db"
+  },
+  {
+   "from": "enclave/db-bootstrap",
+   "kind": "depends_on",
+   "to": "enclave/db"
+  },
+  {
+   "from": "enclave/vault-setup",
+   "kind": "depends_on",
+   "to": "enclave/vault"
+  },
+  {
+   "from": "enclave/vault-setup",
+   "kind": "depends_on",
+   "to": "enclave/db"
+  },
+  {
+   "from": "enclave/vault-agent",
+   "kind": "depends_on",
+   "to": "enclave/vault"
+  },
+  {
+   "from": "enclave/db-sidecar",
+   "kind": "shares_netns",
+   "to": "enclave/db"
+  },
+  {
+   "from": "enclave/db-sidecar",
+   "kind": "depends_on",
+   "to": "enclave/db"
+  },
+  {
+   "from": "enclave/minio-sidecar",
+   "kind": "shares_netns",
+   "to": "enclave/minio"
+  },
+  {
+   "from": "enclave/minio-sidecar",
+   "kind": "depends_on",
+   "to": "enclave/minio"
+  },
+  {
+   "from": "enclave/traefik",
+   "kind": "depends_on",
+   "to": "enclave/frontend"
+  },
+  {
+   "from": "enclave/traefik",
+   "kind": "depends_on",
+   "to": "enclave/oauth2-proxy"
+  },
+  {
+   "from": "enclave/frontend",
+   "kind": "depends_on",
+   "to": "enclave/backend"
+  },
+  {
+   "from": "enclave/frontend-sidecar",
+   "kind": "shares_netns",
+   "to": "enclave/frontend"
+  },
+  {
+   "from": "enclave/frontend-sidecar",
+   "kind": "depends_on",
+   "to": "enclave/frontend"
+  },
+  {
+   "from": "enclave/backend",
+   "kind": "depends_on",
+   "to": "enclave/db"
+  },
+  {
+   "from": "enclave/backend",
+   "kind": "depends_on",
+   "to": "enclave/redis"
+  },
+  {
+   "from": "enclave/backend",
+   "kind": "depends_on",
+   "to": "enclave/minio"
+  },
+  {
+   "from": "enclave/backend",
+   "kind": "depends_on",
+   "to": "enclave/keycloak"
+  },
+  {
+   "from": "enclave/backend",
+   "kind": "depends_on",
+   "to": "enclave/vault-agent"
+  },
+  {
+   "from": "enclave/backend-sidecar",
+   "kind": "shares_netns",
+   "to": "enclave/backend"
+  },
+  {
+   "from": "enclave/backend-sidecar",
+   "kind": "depends_on",
+   "to": "enclave/backend"
+  },
+  {
+   "from": "enclave/worker",
+   "kind": "depends_on",
+   "to": "enclave/backend"
+  },
+  {
+   "from": "enclave/worker",
+   "kind": "depends_on",
+   "to": "enclave/redis"
+  },
+  {
+   "from": "enclave/worker",
+   "kind": "depends_on",
+   "to": "enclave/vault-agent"
+  },
+  {
+   "from": "enclave/worker-sidecar",
+   "kind": "shares_netns",
+   "to": "enclave/worker"
+  },
+  {
+   "from": "enclave/worker-sidecar",
+   "kind": "depends_on",
+   "to": "enclave/worker"
+  },
+  {
+   "from": "enclave/puller",
+   "kind": "depends_on",
+   "to": "enclave/backend"
+  },
+  {
+   "from": "enclave/puller",
+   "kind": "depends_on",
+   "to": "enclave/minio"
+  },
+  {
+   "from": "enclave/puller-sidecar",
+   "kind": "shares_netns",
+   "to": "enclave/puller"
+  },
+  {
+   "from": "enclave/puller-sidecar",
+   "kind": "depends_on",
+   "to": "enclave/puller"
+  },
+  {
+   "from": "dmz/broker",
+   "kind": "shares_netns",
+   "to": "dmz/bastion"
+  },
+  {
+   "from": "dmz/broker",
+   "kind": "depends_on",
+   "to": "dmz/bastion"
+  },
+  {
+   "from": "workstation/browser",
+   "kind": "shares_netns",
+   "to": "workstation/tailnet"
+  },
+  {
+   "from": "workstation/browser",
+   "kind": "depends_on",
+   "to": "workstation/tailnet"
+  },
+  {
+   "from": "workstation/probe",
+   "kind": "shares_netns",
+   "to": "workstation/tailnet"
+  },
+  {
+   "from": "workstation/probe",
+   "kind": "depends_on",
+   "to": "workstation/tailnet"
+  },
+  {
+   "from": "deploy/deploy.sh",
+   "kind": "runs",
+   "to": "dmz/gen-receiver-cert.sh"
+  },
+  {
+   "from": "deploy/deploy.sh",
+   "kind": "runs",
+   "to": "hashicorp/access/gen-boundary-cert.sh"
+  },
+  {
+   "from": "deploy/deploy.sh",
+   "kind": "runs",
+   "to": "hashicorp/access/gen-headscale-cert.sh"
+  },
+  {
+   "from": "deploy/deploy.sh",
+   "kind": "runs",
+   "to": "hashicorp/consul/consul-acl-bootstrap.sh"
+  },
+  {
+   "from": "deploy/deploy.sh",
+   "kind": "runs",
+   "to": "hashicorp/consul/gen-consul-secrets.sh"
+  },
+  {
+   "from": "deploy/deploy.sh",
+   "kind": "runs",
+   "to": "hashicorp/consul/register-mesh.sh"
+  },
+  {
+   "from": "deploy/deploy.sh",
+   "kind": "runs",
+   "to": "hashicorp/vault/vault-unseal.sh"
+  },
+  {
+   "from": "deploy/deploy.sh",
+   "kind": "runs",
+   "to": "test/lib/evidence.sh"
+  },
+  {
+   "from": "deploy/deploy.sh",
+   "kind": "drives",
+   "to": "agent/remediation-agent"
+  },
+  {
+   "from": "deploy/deploy.sh",
+   "kind": "drives",
+   "to": "dmz/bastion"
+  },
+  {
+   "from": "deploy/deploy.sh",
+   "kind": "drives",
+   "to": "dmz/broker"
+  },
+  {
+   "from": "deploy/deploy.sh",
+   "kind": "drives",
+   "to": "dmz/coredns"
+  },
+  {
+   "from": "deploy/deploy.sh",
+   "kind": "drives",
+   "to": "dmz/headscale"
+  },
+  {
+   "from": "deploy/deploy.sh",
+   "kind": "drives",
+   "to": "dmz/receiver"
+  },
+  {
+   "from": "deploy/deploy.sh",
+   "kind": "drives",
+   "to": "enclave/backend"
+  },
+  {
+   "from": "deploy/deploy.sh",
+   "kind": "drives",
+   "to": "enclave/boundary"
+  },
+  {
+   "from": "deploy/deploy.sh",
+   "kind": "drives",
+   "to": "enclave/boundary-db"
+  },
+  {
+   "from": "deploy/deploy.sh",
+   "kind": "drives",
+   "to": "enclave/boundary-egress"
+  },
+  {
+   "from": "deploy/deploy.sh",
+   "kind": "drives",
+   "to": "enclave/consul"
+  },
+  {
+   "from": "deploy/deploy.sh",
+   "kind": "drives",
+   "to": "enclave/coredns"
+  },
+  {
+   "from": "deploy/deploy.sh",
+   "kind": "drives",
+   "to": "enclave/db"
+  },
+  {
+   "from": "deploy/deploy.sh",
+   "kind": "drives",
+   "to": "enclave/db-bootstrap"
+  },
+  {
+   "from": "deploy/deploy.sh",
+   "kind": "drives",
+   "to": "enclave/keycloak"
+  },
+  {
+   "from": "deploy/deploy.sh",
+   "kind": "drives",
+   "to": "enclave/minio"
+  },
+  {
+   "from": "deploy/deploy.sh",
+   "kind": "drives",
+   "to": "enclave/oauth2-proxy"
+  },
+  {
+   "from": "deploy/deploy.sh",
+   "kind": "drives",
+   "to": "enclave/puller"
+  },
+  {
+   "from": "deploy/deploy.sh",
+   "kind": "drives",
+   "to": "enclave/redis"
+  },
+  {
+   "from": "deploy/deploy.sh",
+   "kind": "drives",
+   "to": "enclave/traefik"
+  },
+  {
+   "from": "deploy/deploy.sh",
+   "kind": "drives",
+   "to": "enclave/vault"
+  },
+  {
+   "from": "deploy/deploy.sh",
+   "kind": "drives",
+   "to": "enclave/vault-agent"
+  },
+  {
+   "from": "deploy/deploy.sh",
+   "kind": "drives",
+   "to": "enclave/vault-setup"
+  },
+  {
+   "from": "deploy/deploy.sh",
+   "kind": "drives",
+   "to": "enclave/vault-sidecar"
+  },
+  {
+   "from": "deploy/deploy.sh",
+   "kind": "drives",
+   "to": "enclave/worker"
+  },
+  {
+   "from": "deploy/deploy.sh",
+   "kind": "drives",
+   "to": "workstation/browser"
+  },
+  {
+   "from": "deploy/deploy.sh",
+   "kind": "drives",
+   "to": "workstation/tailnet"
+  },
+  {
+   "from": "hashicorp/access/tailnet_bootstrap.sh",
+   "kind": "drives",
+   "to": "dmz/headscale"
+  },
+  {
+   "from": "hashicorp/consul/consul-acl-bootstrap.sh",
+   "kind": "drives",
+   "to": "enclave/consul"
+  },
+  {
+   "from": "hashicorp/consul/register-mesh.sh",
+   "kind": "drives",
+   "to": "enclave/backend"
+  },
+  {
+   "from": "hashicorp/consul/register-mesh.sh",
+   "kind": "drives",
+   "to": "enclave/consul"
+  },
+  {
+   "from": "hashicorp/consul/register-mesh.sh",
+   "kind": "drives",
+   "to": "enclave/db"
+  },
+  {
+   "from": "hashicorp/consul/register-mesh.sh",
+   "kind": "drives",
+   "to": "enclave/frontend"
+  },
+  {
+   "from": "hashicorp/consul/register-mesh.sh",
+   "kind": "drives",
+   "to": "enclave/minio"
+  },
+  {
+   "from": "hashicorp/consul/register-mesh.sh",
+   "kind": "drives",
+   "to": "enclave/puller"
+  },
+  {
+   "from": "hashicorp/consul/register-mesh.sh",
+   "kind": "drives",
+   "to": "enclave/vault"
+  },
+  {
+   "from": "hashicorp/consul/register-mesh.sh",
+   "kind": "drives",
+   "to": "enclave/worker"
+  },
+  {
+   "from": "hashicorp/vault/rotate-app-creds.sh",
+   "kind": "drives",
+   "to": "enclave/backend"
+  },
+  {
+   "from": "hashicorp/vault/rotate-app-creds.sh",
+   "kind": "drives",
+   "to": "enclave/backend-sidecar"
+  },
+  {
+   "from": "hashicorp/vault/rotate-app-creds.sh",
+   "kind": "drives",
+   "to": "enclave/vault-agent"
+  },
+  {
+   "from": "hashicorp/vault/rotate-app-creds.sh",
+   "kind": "drives",
+   "to": "enclave/worker"
+  },
+  {
+   "from": "hashicorp/vault/rotate-app-creds.sh",
+   "kind": "drives",
+   "to": "enclave/worker-sidecar"
+  },
+  {
+   "from": "hashicorp/vault/vault-unseal.sh",
+   "kind": "drives",
+   "to": "enclave/vault"
+  },
+  {
+   "from": "troubleshooting/diagnose.sh",
+   "kind": "drives",
+   "to": "dmz/bastion"
+  },
+  {
+   "from": "troubleshooting/diagnose.sh",
+   "kind": "drives",
+   "to": "dmz/broker"
+  },
+  {
+   "from": "troubleshooting/diagnose.sh",
+   "kind": "drives",
+   "to": "enclave/boundary"
+  },
+  {
+   "from": "troubleshooting/diagnose.sh",
+   "kind": "drives",
+   "to": "enclave/boundary-egress"
+  },
+  {
+   "from": "troubleshooting/diagnose.sh",
+   "kind": "drives",
+   "to": "workstation/tailnet"
+  },
+  {
+   "from": "troubleshooting/remediation-agent.sh",
+   "kind": "runs",
+   "to": "deploy/deploy.sh"
+  },
+  {
+   "from": "troubleshooting/remediation-agent.sh",
+   "kind": "runs",
+   "to": "hashicorp/consul/consul-acl-bootstrap.sh"
+  },
+  {
+   "from": "troubleshooting/remediation-agent.sh",
+   "kind": "runs",
+   "to": "hashicorp/vault/rotate-app-creds.sh"
+  },
+  {
+   "from": "troubleshooting/remediation-agent.sh",
+   "kind": "runs",
+   "to": "hashicorp/vault/vault-unseal.sh"
+  },
+  {
+   "from": "troubleshooting/remediation-agent.sh",
+   "kind": "drives",
+   "to": "enclave/backend"
+  },
+  {
+   "from": "troubleshooting/remediation-agent.sh",
+   "kind": "drives",
+   "to": "enclave/boundary"
+  },
+  {
+   "from": "troubleshooting/remediation-agent.sh",
+   "kind": "drives",
+   "to": "enclave/worker"
+  },
+  {
+   "from": "troubleshooting/remediation-agent.sh",
+   "kind": "drives",
+   "to": "enclave/worker-sidecar"
+  },
+  {
+   "from": "test/seed_regions.sh",
+   "kind": "drives",
+   "to": "enclave/backend"
+  },
+  {
+   "from": "test/uat_baseline.sh",
+   "kind": "runs",
+   "to": "test/lib/report.sh"
+  },
+  {
+   "from": "test/uat_baseline.sh",
+   "kind": "drives",
+   "to": "dmz/receiver"
+  },
+  {
+   "from": "test/uat_baseline.sh",
+   "kind": "drives",
+   "to": "enclave/backend"
+  },
+  {
+   "from": "test/uat_baseline.sh",
+   "kind": "drives",
+   "to": "enclave/db"
+  },
+  {
+   "from": "test/uat_baseline.sh",
+   "kind": "drives",
+   "to": "enclave/keycloak"
+  },
+  {
+   "from": "test/uat_baseline.sh",
+   "kind": "drives",
+   "to": "enclave/minio"
+  },
+  {
+   "from": "test/uat_baseline.sh",
+   "kind": "drives",
+   "to": "enclave/puller"
+  },
+  {
+   "from": "test/uat_baseline.sh",
+   "kind": "drives",
+   "to": "enclave/redis"
+  },
+  {
+   "from": "test/uat_baseline.sh",
+   "kind": "drives",
+   "to": "enclave/worker"
+  },
+  {
+   "from": "test/uat_boundary.sh",
+   "kind": "runs",
+   "to": "test/lib/report.sh"
+  },
+  {
+   "from": "test/uat_boundary.sh",
+   "kind": "drives",
+   "to": "dmz/bastion"
+  },
+  {
+   "from": "test/uat_boundary.sh",
+   "kind": "drives",
+   "to": "dmz/broker"
+  },
+  {
+   "from": "test/uat_boundary.sh",
+   "kind": "drives",
+   "to": "enclave/backend"
+  },
+  {
+   "from": "test/uat_boundary.sh",
+   "kind": "drives",
+   "to": "enclave/boundary"
+  },
+  {
+   "from": "test/uat_boundary.sh",
+   "kind": "drives",
+   "to": "enclave/boundary-db"
+  },
+  {
+   "from": "test/uat_boundary.sh",
+   "kind": "drives",
+   "to": "enclave/boundary-egress"
+  },
+  {
+   "from": "test/uat_consul.sh",
+   "kind": "runs",
+   "to": "test/lib/report.sh"
+  },
+  {
+   "from": "test/uat_consul.sh",
+   "kind": "drives",
+   "to": "enclave/backend"
+  },
+  {
+   "from": "test/uat_consul.sh",
+   "kind": "drives",
+   "to": "enclave/consul"
+  },
+  {
+   "from": "test/uat_consul.sh",
+   "kind": "drives",
+   "to": "enclave/frontend"
+  },
+  {
+   "from": "test/uat_consul.sh",
+   "kind": "drives",
+   "to": "enclave/vault-agent"
+  },
+  {
+   "from": "test/uat_dns.sh",
+   "kind": "runs",
+   "to": "test/lib/report.sh"
+  },
+  {
+   "from": "test/uat_dns.sh",
+   "kind": "drives",
+   "to": "dmz/bastion"
+  },
+  {
+   "from": "test/uat_dns.sh",
+   "kind": "drives",
+   "to": "dmz/coredns"
+  },
+  {
+   "from": "test/uat_dns.sh",
+   "kind": "drives",
+   "to": "dmz/receiver"
+  },
+  {
+   "from": "test/uat_dns.sh",
+   "kind": "drives",
+   "to": "enclave/backend"
+  },
+  {
+   "from": "test/uat_dns.sh",
+   "kind": "drives",
+   "to": "enclave/coredns"
+  },
+  {
+   "from": "test/uat_dns.sh",
+   "kind": "drives",
+   "to": "enclave/keycloak"
+  },
+  {
+   "from": "test/uat_dns.sh",
+   "kind": "drives",
+   "to": "enclave/puller"
+  },
+  {
+   "from": "test/uat_dns.sh",
+   "kind": "drives",
+   "to": "enclave/traefik"
+  },
+  {
+   "from": "test/uat_dns.sh",
+   "kind": "drives",
+   "to": "enclave/worker"
+  },
+  {
+   "from": "test/uat_dns.sh",
+   "kind": "drives",
+   "to": "workstation/browser"
+  },
+  {
+   "from": "test/uat_e2e.sh",
+   "kind": "runs",
+   "to": "collector/build.sh"
+  },
+  {
+   "from": "test/uat_e2e.sh",
+   "kind": "runs",
+   "to": "deploy/deploy.sh"
+  },
+  {
+   "from": "test/uat_e2e.sh",
+   "kind": "runs",
+   "to": "re-workstation/stage_regions.sh"
+  },
+  {
+   "from": "test/uat_e2e.sh",
+   "kind": "runs",
+   "to": "test/lib/report.sh"
+  },
+  {
+   "from": "test/uat_e2e.sh",
+   "kind": "runs",
+   "to": "test/seed_regions.sh"
+  },
+  {
+   "from": "test/uat_e2e.sh",
+   "kind": "runs",
+   "to": "workstation/launch.sh"
+  },
+  {
+   "from": "test/uat_e2e.sh",
+   "kind": "drives",
+   "to": "dmz/receiver"
+  },
+  {
+   "from": "test/uat_e2e.sh",
+   "kind": "drives",
+   "to": "enclave/backend"
+  },
+  {
+   "from": "test/uat_e2e.sh",
+   "kind": "drives",
+   "to": "enclave/consul"
+  },
+  {
+   "from": "test/uat_e2e.sh",
+   "kind": "drives",
+   "to": "enclave/puller"
+  },
+  {
+   "from": "test/uat_e2e.sh",
+   "kind": "drives",
+   "to": "enclave/vault"
+  },
+  {
+   "from": "test/uat_e2e.sh",
+   "kind": "drives",
+   "to": "enclave/worker"
+  },
+  {
+   "from": "test/uat_full_stack.sh",
+   "kind": "runs",
+   "to": "deploy/deploy.sh"
+  },
+  {
+   "from": "test/uat_full_stack.sh",
+   "kind": "runs",
+   "to": "test/lib/evidence.sh"
+  },
+  {
+   "from": "test/uat_full_stack.sh",
+   "kind": "runs",
+   "to": "test/lib/report.sh"
+  },
+  {
+   "from": "test/uat_full_stack.sh",
+   "kind": "drives",
+   "to": "dmz/broker"
+  },
+  {
+   "from": "test/uat_full_stack.sh",
+   "kind": "drives",
+   "to": "dmz/coredns"
+  },
+  {
+   "from": "test/uat_full_stack.sh",
+   "kind": "drives",
+   "to": "dmz/receiver"
+  },
+  {
+   "from": "test/uat_full_stack.sh",
+   "kind": "drives",
+   "to": "enclave/backend"
+  },
+  {
+   "from": "test/uat_full_stack.sh",
+   "kind": "drives",
+   "to": "enclave/keycloak"
+  },
+  {
+   "from": "test/uat_full_stack.sh",
+   "kind": "drives",
+   "to": "enclave/puller"
+  },
+  {
+   "from": "test/uat_full_stack.sh",
+   "kind": "drives",
+   "to": "enclave/traefik"
+  },
+  {
+   "from": "test/uat_full_stack.sh",
+   "kind": "drives",
+   "to": "enclave/worker"
+  },
+  {
+   "from": "test/uat_full_stack.sh",
+   "kind": "drives",
+   "to": "workstation/probe"
+  },
+  {
+   "from": "test/uat_memory_analysis.sh",
+   "kind": "drives",
+   "to": "enclave/backend"
+  },
+  {
+   "from": "test/uat_memory_analysis.sh",
+   "kind": "drives",
+   "to": "enclave/worker"
+  },
+  {
+   "from": "test/uat_mesh_multihost.sh",
+   "kind": "runs",
+   "to": "test/lib/report.sh"
+  },
+  {
+   "from": "test/uat_re_workstation.sh",
+   "kind": "runs",
+   "to": "test/lib/report.sh"
+  },
+  {
+   "from": "test/uat_re_workstation.sh",
+   "kind": "drives",
+   "to": "dmz/receiver"
+  },
+  {
+   "from": "test/uat_re_workstation.sh",
+   "kind": "drives",
+   "to": "enclave/backend"
+  },
+  {
+   "from": "test/uat_re_workstation.sh",
+   "kind": "drives",
+   "to": "enclave/minio"
+  },
+  {
+   "from": "test/uat_repairs.sh",
+   "kind": "runs",
+   "to": "test/lib/report.sh"
+  },
+  {
+   "from": "test/uat_repairs.sh",
+   "kind": "drives",
+   "to": "agent/remediation-agent"
+  },
+  {
+   "from": "test/uat_repairs.sh",
+   "kind": "drives",
+   "to": "enclave/backend"
+  },
+  {
+   "from": "test/uat_repairs.sh",
+   "kind": "drives",
+   "to": "enclave/consul"
+  },
+  {
+   "from": "test/uat_tailnet.sh",
+   "kind": "runs",
+   "to": "test/lib/report.sh"
+  },
+  {
+   "from": "test/uat_tailnet.sh",
+   "kind": "drives",
+   "to": "dmz/bastion"
+  },
+  {
+   "from": "test/uat_tailnet.sh",
+   "kind": "drives",
+   "to": "dmz/headscale"
+  },
+  {
+   "from": "test/uat_tailnet.sh",
+   "kind": "drives",
+   "to": "workstation/browser"
+  },
+  {
+   "from": "test/uat_tailnet.sh",
+   "kind": "drives",
+   "to": "workstation/tailnet"
+  },
+  {
+   "from": "test/uat_ui.sh",
+   "kind": "drives",
+   "to": "enclave/backend"
+  },
+  {
+   "from": "test/uat_vault.sh",
+   "kind": "runs",
+   "to": "hashicorp/vault/rotate-app-creds.sh"
+  },
+  {
+   "from": "test/uat_vault.sh",
+   "kind": "runs",
+   "to": "test/lib/report.sh"
+  },
+  {
+   "from": "test/uat_vault.sh",
+   "kind": "drives",
+   "to": "enclave/backend"
+  },
+  {
+   "from": "test/uat_vault.sh",
+   "kind": "drives",
+   "to": "enclave/db"
+  },
+  {
+   "from": "test/uat_vault.sh",
+   "kind": "drives",
+   "to": "enclave/vault"
+  },
+  {
+   "from": "test/uat_vault.sh",
+   "kind": "drives",
+   "to": "enclave/vault-agent"
+  },
+  {
+   "from": "test/uat_vault.sh",
+   "kind": "drives",
+   "to": "enclave/worker"
+  },
+  {
+   "from": "test/uat_baseline.sh",
+   "kind": "proves",
+   "to": "dmz/receiver"
+  },
+  {
+   "from": "test/uat_baseline.sh",
+   "kind": "proves",
+   "to": "enclave/backend"
+  },
+  {
+   "from": "test/uat_baseline.sh",
+   "kind": "proves",
+   "to": "enclave/db"
+  },
+  {
+   "from": "test/uat_baseline.sh",
+   "kind": "proves",
+   "to": "enclave/keycloak"
+  },
+  {
+   "from": "test/uat_baseline.sh",
+   "kind": "proves",
+   "to": "enclave/minio"
+  },
+  {
+   "from": "test/uat_baseline.sh",
+   "kind": "proves",
+   "to": "enclave/puller"
+  },
+  {
+   "from": "test/uat_baseline.sh",
+   "kind": "proves",
+   "to": "enclave/redis"
+  },
+  {
+   "from": "test/uat_baseline.sh",
+   "kind": "proves",
+   "to": "enclave/worker"
+  },
+  {
+   "from": "test/uat_boundary.sh",
+   "kind": "proves",
+   "to": "dmz/bastion"
+  },
+  {
+   "from": "test/uat_boundary.sh",
+   "kind": "proves",
+   "to": "dmz/broker"
+  },
+  {
+   "from": "test/uat_boundary.sh",
+   "kind": "proves",
+   "to": "enclave/backend"
+  },
+  {
+   "from": "test/uat_boundary.sh",
+   "kind": "proves",
+   "to": "enclave/boundary"
+  },
+  {
+   "from": "test/uat_boundary.sh",
+   "kind": "proves",
+   "to": "enclave/boundary-db"
+  },
+  {
+   "from": "test/uat_boundary.sh",
+   "kind": "proves",
+   "to": "enclave/boundary-egress"
+  },
+  {
+   "from": "test/uat_consul.sh",
+   "kind": "proves",
+   "to": "enclave/backend"
+  },
+  {
+   "from": "test/uat_consul.sh",
+   "kind": "proves",
+   "to": "enclave/consul"
+  },
+  {
+   "from": "test/uat_consul.sh",
+   "kind": "proves",
+   "to": "enclave/frontend"
+  },
+  {
+   "from": "test/uat_consul.sh",
+   "kind": "proves",
+   "to": "enclave/vault-agent"
+  },
+  {
+   "from": "test/uat_dns.sh",
+   "kind": "proves",
+   "to": "dmz/bastion"
+  },
+  {
+   "from": "test/uat_dns.sh",
+   "kind": "proves",
+   "to": "dmz/coredns"
+  },
+  {
+   "from": "test/uat_dns.sh",
+   "kind": "proves",
+   "to": "dmz/receiver"
+  },
+  {
+   "from": "test/uat_dns.sh",
+   "kind": "proves",
+   "to": "enclave/backend"
+  },
+  {
+   "from": "test/uat_dns.sh",
+   "kind": "proves",
+   "to": "enclave/coredns"
+  },
+  {
+   "from": "test/uat_dns.sh",
+   "kind": "proves",
+   "to": "enclave/keycloak"
+  },
+  {
+   "from": "test/uat_dns.sh",
+   "kind": "proves",
+   "to": "enclave/puller"
+  },
+  {
+   "from": "test/uat_dns.sh",
+   "kind": "proves",
+   "to": "enclave/traefik"
+  },
+  {
+   "from": "test/uat_dns.sh",
+   "kind": "proves",
+   "to": "enclave/worker"
+  },
+  {
+   "from": "test/uat_dns.sh",
+   "kind": "proves",
+   "to": "workstation/browser"
+  },
+  {
+   "from": "test/uat_e2e.sh",
+   "kind": "proves",
+   "to": "dmz/receiver"
+  },
+  {
+   "from": "test/uat_e2e.sh",
+   "kind": "proves",
+   "to": "enclave/backend"
+  },
+  {
+   "from": "test/uat_e2e.sh",
+   "kind": "proves",
+   "to": "enclave/consul"
+  },
+  {
+   "from": "test/uat_e2e.sh",
+   "kind": "proves",
+   "to": "enclave/puller"
+  },
+  {
+   "from": "test/uat_e2e.sh",
+   "kind": "proves",
+   "to": "enclave/vault"
+  },
+  {
+   "from": "test/uat_e2e.sh",
+   "kind": "proves",
+   "to": "enclave/worker"
+  },
+  {
+   "from": "test/uat_full_stack.sh",
+   "kind": "proves",
+   "to": "dmz/broker"
+  },
+  {
+   "from": "test/uat_full_stack.sh",
+   "kind": "proves",
+   "to": "dmz/coredns"
+  },
+  {
+   "from": "test/uat_full_stack.sh",
+   "kind": "proves",
+   "to": "dmz/receiver"
+  },
+  {
+   "from": "test/uat_full_stack.sh",
+   "kind": "proves",
+   "to": "enclave/backend"
+  },
+  {
+   "from": "test/uat_full_stack.sh",
+   "kind": "proves",
+   "to": "enclave/keycloak"
+  },
+  {
+   "from": "test/uat_full_stack.sh",
+   "kind": "proves",
+   "to": "enclave/puller"
+  },
+  {
+   "from": "test/uat_full_stack.sh",
+   "kind": "proves",
+   "to": "enclave/traefik"
+  },
+  {
+   "from": "test/uat_full_stack.sh",
+   "kind": "proves",
+   "to": "enclave/worker"
+  },
+  {
+   "from": "test/uat_full_stack.sh",
+   "kind": "proves",
+   "to": "workstation/probe"
+  },
+  {
+   "from": "test/uat_memory_analysis.sh",
+   "kind": "proves",
+   "to": "enclave/backend"
+  },
+  {
+   "from": "test/uat_memory_analysis.sh",
+   "kind": "proves",
+   "to": "enclave/worker"
+  },
+  {
+   "from": "test/uat_re_workstation.sh",
+   "kind": "proves",
+   "to": "dmz/receiver"
+  },
+  {
+   "from": "test/uat_re_workstation.sh",
+   "kind": "proves",
+   "to": "enclave/backend"
+  },
+  {
+   "from": "test/uat_re_workstation.sh",
+   "kind": "proves",
+   "to": "enclave/minio"
+  },
+  {
+   "from": "test/uat_repairs.sh",
+   "kind": "proves",
+   "to": "agent/remediation-agent"
+  },
+  {
+   "from": "test/uat_repairs.sh",
+   "kind": "proves",
+   "to": "enclave/backend"
+  },
+  {
+   "from": "test/uat_repairs.sh",
+   "kind": "proves",
+   "to": "enclave/consul"
+  },
+  {
+   "from": "test/uat_tailnet.sh",
+   "kind": "proves",
+   "to": "dmz/bastion"
+  },
+  {
+   "from": "test/uat_tailnet.sh",
+   "kind": "proves",
+   "to": "dmz/headscale"
+  },
+  {
+   "from": "test/uat_tailnet.sh",
+   "kind": "proves",
+   "to": "workstation/browser"
+  },
+  {
+   "from": "test/uat_tailnet.sh",
+   "kind": "proves",
+   "to": "workstation/tailnet"
+  },
+  {
+   "from": "test/uat_ui.sh",
+   "kind": "proves",
+   "to": "enclave/backend"
+  },
+  {
+   "from": "test/uat_vault.sh",
+   "kind": "proves",
+   "to": "enclave/backend"
+  },
+  {
+   "from": "test/uat_vault.sh",
+   "kind": "proves",
+   "to": "enclave/db"
+  },
+  {
+   "from": "test/uat_vault.sh",
+   "kind": "proves",
+   "to": "enclave/vault"
+  },
+  {
+   "from": "test/uat_vault.sh",
+   "kind": "proves",
+   "to": "enclave/vault-agent"
+  },
+  {
+   "from": "test/uat_vault.sh",
+   "kind": "proves",
+   "to": "enclave/worker"
+  }
+ ],
+ "frontend_pages": {
+  "Admin": {
+   "platformMetrics": "/admin/metrics/",
+   "symbolRequests": "/admin/symbols/",
+   "symbolRequisitesUrl": "/api/admin/symbols/requisites/",
+   "taskStatus": "/tasks/"
+  },
+  "AnalysisDiff": {
+   "analysisDiff": "/captures/"
+  },
+  "Audit": {
+   "audit": "/audit/",
+   "auditExportUrl": "?"
+  },
+  "BrokeredSessions": {
+   "brokeredSessions": "/brokered-sessions/"
+  },
+  "ComponentHealth": {
+   "componentHealth": "/admin/component-health/"
+  },
+  "Correlation": {
+   "campaignGraph": "/correlation/campaigns/",
+   "campaignTimeline": "/correlation/campaigns/",
+   "correlation": "/correlation/investigations/",
+   "investigations": "/investigations/",
+   "recorrelate": "?",
+   "sharedIndicators": "/correlation/indicators/"
+  },
+  "Dashboard": {
+   "facets": "/facets/",
+   "stats": "/stats/",
+   "summary": "?"
+  },
+  "Findings": {
+   "bulkVerdict": "?",
+   "exportUrl": "?"
+  },
+  "InvestigationDetail": {
+   "addNote": "/notes/",
+   "deleteInvestigation": "/investigations/",
+   "investigation": "/investigations/",
+   "investigationRecord": "?",
+   "requestRescan": "/rescans/",
+   "retractNote": "/notes/"
+  },
+  "Investigations": {
+   "investigations": "/investigations/"
+  },
+  "IocSearch": {
+   "iocSearch": "/ioc-search/"
+  },
+  "MeshHealth": {
+   "meshHealth": "/admin/mesh-health/"
+  },
+  "Repairs": {
+   "remediation": "/admin/remediation/",
+   "requestRemediation": "/admin/remediation/"
+  },
+  "Reversing": {
+   "analyzeRegion": "/regions/",
+   "regionQueue": "/regions/queue/"
+  },
+  "RunDetail": {
+   "purgeCapture": "/captures/",
+   "reanalyze": "/captures/",
+   "run": "/runs/",
+   "runAdjudication": "?",
+   "runAdjudicationChain": "?"
+  },
+  "Users": {
+   "createUser": "/users/",
+   "listUsers": "/users/"
+  }
+ },
+ "scripts": {
+  "deploy/deploy.sh": {
+   "drives": [
+    "agent/remediation-agent",
+    "dmz/bastion",
+    "dmz/broker",
+    "dmz/coredns",
+    "dmz/headscale",
+    "dmz/receiver",
+    "enclave/backend",
+    "enclave/boundary",
+    "enclave/boundary-db",
+    "enclave/boundary-egress",
+    "enclave/consul",
+    "enclave/coredns",
+    "enclave/db",
+    "enclave/db-bootstrap",
+    "enclave/keycloak",
+    "enclave/minio",
+    "enclave/oauth2-proxy",
+    "enclave/puller",
+    "enclave/redis",
+    "enclave/traefik",
+    "enclave/vault",
+    "enclave/vault-agent",
+    "enclave/vault-setup",
+    "enclave/vault-sidecar",
+    "enclave/worker",
+    "workstation/browser",
+    "workstation/tailnet"
+   ],
+   "runs": [
+    "dmz/gen-receiver-cert.sh",
+    "hashicorp/access/gen-boundary-cert.sh",
+    "hashicorp/access/gen-headscale-cert.sh",
+    "hashicorp/consul/consul-acl-bootstrap.sh",
+    "hashicorp/consul/gen-consul-secrets.sh",
+    "hashicorp/consul/register-mesh.sh",
+    "hashicorp/vault/vault-unseal.sh",
+    "test/lib/evidence.sh"
+   ]
+  },
+  "hashicorp/access/tailnet_bootstrap.sh": {
+   "drives": [
+    "dmz/headscale"
+   ],
+   "runs": []
+  },
+  "hashicorp/consul/consul-acl-bootstrap.sh": {
+   "drives": [
+    "enclave/consul"
+   ],
+   "runs": []
+  },
+  "hashicorp/consul/register-mesh.sh": {
+   "drives": [
+    "enclave/backend",
+    "enclave/consul",
+    "enclave/db",
+    "enclave/frontend",
+    "enclave/minio",
+    "enclave/puller",
+    "enclave/vault",
+    "enclave/worker"
+   ],
+   "runs": []
+  },
+  "hashicorp/vault/rotate-app-creds.sh": {
+   "drives": [
+    "enclave/backend",
+    "enclave/backend-sidecar",
+    "enclave/vault-agent",
+    "enclave/worker",
+    "enclave/worker-sidecar"
+   ],
+   "runs": []
+  },
+  "hashicorp/vault/vault-unseal.sh": {
+   "drives": [
+    "enclave/vault"
+   ],
+   "runs": []
+  },
+  "test/seed_regions.sh": {
+   "drives": [
+    "enclave/backend"
+   ],
+   "runs": []
+  },
+  "test/uat_baseline.sh": {
+   "drives": [
+    "dmz/receiver",
+    "enclave/backend",
+    "enclave/db",
+    "enclave/keycloak",
+    "enclave/minio",
+    "enclave/puller",
+    "enclave/redis",
+    "enclave/worker"
+   ],
+   "runs": [
+    "test/lib/report.sh"
+   ]
+  },
+  "test/uat_boundary.sh": {
+   "drives": [
+    "dmz/bastion",
+    "dmz/broker",
+    "enclave/backend",
+    "enclave/boundary",
+    "enclave/boundary-db",
+    "enclave/boundary-egress"
+   ],
+   "runs": [
+    "test/lib/report.sh"
+   ]
+  },
+  "test/uat_consul.sh": {
+   "drives": [
+    "enclave/backend",
+    "enclave/consul",
+    "enclave/frontend",
+    "enclave/vault-agent"
+   ],
+   "runs": [
+    "test/lib/report.sh"
+   ]
+  },
+  "test/uat_dns.sh": {
+   "drives": [
+    "dmz/bastion",
+    "dmz/coredns",
+    "dmz/receiver",
+    "enclave/backend",
+    "enclave/coredns",
+    "enclave/keycloak",
+    "enclave/puller",
+    "enclave/traefik",
+    "enclave/worker",
+    "workstation/browser"
+   ],
+   "runs": [
+    "test/lib/report.sh"
+   ]
+  },
+  "test/uat_e2e.sh": {
+   "drives": [
+    "dmz/receiver",
+    "enclave/backend",
+    "enclave/consul",
+    "enclave/puller",
+    "enclave/vault",
+    "enclave/worker"
+   ],
+   "runs": [
+    "collector/build.sh",
+    "deploy/deploy.sh",
+    "re-workstation/stage_regions.sh",
+    "test/lib/report.sh",
+    "test/seed_regions.sh",
+    "workstation/launch.sh"
+   ]
+  },
+  "test/uat_full_stack.sh": {
+   "drives": [
+    "dmz/broker",
+    "dmz/coredns",
+    "dmz/receiver",
+    "enclave/backend",
+    "enclave/keycloak",
+    "enclave/puller",
+    "enclave/traefik",
+    "enclave/worker",
+    "workstation/probe"
+   ],
+   "runs": [
+    "deploy/deploy.sh",
+    "test/lib/evidence.sh",
+    "test/lib/report.sh"
+   ]
+  },
+  "test/uat_memory_analysis.sh": {
+   "drives": [
+    "enclave/backend",
+    "enclave/worker"
+   ],
+   "runs": []
+  },
+  "test/uat_mesh_multihost.sh": {
+   "drives": [],
+   "runs": [
+    "test/lib/report.sh"
+   ]
+  },
+  "test/uat_re_workstation.sh": {
+   "drives": [
+    "dmz/receiver",
+    "enclave/backend",
+    "enclave/minio"
+   ],
+   "runs": [
+    "test/lib/report.sh"
+   ]
+  },
+  "test/uat_repairs.sh": {
+   "drives": [
+    "agent/remediation-agent",
+    "enclave/backend",
+    "enclave/consul"
+   ],
+   "runs": [
+    "test/lib/report.sh"
+   ]
+  },
+  "test/uat_tailnet.sh": {
+   "drives": [
+    "dmz/bastion",
+    "dmz/headscale",
+    "workstation/browser",
+    "workstation/tailnet"
+   ],
+   "runs": [
+    "test/lib/report.sh"
+   ]
+  },
+  "test/uat_ui.sh": {
+   "drives": [
+    "enclave/backend"
+   ],
+   "runs": []
+  },
+  "test/uat_vault.sh": {
+   "drives": [
+    "enclave/backend",
+    "enclave/db",
+    "enclave/vault",
+    "enclave/vault-agent",
+    "enclave/worker"
+   ],
+   "runs": [
+    "hashicorp/vault/rotate-app-creds.sh",
+    "test/lib/report.sh"
+   ]
+  },
+  "troubleshooting/diagnose.sh": {
+   "drives": [
+    "dmz/bastion",
+    "dmz/broker",
+    "enclave/boundary",
+    "enclave/boundary-egress",
+    "workstation/tailnet"
+   ],
+   "runs": []
+  },
+  "troubleshooting/remediation-agent.sh": {
+   "drives": [
+    "enclave/backend",
+    "enclave/boundary",
+    "enclave/worker",
+    "enclave/worker-sidecar"
+   ],
+   "runs": [
+    "deploy/deploy.sh",
+    "hashicorp/consul/consul-acl-bootstrap.sh",
+    "hashicorp/vault/rotate-app-creds.sh",
+    "hashicorp/vault/vault-unseal.sh"
+   ]
+  }
+ },
+ "tiers": {
+  "agent": {
+   "remediation-agent": {
+    "depends_on": [],
+    "image": "localhost/ir-remediation-agent:latest",
+    "networks": [],
+    "shares_netns_of": null
+   }
+  },
+  "dmz": {
+   "bastion": {
+    "depends_on": [],
+    "image": "docker.io/tailscale/tailscale:v1.98.10",
+    "networks": [
+     "edge",
+     "dmzlink"
+    ],
+    "shares_netns_of": null
+   },
+   "broker": {
+    "depends_on": [
+     "bastion"
+    ],
+    "image": "docker.io/hashicorp/boundary:0.21.3",
+    "networks": [],
+    "shares_netns_of": "bastion"
+   },
+   "coredns": {
+    "depends_on": [],
+    "image": "docker.io/coredns/coredns:1.14.6",
+    "networks": [
+     "edge"
+    ],
+    "shares_netns_of": null
+   },
+   "headscale": {
+    "depends_on": [],
+    "image": "docker.io/headscale/headscale:v0.29.3",
+    "networks": [
+     "edge",
+     "dmzlink"
+    ],
+    "shares_netns_of": null
+   },
+   "receiver": {
+    "depends_on": [],
+    "image": "localhost/ir-receiver:latest",
+    "networks": [
+     "edge",
+     "dmzlink"
+    ],
+    "shares_netns_of": null
+   }
+  },
+  "enclave": {
+   "backend": {
+    "depends_on": [
+     "db",
+     "redis",
+     "minio",
+     "keycloak",
+     "vault-agent"
+    ],
+    "image": "localhost/ir-backend:latest",
+    "networks": [
+     "internal"
+    ],
+    "shares_netns_of": null
+   },
+   "backend-sidecar": {
+    "depends_on": [
+     "backend"
+    ],
+    "image": "localhost/ir-consul-sidecar:latest",
+    "networks": [],
+    "shares_netns_of": "backend"
+   },
+   "boundary": {
+    "depends_on": [
+     "boundary-db"
+    ],
+    "image": "docker.io/hashicorp/boundary:0.21.3",
+    "networks": [
+     "internal",
+     "dmzlink"
+    ],
+    "shares_netns_of": null
+   },
+   "boundary-db": {
+    "depends_on": [],
+    "image": "docker.io/library/postgres:18",
+    "networks": [
+     "internal"
+    ],
+    "shares_netns_of": null
+   },
+   "boundary-egress": {
+    "depends_on": [
+     "boundary"
+    ],
+    "image": "docker.io/hashicorp/boundary:0.21.3",
+    "networks": [
+     "internal",
+     "dmzlink"
+    ],
+    "shares_netns_of": null
+   },
+   "consul": {
+    "depends_on": [],
+    "image": "docker.io/hashicorp/consul:2.0.2",
+    "networks": [
+     "internal"
+    ],
+    "shares_netns_of": null
+   },
+   "coredns": {
+    "depends_on": [],
+    "image": "docker.io/coredns/coredns:1.14.6",
+    "networks": [
+     "internal",
+     "dmzlink"
+    ],
+    "shares_netns_of": null
+   },
+   "db": {
+    "depends_on": [],
+    "image": "docker.io/library/postgres:18",
+    "networks": [
+     "internal"
+    ],
+    "shares_netns_of": null
+   },
+   "db-bootstrap": {
+    "depends_on": [
+     "db"
+    ],
+    "image": "localhost/ir-backend:latest",
+    "networks": [],
+    "shares_netns_of": "db"
+   },
+   "db-sidecar": {
+    "depends_on": [
+     "db"
+    ],
+    "image": "localhost/ir-consul-sidecar:latest",
+    "networks": [],
+    "shares_netns_of": "db"
+   },
+   "frontend": {
+    "depends_on": [
+     "backend"
+    ],
+    "image": "localhost/ir-frontend:latest",
+    "networks": [
+     "internal"
+    ],
+    "shares_netns_of": null
+   },
+   "frontend-sidecar": {
+    "depends_on": [
+     "frontend"
+    ],
+    "image": "localhost/ir-consul-sidecar:latest",
+    "networks": [],
+    "shares_netns_of": "frontend"
+   },
+   "keycloak": {
+    "depends_on": [],
+    "image": "localhost/ir-keycloak:latest",
+    "networks": [
+     "internal",
+     "dmzlink"
+    ],
+    "shares_netns_of": null
+   },
+   "minio": {
+    "depends_on": [],
+    "image": "docker.io/minio/minio:RELEASE.2025-09-07T16-13-09Z",
+    "networks": [
+     "internal"
+    ],
+    "shares_netns_of": null
+   },
+   "minio-sidecar": {
+    "depends_on": [
+     "minio"
+    ],
+    "image": "localhost/ir-consul-sidecar:latest",
+    "networks": [],
+    "shares_netns_of": "minio"
+   },
+   "oauth2-proxy": {
+    "depends_on": [],
+    "image": "quay.io/oauth2-proxy/oauth2-proxy:v7.15.3",
+    "networks": [
+     "internal"
+    ],
+    "shares_netns_of": null
+   },
+   "puller": {
+    "depends_on": [
+     "backend",
+     "minio"
+    ],
+    "image": "localhost/ir-puller:latest",
+    "networks": [
+     "internal",
+     "dmzlink"
+    ],
+    "shares_netns_of": null
+   },
+   "puller-sidecar": {
+    "depends_on": [
+     "puller"
+    ],
+    "image": "localhost/ir-consul-sidecar:latest",
+    "networks": [],
+    "shares_netns_of": "puller"
+   },
+   "redis": {
+    "depends_on": [],
+    "image": "docker.io/library/redis:8-alpine",
+    "networks": [
+     "internal"
+    ],
+    "shares_netns_of": null
+   },
+   "traefik": {
+    "depends_on": [
+     "frontend",
+     "oauth2-proxy"
+    ],
+    "image": "docker.io/library/traefik:v3.7",
+    "networks": [
+     "internal"
+    ],
+    "shares_netns_of": null
+   },
+   "vault": {
+    "depends_on": [],
+    "image": "localhost/vault:2.0.3",
+    "networks": [
+     "internal"
+    ],
+    "shares_netns_of": null
+   },
+   "vault-agent": {
+    "depends_on": [
+     "vault"
+    ],
+    "image": "localhost/vault:2.0.3",
+    "networks": [
+     "internal"
+    ],
+    "shares_netns_of": null
+   },
+   "vault-certs-init": {
+    "depends_on": [],
+    "image": "localhost/vault:2.0.3",
+    "networks": [
+     "internal"
+    ],
+    "shares_netns_of": null
+   },
+   "vault-setup": {
+    "depends_on": [
+     "vault",
+     "db"
+    ],
+    "image": "localhost/vault:2.0.3",
+    "networks": [
+     "internal"
+    ],
+    "shares_netns_of": null
+   },
+   "vault-sidecar": {
+    "depends_on": [
+     "vault"
+    ],
+    "image": "localhost/ir-consul-sidecar:latest",
+    "networks": [],
+    "shares_netns_of": "vault"
+   },
+   "worker": {
+    "depends_on": [
+     "backend",
+     "redis",
+     "vault-agent"
+    ],
+    "image": "localhost/ir-worker:latest",
+    "networks": [
+     "internal"
+    ],
+    "shares_netns_of": null
+   },
+   "worker-sidecar": {
+    "depends_on": [
+     "worker"
+    ],
+    "image": "localhost/ir-consul-sidecar:latest",
+    "networks": [],
+    "shares_netns_of": "worker"
+   }
+  },
+  "workstation": {
+   "browser": {
+    "depends_on": [
+     "tailnet"
+    ],
+    "image": "localhost/ir-browser:latest",
+    "networks": [],
+    "shares_netns_of": "tailnet"
+   },
+   "probe": {
+    "depends_on": [
+     "tailnet"
+    ],
+    "image": "localhost/ir-workstation:latest",
+    "networks": [],
+    "shares_netns_of": "tailnet"
+   },
+   "tailnet": {
+    "depends_on": [],
+    "image": "docker.io/tailscale/tailscale:v1.98.10",
+    "networks": [
+     "edge"
+    ],
+    "shares_netns_of": null
+   }
+  }
+ },
+ "uat_coverage": {
+  "uat_baseline.sh": [
+   "dmz/receiver",
+   "enclave/backend",
+   "enclave/db",
+   "enclave/keycloak",
+   "enclave/minio",
+   "enclave/puller",
+   "enclave/redis",
+   "enclave/worker"
+  ],
+  "uat_boundary.sh": [
+   "dmz/bastion",
+   "dmz/broker",
+   "enclave/backend",
+   "enclave/boundary",
+   "enclave/boundary-db",
+   "enclave/boundary-egress"
+  ],
+  "uat_consul.sh": [
+   "enclave/backend",
+   "enclave/consul",
+   "enclave/frontend",
+   "enclave/vault-agent"
+  ],
+  "uat_dns.sh": [
+   "dmz/bastion",
+   "dmz/coredns",
+   "dmz/receiver",
+   "enclave/backend",
+   "enclave/coredns",
+   "enclave/keycloak",
+   "enclave/puller",
+   "enclave/traefik",
+   "enclave/worker",
+   "workstation/browser"
+  ],
+  "uat_e2e.sh": [
+   "dmz/receiver",
+   "enclave/backend",
+   "enclave/consul",
+   "enclave/puller",
+   "enclave/vault",
+   "enclave/worker"
+  ],
+  "uat_full_stack.sh": [
+   "dmz/broker",
+   "dmz/coredns",
+   "dmz/receiver",
+   "enclave/backend",
+   "enclave/keycloak",
+   "enclave/puller",
+   "enclave/traefik",
+   "enclave/worker",
+   "workstation/probe"
+  ],
+  "uat_memory_analysis.sh": [
+   "enclave/backend",
+   "enclave/worker"
+  ],
+  "uat_mesh_multihost.sh": [],
+  "uat_re_workstation.sh": [
+   "dmz/receiver",
+   "enclave/backend",
+   "enclave/minio"
+  ],
+  "uat_repairs.sh": [
+   "agent/remediation-agent",
+   "enclave/backend",
+   "enclave/consul"
+  ],
+  "uat_tailnet.sh": [
+   "dmz/bastion",
+   "dmz/headscale",
+   "workstation/browser",
+   "workstation/tailnet"
+  ],
+  "uat_ui.sh": [
+   "enclave/backend"
+  ],
+  "uat_vault.sh": [
+   "enclave/backend",
+   "enclave/db",
+   "enclave/vault",
+   "enclave/vault-agent",
+   "enclave/worker"
+  ]
+ }
+}

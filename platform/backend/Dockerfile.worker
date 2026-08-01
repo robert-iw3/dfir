@@ -1,0 +1,65 @@
+# Analysis worker — the Django worker plus the toolkit's proven memory-analysis stack.
+#
+# Built from a staged context (see build_worker.sh), not from this directory: the analyzer
+# and its Volatility plugins live in the toolkit tree, outside the backend build context.
+#
+# This image is deliberately separate from the API image. The worker is the only component
+# that parses hazardous evidence, so Volatility, YARA and the analysis code exist only
+# where they are needed and never in the request-serving tier.
+#
+# The base distro does not need to match the analyzed host's. Volatility 3 parses the raw
+# image using the ISF symbol table, which carries the struct offsets and symbol addresses
+# for the target kernel; no target code runs and nothing links against target libc. What
+# DOES need the target's distro is building that ISF from DWARF debug symbols — a step that
+# needs internet access and therefore happens outside the enclave, in per-distro symbol
+# builders (see symbols/).
+FROM docker.io/library/alpine:3.24
+
+# yara-dev is required to build the YARA Python bindings from source: the published wheels
+# target CPython 3.13 and this base ships 3.14.
+RUN apk add --no-cache \
+        python3 py3-pip libpq bash tzdata \
+    && apk add --no-cache --virtual .build \
+        build-base python3-dev yara-dev libffi-dev
+
+WORKDIR /app
+COPY requirements.txt .
+RUN python3 -m venv /venv \
+    && /venv/bin/pip install --no-cache-dir --upgrade pip setuptools wheel \
+    && /venv/bin/pip install --no-cache-dir -r requirements.txt
+
+# Volatility 3 from the toolkit's staged wheels, so the analysis engine version is pinned
+# with the toolkit rather than resolved at build time.
+COPY vol3_wheels /tmp/vol3_wheels
+RUN /venv/bin/pip install --no-cache-dir /tmp/vol3_wheels/volatility3-*.whl \
+                                         /tmp/vol3_wheels/pefile-*.whl \
+    && /venv/bin/pip install --no-cache-dir yara-python \
+    && rm -rf /tmp/vol3_wheels
+
+# The proven analysis code: the analyzer, its enrichment pass, the custom Volatility
+# plugins for structures no stock plugin exposes, the YARA rule set, and the investigation
+# engine that adjudicates what they produce.
+COPY toolkit /opt/toolkit
+
+COPY . .
+
+RUN apk del .build \
+    && adduser -D -u 10001 worker \
+    && chown -R worker:worker /app
+
+ENV PATH="/venv/bin:${PATH}" \
+    IR_TOOLKIT_DIR=/opt/toolkit \
+    IR_SYMBOLS_DIR=/symbols \
+    VOLATILITY_SYMBOL_PATH=/symbols
+
+# Build-time smoke test: the analysis stack imports and the analyzer is executable.
+RUN /venv/bin/vol --help >/dev/null \
+    && /venv/bin/python -c "import yara; print('yara', yara.__version__)" \
+    && /venv/bin/python -c "import django; print('django', django.get_version())" \
+    && test -f /opt/toolkit/playbooks/linux/threat_hunting/analyze_memory_linux.py \
+    && PYTHONPATH=/opt/toolkit /venv/bin/python -c \
+       "from playbooks.linux.investigation import live_runner; print('investigation engine ok')"
+
+USER worker
+ENTRYPOINT ["/app/entrypoint.sh"]
+CMD ["worker"]

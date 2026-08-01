@@ -1,0 +1,94 @@
+# ===========================================================================
+# TIER: ANALYST WORKSTATION — deploys to the analyst's own machine.
+#
+# A locked-down browser and nothing else. It joins the DMZ's tailnet, resolves the
+# single platform name via the DMZ resolver, and reaches exactly one port on the
+# bastion broker. No internet, no outbound DNS, no clipboard, one origin.
+#
+#   xhost +local:                       # once, so the container may use the X display
+#   podman-compose -p ir-workstation --env-file ../.env -f docker-compose.yml up -d
+# ===========================================================================
+networks:
+  # No gateway: the analyst side cannot egress. On real hardware this is the
+  # workstation VLAN, whose only permitted destination is the broker (see NETWORKING.md).
+  edge:
+    external: true
+    name: ir-edge
+
+services:
+  # The analyst side's tailnet node — this workstation's end of the WireGuard tunnel.
+  #
+  # A real tun device rather than userspace networking, so "this workstation cannot address an
+  # internal host" is a routing fact and not a claim: the only destinations in its table are
+  # the edge network and the tailnet, and the tailnet ACL permits exactly one port on the
+  # bastion. /dev/net/tun is world-writable on the host so a rootless container can open it,
+  # and NET_ADMIN applies only inside this container's own namespace.
+  #
+  # `--accept-routes=false` is load-bearing: a subnet route advertised from the other side is
+  # precisely the hole this design exists to close, so the node refuses to install any.
+  tailnet:
+    image: docker.io/tailscale/tailscale:v1.98.10
+    hostname: analyst
+    environment:
+      # Pins the control plane's certificate as this process's ENTIRE trust pool. Go honors
+      # SSL_CERT_FILE, so tailscaled will verify headscale and nothing else — which is all it
+      # should ever connect to, and it is what lets the embedded DERP relay be used at all.
+      SSL_CERT_FILE: /certs/headscale.crt
+      TS_AUTHKEY: "${TS_ANALYST_AUTHKEY:-}"
+      TS_EXTRA_ARGS: "--login-server=${HEADSCALE_LOGIN_URL} --hostname=analyst --accept-routes=false"
+      TS_STATE_DIR: /var/lib/tailscale
+      TS_USERSPACE: "false"
+      # Off, so the DMZ resolver stays the workstation's only resolver — the
+      # browser shares this namespace and must keep resolving one name only.
+      TS_ACCEPT_DNS: "false"
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    cap_add: [NET_ADMIN, NET_RAW]
+    volumes:
+      - analyst-tailnet-state:/var/lib/tailscale
+      - ../../hashicorp/access/certs/headscale.crt:/certs/headscale.crt:ro,z
+    dns: ["${DNS_EDGE_IP}"]          # the DMZ resolver is the ONLY resolver
+    dns_search: ["${RUNTIME_DNS_ZONE}"]
+    networks: [edge]
+
+  # DISA-STIG-aligned Firefox kiosk rendered on the analyst's X display.
+  # Runs as container-root ONLY so it can open the bind-mounted X socket under rootless
+  # podman (that maps to the unprivileged host user, never host root); privilege is
+  # stripped at runtime with cap_drop ALL + no-new-privileges.
+  browser:
+    build: ../../workstation
+    image: localhost/ir-browser:latest
+    environment:
+      DISPLAY: ${DISPLAY:-:0}
+      XDG_RUNTIME_DIR: ${XDG_RUNTIME_DIR:-/run/user/1000}
+      IR_PLATFORM_URL: ${IR_PLATFORM_URL}
+      IR_BROWSER_KIOSK: "1"
+    # Shares the tailnet node's namespace: the browser reaches the platform over WireGuard,
+    # through the same interface and the same ACL, rather than beside the tunnel on the edge
+    # network. DNS and the network position come from that namespace, not from here.
+    network_mode: "service:tailnet"
+    depends_on: [tailnet]
+    volumes:
+      - /tmp/.X11-unix:/tmp/.X11-unix
+      - ../../traefik/certs:/certs:ro,z   # platform CA, trusted at start-up
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+      - label=type:container_runtime_t
+
+  # Diagnostic node (optional): same network position as the browser, with tools baked
+  # in — used to prove reachability to the broker and unreachability of everything else.
+  probe:
+    build:
+      context: ../../workstation
+      dockerfile: Dockerfile.tools
+    image: localhost/ir-workstation:latest
+    command: ["sleep", "infinity"]
+    # Same network position as the browser — inside the tunnel — so what it proves about
+    # reachability is what the browser actually experiences.
+    network_mode: "service:tailnet"
+    depends_on: [tailnet]
+    profiles: ["diagnostics"]
+
+volumes:
+  analyst-tailnet-state:

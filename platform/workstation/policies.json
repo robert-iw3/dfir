@@ -1,0 +1,202 @@
+{
+  "_comment": [
+    "DISA Mozilla Firefox STIG-aligned enterprise policy for the IR Platform analyst",
+    "browser. policies.json is the STIG's prescribed enforcement mechanism (machine-wide,",
+    "not user-overridable). Controls below implement the STIG requirement set: no add-on",
+    "installation, no telemetry/data submission, no password manager or form autofill, no",
+    "sync/accounts, TLS 1.2 floor, pop-ups blocked, DoH disabled, developer tools off,",
+    "search suggestions off, and downloads always prompting. Kiosk scope is enforced too:",
+    "this browser exists to reach ONE origin \u2014 the SSO-gated platform frontend."
+  ],
+  "policies": {
+    "BlockAboutConfig": true,
+    "BlockAboutProfiles": true,
+    "BlockAboutSupport": true,
+    "DisableTelemetry": true,
+    "DisableFirefoxStudies": true,
+    "DisableFeedbackCommands": true,
+    "DisablePocket": true,
+    "DisableFirefoxAccounts": true,
+    "DisableFirefoxScreenshots": true,
+    "DisableProfileImport": true,
+    "DisableProfileRefresh": true,
+    "DisableSetDesktopBackground": true,
+    "DisableMasterPasswordCreation": true,
+    "DisableDeveloperTools": true,
+    "DisablePasswordReveal": true,
+    "OfferToSaveLogins": false,
+    "PasswordManagerEnabled": false,
+    "DisableFormHistory": true,
+    "AutofillAddressEnabled": false,
+    "AutofillCreditCardEnabled": false,
+    "DisableSafeMode": true,
+    "DisableSystemAddonUpdate": true,
+    "DisableAppUpdate": true,
+    "ExtensionUpdate": false,
+    "InstallAddonsPermission": {
+      "Default": false,
+      "Allow": []
+    },
+    "PopupBlocking": {
+      "Default": true,
+      "Locked": true
+    },
+    "Cookies": {
+      "AcceptThirdParty": "never",
+      "Locked": true
+    },
+    "DNSOverHTTPS": {
+      "Enabled": false,
+      "Locked": true
+    },
+    "EncryptedMediaExtensions": {
+      "Enabled": false,
+      "Locked": true
+    },
+    "NetworkPrediction": false,
+    "SearchSuggestEnabled": false,
+    "UserMessaging": {
+      "WhatsNew": false,
+      "ExtensionRecommendations": false,
+      "FeatureRecommendations": false,
+      "MoreFromMozilla": false
+    },
+    "SanitizeOnShutdown": {
+      "Cache": true,
+      "Cookies": true,
+      "History": true,
+      "Sessions": true,
+      "SiteSettings": true,
+      "OfflineApps": true,
+      "Locked": true
+    },
+    "Certificates": {
+      "_comment": "Trust the platform's own CA. ImportEnterpriseRoots also picks up the system store (populated by launch.sh from the mounted cert), so the SSO frontend loads without a TLS interstitial \u2014 analysts must never be trained to click through cert warnings.",
+      "ImportEnterpriseRoots": true,
+      "Install": [
+        "/usr/lib/firefox-esr/distribution/certificates/ir-platform.crt"
+      ]
+    },
+    "Homepage": {
+      "URL": "https://ir-platform.local:8443/",
+      "Locked": true,
+      "StartPage": "homepage-locked"
+    },
+    "WebsiteFilter": {
+      "_comment": "Kiosk containment: allow ONLY the platform host \u2014 the SSO app (https) and the brokered Keycloak login (http), both of which terminate in the enclave via the broker. Everything else is blocked in-browser on top of having no network route. NOTE: Firefox match patterns must NOT include a port ('host:8443' is invalid and blocks everything), and the scheme IS matched \u2014 so both schemes are listed deliberately.",
+      "Block": [
+        "<all_urls>"
+      ],
+      "Exceptions": [
+        "https://ir-platform.local/*",
+        "http://ir-platform.local/*"
+      ]
+    },
+    "Permissions": {
+      "Camera": {
+        "BlockNewRequests": true,
+        "Locked": true
+      },
+      "Microphone": {
+        "BlockNewRequests": true,
+        "Locked": true
+      },
+      "Location": {
+        "BlockNewRequests": true,
+        "Locked": true
+      },
+      "Notifications": {
+        "BlockNewRequests": true,
+        "Locked": true
+      },
+      "Autoplay": {
+        "Default": "block-audio-video",
+        "Locked": true
+      }
+    },
+    "Preferences": {
+      "security.tls.version.min": {
+        "Value": 3,
+        "Status": "locked"
+      },
+      "security.ssl.require_safe_negotiation": {
+        "Value": true,
+        "Status": "locked"
+      },
+      "browser.download.useDownloadDir": {
+        "Value": false,
+        "Status": "locked"
+      },
+      "browser.download.always_ask_before_handling_new_types": {
+        "Value": true,
+        "Status": "locked"
+      },
+      "pdfjs.enableScripting": {
+        "Value": false,
+        "Status": "locked"
+      },
+      "network.protocol-handler.external.shell": {
+        "Value": false,
+        "Status": "locked"
+      },
+      "browser.contentblocking.category": {
+        "Value": "strict",
+        "Status": "locked"
+      },
+      "privacy.trackingprotection.enabled": {
+        "Value": true,
+        "Status": "locked"
+      },
+      "extensions.htmlaboutaddons.recommendations.enabled": {
+        "Value": false,
+        "Status": "locked"
+      },
+      "browser.newtabpage.activity-stream.feeds.telemetry": {
+        "Value": false,
+        "Status": "locked"
+      },
+      "network.dns.disablePrefetch": {
+        "Value": true,
+        "Status": "locked"
+      },
+      "network.predictor.enabled": {
+        "Value": false,
+        "Status": "locked"
+      },
+      "_comment_clipboard": "Clipboard is an exfiltration vector out of a kiosk that displays forensic evidence: script-initiated copy/read would let a hostile page (or a curious user) lift case data off the contained browser. Deny page access to the clipboard in both directions; the analyst can still read on screen.",
+      "dom.event.clipboardevents.enabled": {
+        "Value": false,
+        "Status": "locked"
+      },
+      "dom.allow_cut_copy": {
+        "Value": false,
+        "Status": "locked"
+      },
+      "dom.events.asyncClipboard.readText": {
+        "Value": false,
+        "Status": "locked"
+      },
+      "dom.events.asyncClipboard.clipboardItem": {
+        "Value": false,
+        "Status": "locked"
+      },
+      "dom.events.testing.asyncClipboard": {
+        "Value": false,
+        "Status": "locked"
+      },
+      "middlemouse.paste": {
+        "Value": false,
+        "Status": "locked"
+      },
+      "_comment_exfil": "Downloads are permitted because evidence export is a supported analyst handoff, and every export is audited server-side. They are constrained rather than blocked: each download prompts (no silent writes), and files land in a fixed directory inside this ephemeral container, which has no internet route, no removable media and one brokered port to the platform. Moving a file off the kiosk is an operator action outside the browser's reach. Silent printing stays disabled \u2014 it is an unaudited path off the workstation.",
+      "browser.download.folderList": {
+        "Value": 2,
+        "Status": "locked"
+      },
+      "print.always_print_silent": {
+        "Value": false,
+        "Status": "locked"
+      }
+    }
+  }
+}

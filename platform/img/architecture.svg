@@ -1,0 +1,252 @@
+<svg width="1520" height="1010" viewBox="0 0 1520 1010" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Helvetica,Arial,sans-serif">
+  <defs>
+    <marker id="a-n" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#8A8F98"/>
+    </marker>
+    <marker id="a-in" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#1DAEFF"/>
+    </marker>
+    <marker id="a-mesh" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#00CA8E"/>
+    </marker>
+    <marker id="a-pull" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#CA2171"/>
+    </marker>
+    <marker id="a-re" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#A78BFA"/>
+    </marker>
+  </defs>
+  <style>
+    .box   { fill: #1F1F26; stroke: #3F3F46; stroke-width: 1.2; rx: 6; }
+    .boxT  { font-size: 12.5px; font-weight: 600; fill: #F4F4F5; }
+    .boxS  { font-size: 10.5px; fill: #A1A1AA; }
+    .bandT { font-size: 13px; font-weight: 700; letter-spacing: .08em; }
+    .en    { stroke: #8A8F98; stroke-width: 1.4; fill: none; marker-end: url(#a-n); }
+    .ein   { stroke: #1DAEFF; stroke-width: 1.6; fill: none; marker-end: url(#a-in); }
+    .emesh { stroke: #00CA8E; stroke-width: 1.6; fill: none; marker-end: url(#a-mesh); }
+    .epull { stroke: #CA2171; stroke-width: 1.6; fill: none; marker-end: url(#a-pull); }
+    .ere   { stroke: #A78BFA; stroke-width: 1.5; fill: none; marker-end: url(#a-re); }
+    .edash { stroke: #64646E; stroke-width: 1.2; fill: none; stroke-dasharray: 4 3; marker-end: url(#a-n); }
+    .lab   { font-size: 10px; fill: #C9C9D1; }
+    .labm  { font-size: 10px; fill: #00CA8E; font-weight: 600; }
+    .labin { font-size: 10px; fill: #1DAEFF; font-weight: 600; }
+    .labp  { font-size: 10px; fill: #E765A5; font-weight: 600; }
+    .chip  { font-size: 9.5px; font-weight: 700; fill: #22D3EE; }
+    .warn  { font-size: 10px; font-weight: 700; fill: #F5B841; }
+  </style>
+
+  <rect x="0" y="0" width="1520" height="1010" fill="#16161B"/>
+  <text x="20" y="28" font-size="18" font-weight="700" fill="#F4F4F5">IR Platform — architecture</text>
+  <text x="20" y="46" font-size="11.5" fill="#A1A1AA">Everything enters through the DMZ; the enclave pulls, and accepts nothing unauthenticated. Inside the enclave the data tier is reachable only through Connect sidecars — mutual TLS, default-deny intentions. Malware is opened only on a workstation with no network.</text>
+
+  <!-- tier bands -->
+  <rect x="16"  y="60" width="290" height="640" rx="10" fill="#241417" stroke="#F05A28" stroke-opacity=".55"/>
+  <text class="bandT" x="30" y="82" fill="#F05A28">UNTRUSTED</text>
+
+  <rect x="322" y="60" width="300" height="640" rx="10" fill="#242012" stroke="#F5B841" stroke-opacity=".55"/>
+  <text class="bandT" x="336" y="82" fill="#F5B841">DMZ — untrusted-facing</text>
+
+  <rect x="638" y="60" width="866" height="640" rx="10" fill="#12211B" stroke="#00CA8E" stroke-opacity=".55"/>
+  <text class="bandT" x="652" y="82" fill="#00CA8E">ENCLAVE — accepts no unauthenticated inbound</text>
+
+  <!-- untrusted -->
+  <rect class="box" x="36" y="100" width="250" height="76"/>
+  <text class="boxT" x="48" y="120">Endpoint (compromised)</text>
+  <text class="boxS" x="48" y="136">privileged collector container</text>
+  <text class="boxS" x="48" y="150">collect · capture · seal (custody HMAC)</text>
+  <text class="boxS" x="48" y="164">ships the bundle · or air-gap media</text>
+
+  <rect class="box" x="36" y="330" width="250" height="90"/>
+  <text class="boxT" x="48" y="350">Analyst workstation</text>
+  <text class="boxS" x="48" y="366">tailnet node · no subnet routes</text>
+  <text class="boxS" x="48" y="380">STIG Firefox kiosk · one origin</text>
+  <text class="boxS" x="48" y="394">no internet · no outbound DNS</text>
+  <text class="boxS" x="48" y="408">reaches ONE port: :8443</text>
+
+  <rect class="box" x="36" y="560" width="250" height="62"/>
+  <text class="boxT" x="48" y="580">Symbol builder</text>
+  <text class="boxS" x="48" y="596">internet-connected · outside the enclave</text>
+  <text class="boxS" x="48" y="610">DWARF → ISF · sealed like evidence</text>
+
+  <!-- dmz -->
+  <rect class="box" x="342" y="100" width="260" height="80"/>
+  <text class="boxT" x="354" y="120">ir-ingest — RECEIVER</text>
+  <text class="boxS" x="354" y="136">accept → CLOSE → verify custody</text>
+  <text class="boxS" x="354" y="150">fail → quarantine · hold opaque blob</text>
+  <text class="boxS" x="354" y="164">no internal creds · no route inward</text>
+
+  <rect class="box" x="342" y="220" width="260" height="58"/>
+  <text class="boxT" x="354" y="240">headscale — tailnet control</text>
+  <text class="boxS" x="354" y="256">deny-by-default allow-list · DERP over TLS</text>
+  <text class="boxS" x="354" y="270">certificate pinned by every node</text>
+
+  <rect class="box" x="342" y="316" width="260" height="52"/>
+  <text class="boxT" x="354" y="336">CoreDNS — DMZ resolver</text>
+  <text class="boxS" x="354" y="352">one name → bastion · REFUSES all else</text>
+
+  <rect class="box" x="342" y="408" width="260" height="104"/>
+  <text class="boxT" x="354" y="428">bastion + session broker</text>
+  <text class="boxS" x="354" y="444">Boundary CLIENT only — holds no authority</text>
+  <text class="boxS" x="354" y="458">one target: the SSO gate, per session,</text>
+  <text class="boxS" x="354" y="472">per principal · listener on the tunnel</text>
+  <text class="chip" x="354" y="490">SUPERVISED: re-establishes on any session end;</text>
+  <text class="chip" x="354" y="503">cancels what it abandons — the record stays true</text>
+
+  <!-- enclave: access row -->
+  <rect class="box" x="658" y="100" width="230" height="80"/>
+  <text class="boxT" x="670" y="120">Boundary — controller</text>
+  <text class="boxS" x="670" y="136">targets · grants · session records</text>
+  <text class="boxS" x="670" y="150">recovery key never leaves this tier</text>
+  <text class="boxS" x="670" y="164">own Postgres · API is TLS, pinned</text>
+
+  <rect class="box" x="908" y="100" width="180" height="80"/>
+  <text class="boxT" x="920" y="120">Boundary egress worker</text>
+  <text class="boxS" x="920" y="136">proxies authorized sessions</text>
+  <text class="boxS" x="920" y="150">per-session mutual TLS</text>
+  <text class="boxS" x="920" y="164">the only DMZ-facing proxy</text>
+
+  <rect class="box" x="1108" y="100" width="180" height="80"/>
+  <text class="boxT" x="1120" y="120">Traefik + oauth2-proxy</text>
+  <text class="boxS" x="1120" y="136">the ONLY ingress · one origin</text>
+  <text class="boxS" x="1120" y="150">OIDC → Keycloak</text>
+  <text class="boxS" x="1120" y="164">/admin + master realm denied</text>
+
+  <rect class="box" x="1308" y="100" width="180" height="80"/>
+  <text class="boxT" x="1320" y="120">Keycloak</text>
+  <text class="boxS" x="1320" y="136">OIDC identity provider</text>
+  <text class="boxS" x="1320" y="150">groups → RBAC roles</text>
+  <text class="boxS" x="1320" y="164">admin · analyst · auditor · RE</text>
+
+  <!-- enclave: app row -->
+  <rect class="box" x="658" y="220" width="200" height="74"/>
+  <text class="boxT" x="670" y="240">React SPA + Django API</text>
+  <text class="boxS" x="670" y="256">RBAC · hash-chained audit</text>
+  <text class="boxS" x="670" y="270">mesh · sessions · repairs pages</text>
+  <text class="chip" x="670" y="286">▣ frontend + backend sidecars</text>
+
+  <rect class="box" x="878" y="220" width="200" height="74"/>
+  <text class="boxT" x="890" y="240">Analysis sandbox (worker)</text>
+  <text class="boxS" x="890" y="256">NO egress · drop ALL caps</text>
+  <text class="boxS" x="890" y="270">read-only · non-root · ephemeral</text>
+  <text class="chip" x="890" y="286">▣ worker sidecar</text>
+
+  <rect class="box" x="1098" y="220" width="190" height="74"/>
+  <text class="boxT" x="1110" y="240">ir-ingest — PULLER</text>
+  <text class="boxS" x="1110" y="256">initiates OUT · fetch verified</text>
+  <text class="boxS" x="1110" y="270">→ WORM store + metadata</text>
+  <text class="chip" x="1110" y="286">▣ puller sidecar</text>
+
+  <rect class="box" x="1308" y="220" width="180" height="74"/>
+  <text class="boxT" x="1320" y="240">Redis — task queue</text>
+  <text class="boxS" x="1320" y="256">backend ↔ worker jobs</text>
+  <text class="warn" x="1320" y="274">not on the mesh yet —</text>
+  <text class="warn" x="1320" y="287">tracked in SECURITY-MODEL</text>
+
+  <!-- enclave: mesh -->
+  <rect x="658" y="330" width="830" height="230" rx="10" fill="#0E2129" stroke="#22D3EE" stroke-width="1.6" stroke-opacity=".8"/>
+  <text x="672" y="352" font-size="12.5" font-weight="700" fill="#22D3EE">SERVICE MESH — Consul Connect · sidecar mutual TLS · intentions DEFAULT-DENY</text>
+  <text x="672" y="367" font-size="10.5" fill="#7DD3FC">policy lives in hashicorp/consul/config-entries/ and is written to Consul on every deploy · a service reaches the data tier only through its sidecar</text>
+
+  <rect class="box" x="672" y="382" width="250" height="86"/>
+  <text class="boxT" x="684" y="402">Consul — control plane</text>
+  <text class="boxS" x="684" y="418">TLS on every port · cleartext disabled</text>
+  <text class="boxS" x="684" y="432">gossip encrypted · ACLs default-deny</text>
+  <text class="boxS" x="684" y="446">per-service tokens — none can edit</text>
+  <text class="boxS" x="684" y="460">the intention that governs it</text>
+
+  <rect class="box" x="944" y="382" width="170" height="86"/>
+  <text class="boxT" x="956" y="402">PostgreSQL</text>
+  <text class="boxS" x="956" y="418">system of record</text>
+  <text class="boxS" x="956" y="432">binds 127.0.0.1 ONLY</text>
+  <text class="chip" x="956" y="450">▣ sidecar = sole listener</text>
+
+  <rect class="box" x="1134" y="382" width="170" height="86"/>
+  <text class="boxT" x="1146" y="402">MinIO / S3 (WORM)</text>
+  <text class="boxS" x="1146" y="418">raw captures · opaque bytes</text>
+  <text class="boxS" x="1146" y="432">binds 127.0.0.1 ONLY</text>
+  <text class="chip" x="1146" y="450">▣ sidecar = sole listener</text>
+
+  <rect class="box" x="1324" y="382" width="164" height="86"/>
+  <text class="boxT" x="1336" y="402">Vault</text>
+  <text class="boxS" x="1336" y="418">dynamic DB users · KV</text>
+  <text class="boxS" x="1336" y="432">custody HMAC · rotation</text>
+  <text class="chip" x="1336" y="450">▣ vault sidecar</text>
+
+  <path class="emesh" d="M1336 468 Q1240 520 1114 440"/>
+  <text class="labm" x="1010" y="500">Vault → Postgres through the mesh: mints the app tier's dynamic credentials</text>
+  <text class="labm" x="944" y="530">allowed pairs carry traffic · denied pairs refused ON THE WIRE (uat_consul)</text>
+  <text class="lab"  x="944" y="546">multi-host: per-host sidecar listeners via IR_MESH_ADDR_* / IR_MESH_PORT_*; a single host publishes nothing</text>
+
+  <!-- enclave host strip -->
+  <rect x="658" y="580" width="830" height="104" rx="8" fill="#1B1B21" stroke="#8A8F98" stroke-opacity=".6"/>
+  <text x="672" y="600" font-size="12" font-weight="700" fill="#C9C9D1">ENCLAVE HOST — remediation agent (its own compose project: ir-agent)</text>
+  <text class="boxS" x="672" y="618">network: NONE · pid: host · the runtime socket is its only authority · reaches the API by exec through the socket</text>
+  <text class="boxS" x="672" y="632">an admin REQUESTS a named repair in the UI; the agent matches the NAME against the allow-list in its own script and executes</text>
+  <text class="boxS" x="672" y="646">no command, argument or path crosses the boundary · outcomes recorded once, rewrite refused · every request audited</text>
+  <text class="chip" x="672" y="666">six repairs: converge mesh policy · re-attach sidecars · reap Boundary workers · restart worker · rotate DB creds · unseal Vault</text>
+
+  <!-- arrows -->
+  <path class="en" d="M286 138 L342 138"/>
+  <text class="lab" x="292" y="130">TLS · pinned</text>
+
+  <path class="edash" d="M286 356 L342 262"/>
+  <text class="lab" x="234" y="310">enroll · WireGuard</text>
+
+  <path class="ein" d="M286 386 L342 440"/>
+  <text class="labin" x="230" y="428">:8443 tunnel</text>
+
+  <path class="edash" d="M602 428 L658 152"/>
+  <text class="lab" x="612" y="300">authenticate</text>
+  <text class="lab" x="612" y="313">(TLS · pinned)</text>
+
+  <path class="ein" d="M602 470 Q770 545 908 180"/>
+  <text class="labin" x="700" y="512">Boundary session — per-session mutual TLS</text>
+
+  <path class="ein" d="M1088 140 L1108 140"/>
+  <path class="en" d="M1288 140 L1308 140"/>
+  <text class="lab" x="1284" y="130">OIDC</text>
+  <path class="ein" d="M1198 180 L800 226"/>
+  <text class="labin" x="946" y="206">serves the app behind the gate</text>
+
+  <path class="epull" d="M1098 240 Q850 205 622 158 L602 154"/>
+  <text class="labp" x="690" y="196">PULL verified bundles — outbound only, then CLOSE</text>
+
+  <path class="emesh" d="M758 294 L800 382"/>
+  <path class="emesh" d="M978 294 L1010 382"/>
+  <path class="emesh" d="M1193 294 L1210 382"/>
+  <text class="labm" x="812" y="322">every data-tier connection: through a sidecar, checked against an intention</text>
+
+  <!-- RE isolation band -->
+  <rect x="16" y="716" width="1488" height="130" rx="10" fill="#191627" stroke="#A78BFA" stroke-opacity=".55"/>
+  <text class="bandT" x="30" y="738" fill="#A78BFA">ISOLATED — REVERSE ENGINEERING · the workstation that opens malware has no network at all</text>
+
+  <rect class="box" x="36" y="750" width="330" height="80"/>
+  <text class="boxT" x="48" y="770">MinIO — ir-carved-&lt;host&gt;</text>
+  <text class="boxS" x="48" y="786">one bucket per host · carved by the per-process</text>
+  <text class="boxS" x="48" y="800">YARA pass · kept apart from ir-evidence</text>
+  <text class="boxS" x="48" y="814">a session is granted one host, sees no other case</text>
+
+  <rect class="box" x="426" y="750" width="330" height="80"/>
+  <text class="boxT" x="438" y="770">stage_regions.sh — MEDIATOR</text>
+  <text class="boxS" x="438" y="786">holds the store credentials · one host per session</text>
+  <text class="boxS" x="438" y="800">regions written 0400 · manifest keeps object keys,</text>
+  <text class="boxS" x="438" y="814">never the payload — no route back to the store</text>
+
+  <rect class="box" x="816" y="750" width="360" height="80"/>
+  <text class="boxT" x="828" y="770">RE workstation — Binary Ninja / Ghidra</text>
+  <text class="boxS" x="828" y="786">no network namespace · CapEff = 0 · /regions read-only</text>
+  <text class="boxS" x="828" y="800">no license server, activation or call-home needed</text>
+  <text class="boxS" x="828" y="814">determinations land back in the investigation record</text>
+
+  <path class="ere" d="M366 790 L426 790"/>
+  <text class="lab" x="378" y="782">stage</text>
+  <path class="ere" d="M756 790 L816 790"/>
+  <text class="lab" x="770" y="782">open</text>
+
+  <!-- footer -->
+  <text x="20" y="880" font-size="11" font-weight="700" fill="#C9C9D1">Proven by:</text>
+  <text x="92" y="880" font-size="11" fill="#8A8F98">uat_dns (resolvers refuse) · uat_tailnet (tunnel + bounds) · uat_boundary (authority placement, healing, truthful record) · uat_baseline (SSO)</text>
+  <text x="92" y="896" font-size="11" fill="#8A8F98">uat_consul (mesh enforcement, 49) · uat_vault (dynamic secrets) · uat_repairs (isolated executor) · uat_re_workstation · uat_e2e (32 — collect → reverse engineer)</text>
+  <text x="20" y="922" font-size="11" font-weight="700" fill="#C9C9D1">Canonical structure:</text>
+  <text x="150" y="922" font-size="11" fill="#8A8F98">CODE_GRAPH.md (generated — services, netns wiring, script graph, API surface, UAT coverage) · SECURITY-MODEL.md (P1–P10)</text>
+</svg>

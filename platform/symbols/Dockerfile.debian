@@ -1,0 +1,44 @@
+# ISF builder — Debian/Ubuntu family.
+#
+# Runs outside the enclave, where downloading debug symbols is possible. Produces a
+# Volatility 3 symbol table for one kernel; only that JSON is carried inward.
+#
+# Two acquisition paths, tried in order by the entrypoint:
+#   1. debuginfod by build-id — distro-agnostic, no repository configuration needed
+#   2. the ddebs archive — Ubuntu/Debian debug packages, which is why this image is
+#      family-specific: the package name and repository layout differ per family
+# The base must match the TARGET's release, not just its family: ddebs pockets are keyed
+# by codename, so a noble builder cannot fetch a resolute kernel's debug symbols. The
+# driver selects this from the requisites' VERSION_ID.
+ARG BASE_IMAGE=docker.io/library/ubuntu:24.04
+FROM ${BASE_IMAGE}
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        ca-certificates curl gnupg xz-utils binutils python3 dpkg-dev \
+        elfutils debuginfod \
+        ubuntu-dbgsym-keyring \
+    && rm -rf /var/lib/apt/lists/*
+
+# dwarf2json converts the DWARF in a debug vmlinux into Volatility's ISF format. It is a
+# static Go binary, so the same build works regardless of the target distro.
+ARG DWARF2JSON_VERSION=0.9.0
+RUN curl -fsSL -o /usr/local/bin/dwarf2json \
+      "https://github.com/volatilityfoundation/dwarf2json/releases/download/v${DWARF2JSON_VERSION}/dwarf2json-linux-amd64" \
+    && chmod +x /usr/local/bin/dwarf2json \
+    && dwarf2json --help >/dev/null 2>&1 || true
+
+# The ddebs archive is not configured by default; it carries the kernel debug symbols.
+RUN . /etc/os-release \
+    && printf 'deb http://ddebs.ubuntu.com %s main restricted universe multiverse\n\
+deb http://ddebs.ubuntu.com %s-updates main restricted universe multiverse\n' \
+        "${VERSION_CODENAME}" "${VERSION_CODENAME}" > /etc/apt/sources.list.d/ddebs.list
+
+COPY acquire.sh lp_url.py /usr/local/bin/
+RUN chmod +x /usr/local/bin/acquire.sh /usr/local/bin/lp_url.py
+
+ENV DEBUGINFOD_URLS="https://debuginfod.ubuntu.com https://debuginfod.elfutils.org"
+
+ENTRYPOINT ["/usr/local/bin/acquire.sh"]

@@ -1,0 +1,61 @@
+# Rendered by docker-entrypoint.sh (envsubst) so the SSO proxy secret is injected at
+# runtime, never baked into the image. In non-SSO mode IR_SSO_PROXY_SECRET is empty and
+# the backend simply ignores the (empty) X-Proxy-Auth header, falling back to token auth.
+server {
+    listen 8080;
+    server_name _;
+    root /usr/share/nginx/html;
+    index index.html;
+
+    # SPA client-side routing: unknown paths fall back to index.html.
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+
+    # The app shell must never be served from cache. With no cache directives a browser
+    # applies heuristic freshness and can satisfy "/" locally — after sign-out that skips
+    # the SSO gate entirely, so the app reappears instead of the Keycloak login page.
+    # The hashed files under /assets/ are immutable and stay cacheable.
+    location = /index.html {
+        add_header Cache-Control "no-store, no-cache, must-revalidate" always;
+        try_files $uri =404;
+    }
+
+    # API proxied to the backend. X-Proxy-Auth is the shared secret that lets the backend
+    # trust the SSO-forwarded identity; it is set here (overwriting anything
+    # a client sent) so only requests through this proxy carry it.
+    # Upstream addresses are resolved at REQUEST time, not config-load time. With a
+    # literal hostname in proxy_pass, nginx resolves once at start-up and caches the
+    # address forever — so a backend that is later recreated with a new address keeps
+    # returning 502 until nginx itself restarts. That makes container start order
+    # load-bearing, which it should not be.
+    resolver ${NGINX_RESOLVER} valid=10s ipv6=off;
+    set $backend_upstream http://backend:8000;
+
+    location /api/ {
+        proxy_pass $backend_upstream;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Proxy-Auth "${IR_SSO_PROXY_SECRET}";
+        # Identity forwarded by the SSO gate; the backend trusts these only alongside
+        # the shared X-Proxy-Auth secret set above.
+        proxy_set_header X-Forwarded-Email $http_x_forwarded_email;
+        proxy_set_header X-Forwarded-Groups $http_x_forwarded_groups;
+        proxy_set_header X-Forwarded-Preferred-Username $http_x_forwarded_preferred_username;
+        proxy_set_header X-Auth-Request-User $http_x_auth_request_user;
+        proxy_set_header X-Auth-Request-Email $http_x_auth_request_email;
+        proxy_set_header X-Auth-Request-Groups $http_x_auth_request_groups;
+        proxy_set_header X-Auth-Request-Preferred-Username $http_x_auth_request_preferred_username;
+        client_max_body_size 50m;
+    }
+    location /admin/ {
+        proxy_pass $backend_upstream;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Proxy-Auth "${IR_SSO_PROXY_SECRET}";
+    }
+    location /static/ {
+        proxy_pass $backend_upstream;
+    }
+}

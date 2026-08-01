@@ -1,2 +1,74 @@
-# Auto detect text files and perform LF normalization
-* text=auto
+# Line endings and binary safety.
+#
+# This tree is worked from both Windows and Linux. LF everywhere, in the repository and in
+# the working copy, so a file never changes shape by being checked out on the other platform.
+* text=auto eol=lf
+
+# --- Authenticode-signed PowerShell: byte-for-byte, never normalized --------------------
+# A signature block covers the exact bytes of the file, line endings included. Rewriting
+# them invalidates it, and the failure appears at run time under AllSigned/RemoteSigned as a
+# refusal to execute — not at commit time. These are left exactly as signed.
+*.ps1       -text
+*.psm1      -text
+*.psd1      -text
+*.cat       binary
+
+# --- Evidence, samples and compiled artifacts: never normalized -------------------------
+# `text=auto` decides by scanning for NUL bytes, and a carved memory region can be almost
+# entirely printable — an editor's heap, a config blob, a text-heavy dump. Normalizing one
+# corrupts it silently, and the symptom is a detection test failing for no visible reason.
+# Every sample, capture and compiled artifact is declared binary rather than left to that
+# heuristic. `binary` is shorthand for `-text -diff`.
+*.bin       binary
+*.raw       binary
+*.aff4      binary
+*.dmp       binary
+*.mem       binary
+*.vmem      binary
+*.lime      binary
+*.yarc      binary
+*.pcap      binary
+*.pcapng    binary
+*.evtx      binary
+*.db        binary
+*.sqlite    binary
+*.sqlite3   binary
+
+# Executables and libraries, including vendored tooling.
+*.exe       binary
+*.dll       binary
+*.so        binary
+*.so.*      binary
+*.dylib     binary
+*.pyd       binary
+*.lib       binary
+*.a         binary
+*.o         binary
+*.obj       binary
+*.pyc       binary
+*.whl       binary
+
+# Archives, images and fonts.
+*.zip       binary
+*.gz        binary
+*.tgz       binary
+*.bz2       binary
+*.xz        binary
+*.7z        binary
+*.tar       binary
+*.png       binary
+*.jpg       binary
+*.jpeg      binary
+*.gif       binary
+*.ico       binary
+*.pdf       binary
+*.woff      binary
+*.woff2     binary
+*.ttf       binary
+
+# --- Diff behaviour ---------------------------------------------------------------------
+# Keys and certificates are text and must keep LF, but a diff of one is never useful and
+# risks putting key material in a log or a review comment.
+*.pem       text eol=lf -diff
+*.key       text eol=lf -diff
+*.crt       text eol=lf -diff

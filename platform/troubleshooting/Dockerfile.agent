@@ -1,0 +1,10 @@
+# The remediation agent's runtime: a podman REMOTE CLIENT plus what the repair scripts need.
+# The podman inside is never a daemon here — CONTAINER_HOST points every invocation at the
+# host's API socket, so this container drives the host runtime and runs nothing itself.
+FROM quay.io/podman/stable:latest
+
+RUN dnf install -y --setopt=install_weak_deps=False \
+        podman-compose python3 hostname openssl \
+    && dnf clean all
+
+ENTRYPOINT ["/bin/bash"]

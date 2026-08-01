@@ -1,0 +1,764 @@
+# ===========================================================================
+# TIER: INTERNAL ENCLAVE  — consolidated, deploys to its own hardware.
+#
+# Everything that holds or reasons about evidence lives here: identity (Keycloak),
+# secrets (Vault), the SSO ingress, the app, the stores, the mesh, and the ingest
+# PULLER that is the only bridge to the DMZ.
+#
+# Hard rule this tier enforces: NOTHING initiates INTO the enclave. The puller
+# reaches OUT to the DMZ receiver; analysts arrive only via the DMZ broker onto the
+# SSO ingress. The `internal` network has no gateway, so the enclave cannot egress.
+#
+#   podman-compose -p ir-enclave --env-file ../.env -f docker-compose.yml up -d
+# ===========================================================================
+networks:
+  # `internal: true` is the egress control: the runtime installs no route off the host, so the
+  # enclave — and the worker, which parses hostile memory images — cannot reach the internet.
+  #
+  # It still has a gateway address, which is where the runtime's own resolver listens. That
+  # resolver is never handed to a container: it is what the enclave CoreDNS forwards in-zone
+  # lookups to, so service addresses stay dynamic while the Corefile decides what is nameable.
+  #
+  # The subnet is declared so the resolver's own address is deterministic. It is the one thing
+  # that cannot be discovered by resolution, because resolv.conf holds literals.
+  internal:
+    internal: true
+    ipam:
+      config:
+        - subnet: ${ENCLAVE_SUBNET}
+  # The routed link between the DMZ hardware and the enclave hardware. Declared
+  # EXTERNAL so both tiers (separate compose projects, separate hosts in production)
+  # attach to the same segment; created by deploy.sh.
+  dmzlink:
+    external: true
+    name: ir-dmzlink
+
+services:
+
+  # Boundary's database — the record of principals, targets and grants.
+  #
+  # Internal security state: it says who may reach what, so it lives with the controller here.
+  boundary-db:
+    dns: ["${ENCLAVE_DNS_IP}"]
+    dns_search: ["${RUNTIME_DNS_ZONE}"]
+    image: docker.io/library/postgres:18
+    environment:
+      POSTGRES_USER: boundary
+      POSTGRES_PASSWORD: ${BOUNDARY_DB_PASSWORD}
+      POSTGRES_DB: boundary
+    entrypoint: ["/bin/bash", "/opt/pg-tune.sh"]
+    command: []
+    volumes:
+      - boundary-db-data:/var/lib/postgresql
+      - ../../hashicorp/postgres/pg-tune.sh:/opt/pg-tune.sh:ro,z
+    networks: [internal]
+
+  # Boundary controller — decides whether a session may exist.
+  #
+  # Its recovery key authenticates with no account at all, so it belongs in this tier: anything
+  # holding it can create a target and grant itself a session here. The database beside it is the
+  # record of who may reach what.
+  #
+  # It does not carry sessions; boundary-egress does. Separate processes, because a combined
+  # controller+worker cannot have a cluster listener reachable from another container.
+  #
+  # On dmzlink as well as internal: the DMZ session client authenticates against the API port
+  # here, over TLS pinned to boundary.crt.
+  boundary:
+    dns: ["${ENCLAVE_DNS_IP}"]
+    dns_search: ["${RUNTIME_DNS_ZONE}"]
+    image: docker.io/hashicorp/boundary:0.21.3
+    depends_on: [boundary-db]
+    environment:
+      SKIP_CHOWN: "true"
+      SKIP_SETCAP: "true"
+      BOUNDARY_POSTGRES_URL: postgresql://boundary:${BOUNDARY_DB_PASSWORD}@boundary-db:5432/boundary?sslmode=disable
+      BOUNDARY_RECOVERY_KEY: ${BOUNDARY_RECOVERY_KEY}
+      BOUNDARY_ANALYST_PASSWORD: ${BOUNDARY_ANALYST_PASSWORD}
+      ANALYST_PW: ${BOUNDARY_ANALYST_PASSWORD}
+      IR_ENCLAVE_INGRESS_HOST: ${IR_ENCLAVE_INGRESS_HOST:-traefik}
+      IR_ENCLAVE_INGRESS_PORT: ${IR_ENCLAVE_INGRESS_PORT:-443}
+    volumes:
+      - ../../hashicorp/access/boundary-controller.hcl:/boundary/config.hcl:ro,z
+      - ../../hashicorp/access/boundary_bootstrap.sh:/boundary/bootstrap.sh:ro,z
+      - ../../hashicorp/access/boundary_workers.sh:/boundary/workers.sh:ro,z
+      # Prints the six links between an authenticated analyst and a session. Mounted rather than
+      # copied in when needed: a 403 gives no indication which link is missing, and the diagnosis
+      # has to be available on a deployment nobody is editing.
+      - ../../hashicorp/access/boundary_authz.sh:/boundary/authz.sh:ro,z
+      # Serves the API listener. The key is mounted read-only and the container runs unprivileged.
+      - ../../hashicorp/access/certs:/boundary/certs:ro,z
+      - boundary-state:/boundary-state
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        # depends_on waits for the container, not for Postgres to accept connections, so the
+        # first init attempt races the database's own startup and exits.
+        for i in $(seq 1 60); do
+          nc -z boundary-db 5432 2>/dev/null && break
+          [ "$i" = 60 ] && { echo "boundary-db never accepted connections" >&2; exit 1; }
+          sleep 2
+        done
+        boundary database init -config /boundary/config.hcl >/dev/null 2>&1 || true
+        exec boundary server -config /boundary/config.hcl
+    networks: [internal, dmzlink]
+
+  # Boundary egress worker — carries an authorized session to the ingress.
+  #
+  # In the enclave because a worker must have a route to its target, and the target is Traefik on
+  # the internal network. A worker in the DMZ would need that same route, which is precisely the
+  # reach the tier split denies; instead the DMZ dials this worker's proxy port across the link
+  # and holds no route of its own.
+  #
+  # No database, no grants, no recovery key. It registers by holding the same worker-auth key as
+  # the controller — safe only because both sit in this tier.
+  boundary-egress:
+    dns: ["${ENCLAVE_DNS_IP}"]
+    dns_search: ["${RUNTIME_DNS_ZONE}"]
+    image: docker.io/hashicorp/boundary:0.21.3
+    depends_on: [boundary]
+    environment:
+      SKIP_CHOWN: "true"
+      SKIP_SETCAP: "true"
+    volumes:
+      - ../../hashicorp/access/boundary-egress.hcl:/boundary/worker.hcl:ro,z
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        # The controller's cluster listener has to be accepting before the worker dials it;
+        # otherwise the worker exits on its first registration attempt and compose reports a
+        # crash loop rather than a startup order problem.
+        for i in $(seq 1 90); do
+          nc -z boundary 9201 2>/dev/null && break
+          [ "$i" = 90 ] && { echo "boundary cluster port never accepted connections" >&2; exit 1; }
+          sleep 2
+        done
+        exec boundary server -config /boundary/worker.hcl
+    networks: [internal, dmzlink]
+
+  # The enclave's ONLY resolver. Replaces the container runtime's resolver for every service
+  # below, so the policy in Corefile.enclave is the actual reachable name space rather than
+  # advice sitting beside a resolver that would answer anything.
+  #
+  # Its address is pinned because resolv.conf can hold nothing but a literal. Nothing else here
+  # is pinned: it forwards in-zone lookups to the runtime resolver, which knows where each
+  # service currently is.
+  coredns:
+    image: docker.io/coredns/coredns:1.14.6
+    command: ["-conf", "/etc/coredns/Corefile"]
+    user: "0:0"
+    volumes:
+      - ../../hashicorp/access/Corefile.enclave:/etc/coredns/Corefile:ro,z
+    networks:
+      internal:
+        ipv4_address: ${ENCLAVE_DNS_IP}
+      dmzlink:
+  # ---------- secrets ---------------------------------------------------
+  #
+  # Vault issues the application tier its Postgres credentials and its secrets, so the platform
+  # holds no static application password. It is in the ENCLAVE and on `internal` only: it is the
+  # authority over everything the app can reach, so it belongs in the tier the design trusts, and
+  # nothing outside the enclave has any business addressing it.
+  #
+  # Four services because the work is four different lifetimes: a one-shot that issues TLS, a
+  # long-running server, a one-shot that provisions, and a long-running agent that renews.
+
+  # Issues Vault's TLS material onto a shared volume. One-shot; exits 0.
+  vault-certs-init:
+    dns: ["${ENCLAVE_DNS_IP}"]
+    dns_search: ["${RUNTIME_DNS_ZONE}"]
+    image: localhost/vault:2.0.3
+    command: ["python3", "/opt/vault-init/generate_certs.py"]
+    environment:
+      VAULT_NODE_ID: "0"
+    volumes:
+      - vault-certs:/certs
+      # The generator ships with the vault image's source tree, which is a sibling checkout.
+      # Overridable because that layout is an assumption about the host, not a property of
+      # this platform.
+      - ${IR_VAULT_CONFIG:-../../../../containers/vault/config}:/opt/vault-init:ro
+    networks: [internal]
+
+  vault:
+    dns: ["${ENCLAVE_DNS_IP}"]
+    dns_search: ["${RUNTIME_DNS_ZONE}"]
+    image: localhost/vault:2.0.3
+    hostname: vault
+    # No depends_on the cert one-shot: it exits 0, and compose waits for `running`, which a
+    # completed one-shot never satisfies. The command waits on the artifact instead — the
+    # condition that actually matters.
+    command:
+      - /bin/sh
+      - -c
+      # A mounted volume arrives root-owned, after the image's own chown has already run. Vault
+      # drops to an unprivileged user, so without this the audit device cannot be written — and
+      # Vault treats an unwritable audit device as fatal, which is correct and would otherwise
+      # look like a startup fault with no obvious cause.
+      - "mkdir -p /vault/logs && chown -R vault:vault /vault/logs 2>/dev/null || true; while [ ! -s /certs/vault-0.crt.pem ]; do echo 'waiting for TLS certs...'; sleep 1; done; exec vault server -config=/vault/config/vault-server.hcl"
+    environment:
+      VAULT_ADDR: "https://127.0.0.1:8200"
+      VAULT_CACERT: "/certs/vault-ca.crt.pem"
+    volumes:
+      - vault-data:/vault/data
+      - vault-certs:/certs
+      # The audit device is written by THIS process, not by the provisioning one-shot, so the
+      # path has to exist and be writable here. Vault refuses to start if an enabled audit
+      # device cannot be written — which is the intended behaviour: unaudited operation is
+      # not a degraded mode it should fall back into.
+      - vault-logs:/vault/logs
+      - ../../hashicorp/vault/vault-server.hcl:/vault/config/vault-server.hcl:ro,z
+      # Unsealing runs on every restart, so it lives with the server rather than with the
+      # one-shot that provisions once.
+      - ../../hashicorp/vault/vault-unseal.sh:/opt/vault-unseal.sh:ro,z
+      - vault-state:/vault/state:ro
+    networks:
+      internal:
+        ipv4_address: ${IR_IP_VAULT}
+
+  vault-sidecar:
+    mem_limit: ${IR_SIDECAR_MEM:-128m}
+    image: localhost/ir-consul-sidecar:latest
+    network_mode: "service:vault"
+    depends_on: [vault]
+    command: ["consul", "connect", "envoy", "-sidecar-for", "ir-vault",
+              "-http-addr", "https://consul:8501", "-grpc-addr", "https://consul:8503",
+              "-ca-file", "/consul/tls/consul-ca.pem", "-token-file", "/consul/tls/token",
+              "-admin-bind", "127.0.0.1:19000",
+              "--", "--concurrency", "${IR_ENVOY_CONCURRENCY:-1}"]
+    volumes:
+      - ../../hashicorp/consul/secrets/consul-ca.pem:/consul/tls/consul-ca.pem:ro,z
+      - ../../hashicorp/consul/secrets/tokens/ir-vault.token:/consul/tls/token:ro,z
+    restart: on-failure
+
+  # The fixed owner role dynamic users act AS, so object ownership survives rotation.
+  #
+  # Without it, every rotated credential owns whatever it created and the previous user's tables
+  # become unreachable — the classic dynamic-credentials-plus-migrations failure. One-shot.
+  db-bootstrap:
+    build:
+      context: ../..
+      dockerfile: backend/Dockerfile
+    image: localhost/ir-backend:latest
+    # In the DATABASE's network namespace, not the mesh. It carries the static admin credential
+    # and creates the owner role that dynamic users act as — an administrative task that belongs
+    # beside the database rather than in front of a proxy. Loopback reaches Postgres whether or
+    # not the mesh is enforcing, and db's own attachment still reaches the rest of the enclave.
+    network_mode: "service:db"
+    depends_on: [db]
+    env_file: ../.env
+    environment:
+      POSTGRES_HOST: 127.0.0.1
+    entrypoint: ["python", "/opt/db-bootstrap.py"]
+    volumes:
+      - ../../hashicorp/db-bootstrap.py:/opt/db-bootstrap.py:ro,z
+    restart: on-failure
+
+  # Provisions the database secrets engine, the KV store, the policy and the AppRole. One-shot,
+  # idempotent, and the ONLY holder of the root token — which stays on a volume in this tier.
+  vault-setup:
+    dns: ["${ENCLAVE_DNS_IP}"]
+    dns_search: ["${RUNTIME_DNS_ZONE}"]
+    image: localhost/vault:2.0.3
+    # root-in-container is the invoking host user under rootless podman; needed to write the
+    # shared state volume that carries role_id and secret_id to the agent.
+    user: root
+    depends_on: [vault, db]
+    command: ["/bin/bash", "/opt/vault/vault-setup-ir.sh"]
+    # On the enclave network with its own resolver — NOT in the database's namespace. This is a
+    # Vault client and never speaks to Postgres: Vault itself dials the database, through its own
+    # sidecar, and verifies the connection when the engine is configured. Sharing db's namespace
+    # bought a loopback readiness probe and cost the ability to resolve `vault`, because a
+    # container keeps its own /etc/resolv.conf and dns: cannot be set with network_mode: service:.
+    networks: [internal]
+    env_file: ../.env
+    environment:
+      VAULT_ADDR: "https://vault:8200"
+      VAULT_CACERT: "/certs/vault-ca.crt.pem"
+      # Where VAULT reaches Postgres, written into the database engine's connection URL — its own
+      # sidecar upstream with the mesh enforcing, the service name without it.
+      IR_VAULT_DB_HOST: ${IR_DB_HOST_APP:-db}
+    volumes:
+      - vault-certs:/certs:ro
+      - vault-state:/vault/state
+      - ../../hashicorp/vault/vault-setup-ir.sh:/opt/vault/vault-setup-ir.sh:ro,z
+      - ../../hashicorp/vault/breakglass-root.py:/opt/vault/breakglass-root.py:ro,z
+    restart: on-failure
+
+  # Authenticates by AppRole, renders the app's secrets to a shared file, and keeps the database
+  # lease renewed so a credential stays valid without restarting the application.
+  vault-agent:
+    dns: ["${ENCLAVE_DNS_IP}"]
+    dns_search: ["${RUNTIME_DNS_ZONE}"]
+    image: localhost/vault:2.0.3
+    user: root
+    # The image entrypoint drops back to the vault user, which cannot write the shared volumes.
+    entrypoint: ["vault"]
+    depends_on: [vault]
+    command: ["agent", "-config=/vault/agent/vault-agent.hcl"]
+    volumes:
+      - vault-state:/vault/state:ro
+      - vault-secrets:/vault/secrets
+      - vault-agent:/vault/agent
+      - ../../hashicorp/agent/vault-agent.hcl:/vault/agent/vault-agent.hcl:ro,z
+      - ../../hashicorp/agent/app-env.tmpl:/vault/agent/app-env.tmpl:ro,z
+    restart: on-failure
+    networks: [internal]
+
+  # ---------- data tier -------------------------------------------------
+  db:
+    dns: ["${ENCLAVE_DNS_IP}"]        # the enclave resolver is the ONLY resolver
+    dns_search: ["${RUNTIME_DNS_ZONE}"]
+    image: docker.io/library/postgres:18
+    env_file: ../.env
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_INITDB_ARGS: "--data-checksums"
+    # listen_addresses is the ENFORCEMENT POINT of the service mesh, not a tuning knob.
+    #
+    # With IR_DB_LISTEN=127.0.0.1 the only process that can open a connection is one sharing this
+    # network namespace — which is the Connect sidecar, and nothing else. Every consumer then
+    # arrives through a proxy that checks the intentions first, so "ir-frontend may not reach
+    # ir-postgres" becomes a refused connection rather than a statement in a config file.
+    #
+    # Set to 0.0.0.0 to run without the mesh; the platform works, and service-to-service
+    # authorization is then network segmentation only.
+    # Settings are DERIVED from the memory and CPU this container actually has, not written
+    # down — a fixed shared_buffers wastes enclave hardware and swaps a laptop. See pg-tune.sh;
+    # every value stays overridable through IR_PG_*.
+    entrypoint: ["/bin/bash", "/opt/pg-tune.sh"]
+    command: []
+    volumes:
+      - pgdata:/var/lib/postgresql
+      - ../../hashicorp/postgres/pg-tune.sh:/opt/pg-tune.sh:ro,z
+    networks:
+      internal:
+        ipv4_address: ${IR_IP_DB}
+
+  # Connect sidecar for Postgres. Shares the database's namespace, so it reaches it over loopback
+  # while being the only listener the enclave network can see.
+  db-sidecar:
+    mem_limit: ${IR_SIDECAR_MEM:-128m}
+    build:
+      context: ../../hashicorp/consul
+      dockerfile: Dockerfile.sidecar
+    image: localhost/ir-consul-sidecar:latest
+    network_mode: "service:db"
+    depends_on: [db]
+    command: ["consul", "connect", "envoy", "-sidecar-for", "ir-postgres",
+              "-http-addr", "https://consul:8501", "-grpc-addr", "https://consul:8503",
+              "-ca-file", "/consul/tls/consul-ca.pem", "-token-file", "/consul/tls/token",
+              "-admin-bind", "127.0.0.1:19000",
+              "--", "--concurrency", "${IR_ENVOY_CONCURRENCY:-1}"]
+    # -token-file rather than -token: a sidecar shares its service's namespace, so an argument
+    # would put the credential in a `ps` listing readable from the service beside it.
+    volumes:
+      - ../../hashicorp/consul/secrets/consul-ca.pem:/consul/tls/consul-ca.pem:ro,z
+      - ../../hashicorp/consul/secrets/tokens/ir-postgres.token:/consul/tls/token:ro,z
+    restart: on-failure
+
+  minio:
+    dns: ["${ENCLAVE_DNS_IP}"]        # the enclave resolver is the ONLY resolver
+    dns_search: ["${RUNTIME_DNS_ZONE}"]
+    image: docker.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
+    # --address is the enforcement point, exactly as listen_addresses is for Postgres: bound to
+    # loopback, the object store holding every captured memory image is reachable only through
+    # the sidecar that checks intentions first.
+    command: server /data --address "${IR_MINIO_LISTEN:-:9000}" --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${S3_ACCESS_KEY}
+      MINIO_ROOT_PASSWORD: ${S3_SECRET_KEY}
+    volumes: [miniodata:/data]
+    networks:
+      internal:
+        ipv4_address: ${IR_IP_MINIO}
+
+  minio-sidecar:
+    mem_limit: ${IR_SIDECAR_MEM:-128m}
+    image: localhost/ir-consul-sidecar:latest
+    network_mode: "service:minio"
+    depends_on: [minio]
+    command: ["consul", "connect", "envoy", "-sidecar-for", "ir-minio",
+              "-http-addr", "https://consul:8501", "-grpc-addr", "https://consul:8503",
+              "-ca-file", "/consul/tls/consul-ca.pem", "-token-file", "/consul/tls/token",
+              "-admin-bind", "127.0.0.1:19000",
+              "--", "--concurrency", "${IR_ENVOY_CONCURRENCY:-1}"]
+    volumes:
+      - ../../hashicorp/consul/secrets/consul-ca.pem:/consul/tls/consul-ca.pem:ro,z
+      - ../../hashicorp/consul/secrets/tokens/ir-minio.token:/consul/tls/token:ro,z
+    restart: on-failure
+
+  redis:
+    dns: ["${ENCLAVE_DNS_IP}"]        # the enclave resolver is the ONLY resolver
+    dns_search: ["${RUNTIME_DNS_ZONE}"]
+    image: docker.io/library/redis:8-alpine
+    networks: [internal]
+
+  # ---------- identity + secrets ---------------------------------------
+  keycloak:
+    dns: ["${ENCLAVE_DNS_IP}"]        # the enclave resolver is the ONLY resolver
+    dns_search: ["${RUNTIME_DNS_ZONE}"]
+    # Built so the login theme is part of the artifact. Bind-mounting it detached silently
+    # whenever the theme tree was rewritten, leaving the stock login page with no error.
+    build:
+      context: ../..
+      dockerfile: keycloak/Dockerfile
+    image: localhost/ir-keycloak:latest
+    command: ["start-dev", "--import-realm"]
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: "admin"
+      KC_BOOTSTRAP_ADMIN_PASSWORD: "admin"
+      KC_HTTP_ENABLED: "true"
+      # The public base every OIDC leg uses. Keycloak derives its issuer from how it is
+      # reached, so pinning it keeps the browser and back-channel legs on one issuer.
+      KC_HOSTNAME: ${PLATFORM_PUBLIC_URL}
+      KC_HOSTNAME_STRICT: "false"
+      KC_HOSTNAME_STRICT_BACKCHANNEL: "false"
+      KC_PROXY_HEADERS: xforwarded
+    volumes:
+      - ../../hashicorp/keycloak/realm-irplatform.json:/opt/keycloak/data/import/realm.json:ro,z
+    networks: [internal, dmzlink]   # dmzlink: browser-facing OIDC redirects via the broker
+
+  consul:
+    dns: ["${ENCLAVE_DNS_IP}"]        # the enclave resolver is the ONLY resolver
+    dns_search: ["${RUNTIME_DNS_ZONE}"]
+    image: docker.io/hashicorp/consul:2.0.2
+    command: ["agent", "-config-dir=/consul/config"]
+    volumes:
+      - ../../hashicorp/consul/server.hcl:/consul/config/server.hcl:ro,z
+      # Generated secrets, merged by -config-dir. Named to sort after server.hcl.
+      - ../../hashicorp/consul/secrets/agent-secrets.hcl:/consul/config/zz-secrets.hcl:ro,z
+      - ../../hashicorp/consul/secrets/consul-ca.pem:/consul/tls/consul-ca.pem:ro,z
+      - ../../hashicorp/consul/secrets/consul-agent.pem:/consul/tls/consul-agent.pem:ro,z
+      - ../../hashicorp/consul/secrets/consul-agent-key.pem:/consul/tls/consul-agent-key.pem:ro,z
+      - consul-data:/consul/data
+    networks: [internal]
+
+  # ---------- SSO ingress ----------------------------------------------
+  # OIDC → forward-auth. Traefik asks /oauth2/auth on every request; unauthenticated
+  # users are redirected to /oauth2/start, which drives the Keycloak login and returns to
+  # /oauth2/callback. All same-origin with the app.
+  oauth2-proxy:
+    dns: ["${ENCLAVE_DNS_IP}"]        # the enclave resolver is the ONLY resolver
+    dns_search: ["${RUNTIME_DNS_ZONE}"]
+    image: quay.io/oauth2-proxy/oauth2-proxy:v7.15.3
+    command:
+      - --provider=keycloak-oidc
+      # Token validation uses the public issuer (what Keycloak stamps into tokens), while
+      # the back-channel calls go direct to Keycloak — so start-up does not depend on the
+      # ingress being up, and the browser still sees the public origin.
+      - --oidc-issuer-url=${KEYCLOAK_PUBLIC_URL}/realms/irplatform
+      - --skip-oidc-discovery=true
+      - --login-url=${KEYCLOAK_PUBLIC_URL}/realms/irplatform/protocol/openid-connect/auth
+      - --redeem-url=http://keycloak:8080/realms/irplatform/protocol/openid-connect/token
+      - --profile-url=http://keycloak:8080/realms/irplatform/protocol/openid-connect/userinfo
+      - --oidc-jwks-url=http://keycloak:8080/realms/irplatform/protocol/openid-connect/certs
+      # RP-initiated logout: signing out of the app must also end the Keycloak SSO
+      # session, otherwise the next visit silently re-authenticates.
+      # oauth2-proxy makes this call itself, so it uses the internal address like the
+      # other server-to-server URLs above. The public URL points at the edge listener,
+      # which the enclave cannot reach — the call is refused and the IdP session survives.
+      - --backend-logout-url=http://keycloak:8080/realms/irplatform/protocol/openid-connect/logout?id_token_hint={id_token}
+      - --client-id=ir-platform
+      - --client-secret=ir-platform-oidc-secret-dev
+      - --redirect-url=${PLATFORM_PUBLIC_URL}/oauth2/callback
+      - --http-address=0.0.0.0:4180
+      - --reverse-proxy=true
+      - --email-domain=*
+      - --scope=openid email profile
+      - --upstream=http://frontend:8080
+      - --set-xauthrequest=true
+      - --pass-user-headers=true
+      - --pass-access-token=true
+      - --skip-provider-button=true
+      - --cookie-secure=true
+      - --cookie-samesite=lax
+      # A CSRF cookie PER LOGIN ATTEMPT, rather than one fixed name reused by every flow.
+      #
+      # With a single `_oauth2_proxy_csrf`, any second authentication that starts before the
+      # first finishes overwrites it, and a callback whose cookie was already consumed or has
+      # expired fails with "CSRF cookie was not found" — a bare 403 the analyst cannot get past
+      # by retrying, because each retry replays the same dead callback. Signing out and back in
+      # reproduces it, and so does leaving the login page open past the CSRF expiry.
+      #
+      # Per-request cookies scope each attempt to its own state value, so a stale flow cannot
+      # invalidate a fresh one.
+      - --cookie-csrf-per-request=true
+      # Long enough that a login interrupted by a password manager or an MFA prompt still
+      # completes; short enough that an abandoned flow does not leave a usable cookie behind.
+      - --cookie-csrf-expire=15m
+      - --cookie-secret=${OAUTH2_COOKIE_SECRET}
+      - --ssl-insecure-skip-verify=true
+      - --whitelist-domain=ir-platform.local:8443
+    networks: [internal]
+
+  traefik:
+    dns: ["${ENCLAVE_DNS_IP}"]        # the enclave resolver is the ONLY resolver
+    dns_search: ["${RUNTIME_DNS_ZONE}"]
+    image: docker.io/library/traefik:v3.7
+    command: ["--configfile=/etc/traefik/traefik.yml"]
+    volumes:
+      - ../../traefik/traefik.yml:/etc/traefik/traefik.yml:ro,z
+      - ../../traefik/dynamic-sso:/etc/traefik/dynamic:ro,z
+      - ../../traefik/certs:/certs:ro,z
+    depends_on: [frontend, oauth2-proxy]
+    # INTERNAL ONLY. The ingress is reachable from the enclave and from nowhere else — the
+    # Boundary egress worker sits on this network and proxies authorized sessions to it.
+    #
+    # Not on dmzlink: anything in the DMZ that can address this port has a route into the enclave
+    # that no session authorized, which makes the broker one path among several rather than the
+    # only one. The UAT asserts the bastion cannot reach it.
+    networks:
+      internal:
+        # The platform's public name resolves to Traefik inside the enclave, so
+        # back-channel OIDC calls use the same origin the browser does.
+        aliases: [ir-platform.local]
+
+  # ---------- application ----------------------------------------------
+  frontend:
+    dns: ["${ENCLAVE_DNS_IP}"]        # the enclave resolver is the ONLY resolver
+    dns_search: ["${RUNTIME_DNS_ZONE}"]
+    build: ../../frontend
+    image: localhost/ir-frontend:latest
+    env_file: ../.env
+    depends_on: [backend]
+    networks:
+      internal:
+        ipv4_address: ${IR_IP_FRONTEND}
+
+  frontend-sidecar:
+    mem_limit: ${IR_SIDECAR_MEM:-128m}
+    image: localhost/ir-consul-sidecar:latest
+    network_mode: "service:frontend"
+    depends_on: [frontend]
+    command: ["consul", "connect", "envoy", "-sidecar-for", "ir-frontend",
+              "-http-addr", "https://consul:8501", "-grpc-addr", "https://consul:8503",
+              "-ca-file", "/consul/tls/consul-ca.pem", "-token-file", "/consul/tls/token",
+              "-admin-bind", "127.0.0.1:19000",
+              "--", "--concurrency", "${IR_ENVOY_CONCURRENCY:-1}"]
+    volumes:
+      - ../../hashicorp/consul/secrets/consul-ca.pem:/consul/tls/consul-ca.pem:ro,z
+      - ../../hashicorp/consul/secrets/tokens/ir-frontend.token:/consul/tls/token:ro,z
+    restart: on-failure
+
+  backend:
+    dns: ["${ENCLAVE_DNS_IP}"]        # the enclave resolver is the ONLY resolver
+    dns_search: ["${RUNTIME_DNS_ZONE}"]
+    # Context is the PLATFORM root, not backend/, because the Dockerfile copies
+    # `shared/sysstats.py` alongside the app — a narrower context cannot see it.
+    #
+    # This was `../../backend`, which made every `COPY backend/...` look for
+    # backend/backend/... and fail. The build error was swallowed by the deployment, so the
+    # old image kept running and every backend change appeared to deploy while none of them
+    # did. A code fix that cannot reach the container is worse than no fix: it reads as done.
+    build:
+      context: ../..
+      dockerfile: backend/Dockerfile
+    image: localhost/ir-backend:latest
+    command: ["web"]
+    env_file: ../.env
+    environment:
+      POSTGRES_HOST: ${IR_DB_HOST_APP:-db}
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/0
+      S3_ENDPOINT_URL: ${IR_MINIO_ENDPOINT_APP:-http://minio:9000}
+      IR_CONSUL_ADDR: "https://consul:8501"
+      IR_CONSUL_CACERT: "/consul/tls/consul-ca.pem"
+      # Reads the catalog and the intentions; writes nothing. Deliberately NOT the backend's own
+      # service token, which exists to register the backend, and emphatically not the management
+      # token — the platform must not be able to edit the policy that governs it.
+      IR_CONSUL_TOKEN_FILE: "/consul/tls/ui-token"
+      # The brokered-sessions page. The session-auditor principal can list and read sessions and
+      # nothing else, so showing access can never become a way to obtain it.
+      IR_BOUNDARY_ADDR: "https://boundary:9200"
+      IR_BOUNDARY_CACERT: "/boundary/certs/boundary.crt"
+      IR_BOUNDARY_SESSION_AUDITOR_LOGIN: ${BOUNDARY_SESSION_AUDITOR_LOGIN:-session-auditor}
+      # A plain variable, never ${A:-${B}}: podman-compose does not expand a nested default and
+      # passes the literal string through, so the service authenticates with "${VAR}" as its
+      # password and fails with a bare 401 that names nothing.
+      IR_BOUNDARY_SESSION_AUDITOR_PASSWORD: ${BOUNDARY_SESSION_AUDITOR_PASSWORD}
+      BOUNDARY_AUTH_METHOD_ID: ${BOUNDARY_AUTH_METHOD_ID:-}
+      BOUNDARY_PROJECT_ID: ${BOUNDARY_PROJECT_ID:-}
+      # Resolves user ids to login names on the sessions page — an id is not an audit record.
+      BOUNDARY_ORG_ID: ${BOUNDARY_ORG_ID:-}
+      KEYCLOAK_URL: "http://keycloak:8080"
+      KEYCLOAK_REALM: "irplatform"
+      # Source the Vault-rendered secrets instead of the environment. The entrypoint reads
+      # /vault/secrets/app.env, so the database password, Django key, HMAC keys and object-store
+      # credentials never appear in .env or in the container's environment.
+      #
+      # IR_CUSTODY_HMAC_KEY is the one that matters most here: it seals the chain of custody.
+      IR_VAULT: "${IR_VAULT:-1}"
+    depends_on: [db, redis, minio, keycloak, vault-agent]
+    volumes:
+      - vault-secrets:/vault/secrets:ro
+      # Read-only CA so the health panel can probe the mesh control plane over TLS, and the
+      # read-only token it reads the catalog and intentions with.
+      - ../../hashicorp/consul/secrets/consul-ca.pem:/consul/tls/consul-ca.pem:ro,z
+      - ../../hashicorp/consul/secrets/tokens/ui-readonly.token:/consul/tls/ui-token:ro,z
+      # Boundary's certificate, pinned the same way every other client of it pins it.
+      - ../../hashicorp/access/certs:/boundary/certs:ro,z
+    networks:
+      internal:
+        ipv4_address: ${IR_IP_BACKEND}
+
+  backend-sidecar:
+    mem_limit: ${IR_SIDECAR_MEM:-128m}
+    image: localhost/ir-consul-sidecar:latest
+    network_mode: "service:backend"
+    depends_on: [backend]
+    command: ["consul", "connect", "envoy", "-sidecar-for", "ir-backend",
+              "-http-addr", "https://consul:8501", "-grpc-addr", "https://consul:8503",
+              "-ca-file", "/consul/tls/consul-ca.pem", "-token-file", "/consul/tls/token",
+              "-admin-bind", "127.0.0.1:19000",
+              "--", "--concurrency", "${IR_ENVOY_CONCURRENCY:-1}"]
+    volumes:
+      - ../../hashicorp/consul/secrets/consul-ca.pem:/consul/tls/consul-ca.pem:ro,z
+      - ../../hashicorp/consul/secrets/tokens/ir-backend.token:/consul/tls/token:ro,z
+    restart: on-failure
+
+  # The malware-facing analysis sandbox: no egress (internal net), all caps dropped,
+  # no-new-privileges, read-only rootfs with tmpfs scratch.
+  worker:
+    # Its own image: it carries Volatility, YARA and the toolkit's analysis code, which
+    # the request-serving tier has no reason to hold. Built by backend/build_worker.sh
+    # from a staged context — `podman-compose build` cannot produce it.
+    dns: ["${ENCLAVE_DNS_IP}"]        # the enclave resolver is the ONLY resolver
+    dns_search: ["${RUNTIME_DNS_ZONE}"]
+    image: localhost/ir-worker:latest
+    command: ["worker"]
+    env_file: ../.env
+    environment:
+      POSTGRES_HOST: ${IR_DB_HOST_APP:-db}
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/0
+      S3_ENDPOINT_URL: ${IR_MINIO_ENDPOINT_APP:-http://minio:9000}
+      IR_TOOLKIT_DIR: /opt/toolkit
+      IR_SYMBOLS_DIR: /symbols
+      VOLATILITY_SYMBOL_PATH: /symbols
+      # A literal, not "${IR_VOL3_TIMEOUT:-10800}": podman-compose does not resolve a
+      # variable that refers to itself and passes the raw string through, which then fails
+      # to parse at the far end. Override it in .env if a deployment needs longer.
+      IR_VOL3_TIMEOUT: "10800"
+      # Captures are staged on DISK, not in the tmpfs. Volatility needs a seekable local
+      # file, and a real capture is far larger than any sane tmpfs — staging one in RAM
+      # either fails with ENOSPC or evicts the host. TMPDIR steers tempfile.mkdtemp here.
+      TMPDIR: /scratch
+      # Same Vault-issued secrets as the backend. The worker writes findings and reads
+      # evidence, so it needs the custody key and the object store — and has no more claim to
+      # a static password than the request tier does.
+      IR_VAULT: "${IR_VAULT:-1}"
+    depends_on: [backend, redis, vault-agent]
+    networks:
+      internal:
+        ipv4_address: ${IR_IP_WORKER}
+    volumes:
+      # Read-only: the agent renders these, the worker consumes them.
+      - vault-secrets:/vault/secrets:ro
+      # Symbol tables are read-only here: the worker consumes them, the puller installs
+      # them. A capture-parsing process should not be able to alter how memory is
+      # interpreted.
+      - symbols:/symbols:ro
+      # Disk-backed scratch for staging a capture during analysis. Sized by the host
+      # filesystem rather than RAM, and separate from the read-only rootfs.
+      - worker-scratch:/scratch
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    # Volatility writes a cache under $HOME. The root filesystem stays read-only — the
+    # cache gets a tmpfs instead, so the container keeps an immutable rootfs and the
+    # cache dies with the container rather than persisting between analyses.
+    # Small, short-lived writes only — capture staging goes to /scratch above.
+    tmpfs: ["/tmp", "/run", "/home/worker/.cache"]
+
+  worker-sidecar:
+    mem_limit: ${IR_SIDECAR_MEM:-128m}
+    image: localhost/ir-consul-sidecar:latest
+    network_mode: "service:worker"
+    depends_on: [worker]
+    command: ["consul", "connect", "envoy", "-sidecar-for", "ir-worker",
+              "-http-addr", "https://consul:8501", "-grpc-addr", "https://consul:8503",
+              "-ca-file", "/consul/tls/consul-ca.pem", "-token-file", "/consul/tls/token",
+              "-admin-bind", "127.0.0.1:19000",
+              "--", "--concurrency", "${IR_ENVOY_CONCURRENCY:-1}"]
+    volumes:
+      - ../../hashicorp/consul/secrets/consul-ca.pem:/consul/tls/consul-ca.pem:ro,z
+      - ../../hashicorp/consul/secrets/tokens/ir-worker.token:/consul/tls/token:ro,z
+    restart: on-failure
+
+  # ---------- the only bridge to the DMZ --------------------------------
+  # Initiates OUTBOUND to the DMZ receiver, pulls verified bundles, closes. Holds the
+  # internal credentials; the DMZ holds none.
+  puller:
+    dns: ["${ENCLAVE_DNS_IP}"]        # the enclave resolver is the ONLY resolver
+    dns_search: ["${RUNTIME_DNS_ZONE}"]
+    build:
+      context: ../..
+      dockerfile: dmz/Dockerfile.puller
+    image: localhost/ir-puller:latest
+    command: ["--interval", "10"]
+    env_file: ../.env
+    environment:
+      RECEIVER_URL: ${RECEIVER_URL}
+      # Pins the receiver's certificate as the trust anchor. There is exactly one server the
+      # puller should ever talk to, so pinning it is stronger than trusting a public CA that
+      # would vouch for anyone holding a certificate for that name.
+      RECEIVER_CA_BUNDLE: /certs/receiver.crt
+      IR_API_URL: http://backend:8000
+      S3_ENDPOINT_URL: ${IR_MINIO_ENDPOINT_APP:-http://minio:9000}
+      IR_SYMBOLS_DIR: /symbols
+    depends_on: [backend, minio]
+    volumes:
+      - ../../dmz/certs/receiver.crt:/certs/receiver.crt:ro,z
+    volumes:
+      # Writable here — the puller is what installs verified symbol tables. It is the
+      # only component that writes to the store; the worker mounts it read-only.
+      - symbols:/symbols
+      # The receiver's certificate, pinned as the trust anchor for the outbound pull.
+      - ../../dmz/certs/receiver.crt:/certs/receiver.crt:ro,z
+    networks:
+      internal:
+        ipv4_address: ${IR_IP_PULLER}
+      dmzlink:
+
+  puller-sidecar:
+    mem_limit: ${IR_SIDECAR_MEM:-128m}
+    image: localhost/ir-consul-sidecar:latest
+    network_mode: "service:puller"
+    depends_on: [puller]
+    command: ["consul", "connect", "envoy", "-sidecar-for", "ir-puller",
+              "-http-addr", "https://consul:8501", "-grpc-addr", "https://consul:8503",
+              "-ca-file", "/consul/tls/consul-ca.pem", "-token-file", "/consul/tls/token",
+              "-admin-bind", "127.0.0.1:19000",
+              "--", "--concurrency", "${IR_ENVOY_CONCURRENCY:-1}"]
+    volumes:
+      - ../../hashicorp/consul/secrets/consul-ca.pem:/consul/tls/consul-ca.pem:ro,z
+      - ../../hashicorp/consul/secrets/tokens/ir-puller.token:/consul/tls/token:ro,z
+    restart: on-failure
+
+volumes:
+  boundary-db-data:
+  boundary-state:
+  # Vault's raft store — the secrets themselves.
+  vault-data:
+  # Its TLS material, issued by the certs one-shot and read by the server.
+  vault-certs:
+  # Carries the root token, the unseal key and the AppRole credentials from the setup one-shot
+  # to the agent. The most sensitive volume in the deployment; it never leaves this tier.
+  vault-state:
+  # Where the agent renders the app's secrets. Mounted read-only into backend and worker.
+  vault-secrets:
+  vault-agent:
+  # Vault's own audit log. Every privileged operation against the secrets store, including the
+  # issuing of the custody key — evidence about the evidence handling.
+  vault-logs:
+  # Volatility symbol tables (ISF), written by the puller and read by the worker.
+  symbols:
+  # Capture staging for analysis. Disk-backed: a real memory image does not fit in RAM.
+  worker-scratch:
+  pgdata:
+  miniodata:
+  consul-data:

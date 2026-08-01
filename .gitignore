@@ -1,0 +1,49 @@
+# -- Testing artifacts ---------------------------------------------------------
+
+# Python / pytest
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+.tox/
+.nox/
+.mypy_cache/
+.ruff_cache/
+
+# Virtualenvs (test/run_tests.sh builds a temporary one per run and tears it down; ignore any
+# local ones too)
+venv/
+.venv/
+
+# test/run_tests.sh per-run logs
+test/logs/
+env/
+ENV/
+
+# Pester / PowerShell testing
+testResults.xml
+TestResults.xml
+TestResults/
+*.TestResults.xml
+Pester*.xml
+pester*.xml
+coverage.json
+PesterCoverage.xml
+*.coverage.xml
+
+# -- Editor / OS noise ---------------------------------------------------------
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# -- Archive / pre-edit backups -----------------------------------------------
+archive/
+# Private development — continues beyond the public baseline, never committed.
+/private/

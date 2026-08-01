@@ -1,0 +1,93 @@
+# CoreDNS — the egress BACKSTOP for the analyst segment.
+#
+# Rendered by deploy.sh from the addresses the container runtime actually assigned; do not edit
+# the generated Corefile.
+#
+# This is a control, not convenience:
+#   * the segment has no egress, so public DNS is unreachable and unusable anyway;
+#   * DNS is a classic covert exfiltration and C2 channel, and this resolver has NO recursive
+#     path — a name outside the zones below cannot be looked up, so there is nothing to tunnel
+#     over;
+# It is NOT the resolver services are given, and cannot be: podman overrides a container's
+# `dns:` whenever its own resolver is enabled on the network, and disabling that resolver is
+# exactly what would force every service back to a pinned address. Dynamic names and a resolver
+# we control cannot both be had on this runtime.
+#
+# What podman does with `dns:` is make this the runtime resolver's UPSTREAM. While the network
+# is internal there is nothing to forward — in-zone names are answered directly and outside
+# names die there — so this file sees no traffic and the egress control is the network itself.
+#
+# It arms the moment a network gains a route out. Then every name the runtime cannot answer is
+# forwarded here and refused. That is not hypothetical: it is how the DMZ-link leak was caught,
+# with the enclave's own bridge container resolving live internet addresses because that one
+# network had been left non-internal.
+#
+# Addresses are NOT written down. In-zone lookups are forwarded to the container runtime's
+# resolver, which tracks where each container currently is. That is what lets a second analyst
+# workstation start without colliding with the first, and lets the DMZ deploy onto any subnet
+# without editing this file — a pinned address is a guess about a value the runtime owns.
+
+# ---------------------------------------------------------------------------
+# The analyst-facing platform name.
+#
+# Rewritten to the BASTION, whose namespace holds the broker's listener — never to an internal
+# host. The workstation therefore never learns an enclave address even by resolution, which is
+# what keeps "the analyst cannot address the enclave" true at the naming layer as well as the
+# routing one.
+#
+# `rewrite` rather than a hardcoded answer: the question becomes the bastion's real name, the
+# runtime resolver answers with its current address, and CoreDNS restores the original name in
+# the reply. The client sees an A record for the platform name; nothing pins the broker.
+# ---------------------------------------------------------------------------
+__PLATFORM_HOST__:53 {
+    rewrite name exact __PLATFORM_HOST__ bastion.__RUNTIME_ZONE__
+    forward . __EDGE_DNS__ {
+        # No fallback resolver. If the runtime cannot answer, the answer is "no" — never a
+        # second opinion from somewhere with a route out.
+        policy sequential
+        max_fails 0
+    }
+    cache 30
+    log
+    errors
+}
+
+# ---------------------------------------------------------------------------
+# DMZ service names, for the containers on this segment that address each other: the
+# workstation's tailnet node dialling `headscale`, the browser reaching `bastion`.
+#
+# Scoped to the runtime's zone and forwarded to the runtime resolver for the EDGE network,
+# which answers only for containers attached to it. The answer set is therefore bounded by
+# network membership rather than by a list maintained here — an enclave service is not
+# nameable from this segment because it is not on this network, not because it was omitted.
+# ---------------------------------------------------------------------------
+__RUNTIME_ZONE__:53 {
+    forward . __EDGE_DNS__ {
+        policy sequential
+        max_fails 0
+    }
+    cache 30
+    log
+    errors
+}
+
+# ---------------------------------------------------------------------------
+# Everything else: REFUSED.
+#
+# No forwarders, no recursion, no root hints. A query for any other name has no path out, which
+# is what closes DNS as an exfiltration channel from a workstation that may be handling
+# hostile evidence.
+#
+# REFUSED rather than a silent failure: the segment is `internal`, so an external lookup would
+# die anyway — but that is a property of the network, not a decision anyone wrote down, and it
+# evaporates the moment someone attaches a gateway to debug something. An explicit refusal
+# states the intent, survives that change, and shows up in the query log as a denial rather
+# than as an absence.
+# ---------------------------------------------------------------------------
+.:53 {
+    template IN ANY . {
+        rcode REFUSED
+    }
+    log
+    errors
+}
