@@ -7,7 +7,7 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, Optional
 
-from .._common import decode, find_json_objects, values_near
+from .._common import decode, find_json_objects, structural_hit, values_near
 
 _PROTO_FIELDS = (
     b'"implant_name"', b'"reconnect_interval"', b'"c2s"', b'"dns_c2s"',
@@ -26,7 +26,10 @@ _RECONNECT_RE = re.compile(rb'(?:ReconnectInterval|reconnect_interval)\x00{0,8}(
 
 
 def identify(data: bytes) -> bool:
-    return sum(1 for f in _PROTO_FIELDS if f in data) >= 2
+    # These are serialization keys the server requires, so in an implant they sit together
+    # in one marshalled struct. The same names listed in a source file or an advisory are
+    # spread through running text, which is what the gate separates.
+    return structural_hit(data, _PROTO_FIELDS, need=2) is not None
 
 
 def extract(data: bytes) -> Optional[Dict[str, Any]]:

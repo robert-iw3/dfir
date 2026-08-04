@@ -18,8 +18,10 @@ Two levels are asserted:
 
   * `extract_all()` — the production contract. `memory_enrich.py` and `edr_hunt.py` call
     only this, so its gate is what actually protects an investigation.
-  * `identify()` per parser — the stricter standard. Parsers hardened for §12a hold to it;
-    the remainder are listed below as known debt rather than quietly skipped.
+  * `identify()` per parser — the stricter standard, and now the standard for all of them.
+    `extract_all()`'s prose gate is a whole-region judgement; a parser whose own gate is
+    "these strings appear somewhere" still fires the moment a region is not prose enough to
+    be suppressed. Both have to hold.
 """
 from __future__ import annotations
 
@@ -34,14 +36,6 @@ PARSERS_ROOT = REPO / "playbooks" / "linux" / "threat_hunting" / "mwcp_parsers"
 PACKAGE = "playbooks.linux.threat_hunting.mwcp_parsers"
 
 driver = importlib.import_module(f"{PACKAGE}.driver")
-
-# Parsers still keyed on bare literal presence, so their identify() matches prose about the
-# family. `extract_all()` suppresses these in production; hardening each one is the remaining
-# half of §12a. Listed explicitly so the count can only go down.
-UNHARDENED = {
-    "adaptix", "generic_go_c2", "havoc", "merlin", "mythic", "sliver",
-    "ebury", "mirai_gafgyt", "esxi_encryptor", "recovery_inhibition", "anti_analysis",
-}
 
 PROSE = (
     b"Incident notes. The host was assessed for SaaS-based C2. We checked for "
@@ -115,13 +109,9 @@ def test_prose_gate_does_not_swallow_real_samples():
 
 @pytest.mark.parametrize("name,module,source", PARSERS, ids=[n for n, _, _ in PARSERS])
 def test_parser_identify_rejects_its_own_source(name, module, source):
-    if name in UNHARDENED:
-        pytest.xfail(f"{name} still keys on bare literal presence — BACKLOG §12a remainder")
     assert module.identify(source.read_bytes()) is False
 
 
 @pytest.mark.parametrize("name,module,source", PARSERS, ids=[n for n, _, _ in PARSERS])
 def test_parser_identify_rejects_prose(name, module, source):
-    if name in UNHARDENED:
-        pytest.xfail(f"{name} still keys on bare literal presence — BACKLOG §12a remainder")
     assert module.identify(PROSE) is False

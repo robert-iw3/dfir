@@ -1,0 +1,21 @@
+{
+  "name": "kernel_bpf_state",
+  "incident_id": "IR-LAB-KERNEL",
+  "description": "Kernel-level residency. eBPF is where BPFDoor- and Symbiote-class implants live, and a memory image alone does not enumerate it cleanly. Nothing is planted here: loading an eBPF program needs privileges the lab deliberately does not grant. What is under test is whether the collection RECORDS the kernel and eBPF state at all — because an analyst cannot review, and a later pass cannot re-derive, evidence that was never captured.",
+
+  "plant": [],
+
+  "expect": [
+    {"id": "loaded kernel modules are collected",
+     "artifact": "kernel_modules.txt"},
+
+    {"id": "eBPF state is collected for offline review",
+     "artifact": "bpf_objects.txt"},
+
+    {"id": "the eBPF hardening posture is recorded",
+     "artifact": "bpf_objects.txt", "contains": "unprivileged_bpf_disabled"},
+
+    {"id": "kernel taint is recorded (a loaded LKM is sticky in the taint mask)",
+     "artifact": "kernel_taint.txt"}
+  ]
+}

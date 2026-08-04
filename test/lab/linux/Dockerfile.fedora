@@ -1,0 +1,27 @@
+# An RPM-based endpoint to collect FROM.
+#
+# The reason this exists: the toolkit's trust anchor is package ownership and integrity, and
+# `pkg_modified()` has three branches — debsums, `rpm -Vf`, `pacman -Qkk`. Only the first has
+# ever executed. Most enterprise Linux is RPM-based, so the branch that matters most to a real
+# deployment was the one never run.
+#
+# `rpm -Vf` needs an intact RPM database, which a Fedora image has by construction.
+ARG FEDORA_VERSION=42
+FROM docker.io/library/fedora:${FEDORA_VERSION}
+
+# The endpoint's own tooling, which the collector shells out to. Names differ from Debian's:
+# procps-ng not procps, iproute not iproute2, libcap for getcap/setcap.
+RUN dnf install -y --setopt=install_weak_deps=False \
+        python3 \
+        procps-ng iproute net-tools psmisc lsof \
+        systemd cronie util-linux coreutils findutils \
+        e2fsprogs libcap \
+        rpm \
+        openssh-clients \
+        ca-certificates \
+    && dnf clean all
+
+WORKDIR /work
+ENV IR_LAB=1
+
+CMD ["/bin/bash"]

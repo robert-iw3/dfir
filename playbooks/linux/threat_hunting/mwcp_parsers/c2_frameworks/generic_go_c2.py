@@ -7,7 +7,7 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, Optional
 
-from .._common import decode, find_json_objects, values_near
+from .._common import decode, find_json_objects, in_text_run, structural_hit, values_near
 
 _GO_BUILD_MARKER_RE = re.compile(rb'Go build ID: "|golang\.org/x/|runtime\.goexit')
 _HEARTBEAT_JSON_ANCHOR = re.compile(rb'"(?:hostname|beacon|interval|agent_id|task_id)"\s*:')
@@ -16,9 +16,12 @@ _URL_RE = re.compile(rb'https?://[^\s\x00\'"<>]{4,200}', re.IGNORECASE)
 
 
 def identify(data: bytes) -> bool:
-    if not _GO_BUILD_MARKER_RE.search(data):
+    # This parser names no family, so it is the one most easily talked into a verdict by a
+    # document. Both halves have to be structure: a build marker in a real Go binary rather
+    # than quoted in text, and heartbeat keys inside one serialized object.
+    if not any(not in_text_run(data, m.start()) for m in _GO_BUILD_MARKER_RE.finditer(data)):
         return False
-    return sum(1 for f in _HEARTBEAT_FIELDS if f in data) >= 2
+    return structural_hit(data, _HEARTBEAT_FIELDS, need=2) is not None
 
 
 def extract(data: bytes) -> Optional[Dict[str, Any]]:

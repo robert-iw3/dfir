@@ -321,8 +321,62 @@ def enrich_region(bin_path):
             "pid": str(meta.get("pid", "")), "process": meta.get("process", ""),
             "base_address": meta.get("base_address", ""), "region": meta.get("region", ""),
             "perms": meta.get("perms", ""), "matched_rules": meta.get("matched_rules", []),
+            # Provenance the carver already recorded. Whether the bytes were executable and
+            # whether anything on disk backs them is what separates code the process was
+            # running from data it happened to be holding.
+            "injected": bool(meta.get("injected")), "backing_path": meta.get("backing_path", ""),
             "iocs": iocs, "capa": capa, "floss_deobfuscated": len(floss["decoded"]),
             "c2_config_hits": c2_hits}
+
+
+# Findings whose claim is that the process was RUNNING something, as opposed to merely holding
+# bytes. Credential material is deliberately not in this set: a key recovered from a heap is
+# exposed whether or not the region was executable, so the region says nothing about that claim.
+_EXECUTION_CLAIM_TYPES = frozenset((
+    "C2 Endpoint (memory)", "Tor C2 (memory)", "Cryptominer C2 (memory)",
+    "Exfiltration Channel (memory)", "Cryptominer Wallet (memory)"))
+
+_DOWNGRADE = {"Critical": "High", "High": "Medium", "Medium": "Low"}
+
+
+def _region_context(d):
+    """(tier, explanation) from the region's own metadata — or ('unknown', '') if it has none.
+
+    A carved region arrives with its permissions and its backing, and both were being read
+    into the dossier and then ignored. An anonymous executable region is code with no file
+    behind it; an executable mapping of a library is very often a rule grazing that library;
+    a read-write region is data the process was holding. Those are three different claims.
+    """
+    perms = (d.get("perms") or "").lower()
+    region = (d.get("region") or "").lower()
+    if not perms and not region:
+        return "unknown", ""
+    if d.get("injected") or (region == "anon" and "x" in perms):
+        return "injected", ("anonymous executable region with no on-disk backing - code the "
+                            "process was running, not a file it mapped")
+    if "x" in perms:
+        return "mapped", (f"executable region backed by {d.get('backing_path') or '?'} - verify "
+                          f"that file's package and hash before reading the hit as this "
+                          f"process's own code")
+    return "held", ("non-executable region - bytes the process was holding, not code it was "
+                    "executing")
+
+
+def _apply_region_context(findings, d):
+    """Re-weight execution claims by where in the process the bytes were found.
+
+    Unknown provenance changes nothing: a missing sidecar is not evidence that the region was
+    harmless, and downgrading on it would quietly weaken real detections wherever the carver
+    could not record the metadata.
+    """
+    tier, why = _region_context(d)
+    if tier == "unknown":
+        return findings
+    for f in findings:
+        f["Details"] = f"{f['Details']} Region provenance: {why}."
+        if tier in ("held", "mapped") and f.get("Type") in _EXECUTION_CLAIM_TYPES:
+            f["Severity"] = _DOWNGRADE.get(f["Severity"], f["Severity"])
+    return findings
 
 
 def dossiers_to_findings(dossiers):
@@ -330,6 +384,7 @@ def dossiers_to_findings(dossiers):
     type the adjudicator + IOCs.json + report already understand. Never suppresses."""
     out = []
     for d in dossiers:
+        first = len(out)
         where = f"PID {d['pid']} ({d['process']})" if d["pid"] else d["region_file"]
         i = d["iocs"]
         for ip in i["ips"]:
@@ -376,6 +431,7 @@ def dossiers_to_findings(dossiers):
         c2_hits = d.get("c2_config_hits") or []
         if c2_hits:
             out.extend(_c2cfg.to_findings(c2_hits, where))
+        _apply_region_context(out[first:], d)
     return out
 
 

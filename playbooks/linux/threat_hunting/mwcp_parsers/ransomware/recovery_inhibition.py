@@ -19,6 +19,8 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, Optional
 
+from .._common import in_text_run, structural_hit
+
 _SNAPSHOT_DESTROY_CMDS = (
     b'lvremove', b'btrfs subvolume delete', b'zfs destroy',
 )
@@ -27,9 +29,14 @@ _CRON_BACKUP_KILL = (b'crontab -r', b'systemctl stop cron', b'systemctl disable 
 
 
 def _signals(data: bytes) -> Dict[str, Any]:
-    destroy_hits = [c for c in _SNAPSHOT_DESTROY_CMDS if c in data]
-    has_pubkey = bool(_PUBKEY_RE.search(data))
-    backup_service_kill = any(c in data for c in _CRON_BACKUP_KILL)
+    # The argument is that one script carries destroy commands for several storage stacks
+    # at once. A document listing the same commands makes no such claim, so each signal is
+    # only counted where it sits in a structure rather than in running text.
+    destroy_hits = ([c for c in _SNAPSHOT_DESTROY_CMDS if c in data]
+                    if structural_hit(data, _SNAPSHOT_DESTROY_CMDS, need=1) is not None else [])
+    pk = _PUBKEY_RE.search(data)
+    has_pubkey = bool(pk and not in_text_run(data, pk.start()))
+    backup_service_kill = structural_hit(data, _CRON_BACKUP_KILL, need=1) is not None
     return {'destroy_hits': destroy_hits, 'pubkey': has_pubkey,
             'backup_service_kill': backup_service_kill}
 

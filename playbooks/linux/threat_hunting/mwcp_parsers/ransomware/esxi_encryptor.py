@@ -24,6 +24,8 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, Optional
 
+from .._common import in_text_run, structural_hit
+
 _KILL_PAIR = (b'esxcli vm process list', b'esxcli vm process kill')
 _SNAPSHOT_REMOVE = (b'vim-cmd vmsvc/snapshot.removeall', b'vim-cmd vmsvc/power.off')
 _ESXI_EXTENSIONS = (b'.vmdk', b'.vmx', b'.vmsn', b'.vswp', b'.vmss', b'.nvram', b'.vmem')
@@ -31,10 +33,15 @@ _KILL_WID_RE = re.compile(rb'esxcli\s+vm\s+process\s+kill\s+-t\s+(?:force|soft|h
 
 
 def _signals(data: bytes) -> Dict[str, bool]:
-    kill_pair = all(s in data for s in _KILL_PAIR) or bool(_KILL_WID_RE.search(data))
-    snapshot = any(s in data for s in _SNAPSHOT_REMOVE)
+    # A script that does this holds its commands and its target extensions together. The
+    # same strings listed in a detection rule, an advisory or this parser's own source are
+    # equally present and mean the opposite, so each signal has to clear the prose gate.
+    wid = _KILL_WID_RE.search(data)
+    kill_pair = (structural_hit(data, _KILL_PAIR, need=2) is not None
+                 or bool(wid and not in_text_run(data, wid.start())))
+    snapshot = structural_hit(data, _SNAPSHOT_REMOVE, need=1) is not None
     ext_hits = [e for e in _ESXI_EXTENSIONS if e in data]
-    ext_cluster = len(ext_hits) >= 4
+    ext_cluster = structural_hit(data, _ESXI_EXTENSIONS, need=4) is not None
     return {'kill_pair': kill_pair, 'snapshot_removal': snapshot, 'ext_cluster': ext_cluster,
             'ext_hits': ext_hits}
 

@@ -17,14 +17,17 @@ Writes EDR_Report_<stamp>.json (list of findings) and prints the path.
 """
 import argparse
 import datetime
+import glob
 import json
 import math
 import os
 import re
 import shutil
+import stat
 import struct
 import subprocess
 import sys
+import time
 from collections import Counter
 
 # Structural/behavioral family config extraction (C2 frameworks, Linux/ESXi ransomware, cloud
@@ -37,7 +40,146 @@ try:
 except ImportError:
     _mwcp = None
 
+# Package ownership and integrity, from the module that already implements them per package
+# manager. Checks that ask "is this binary supposed to be here" get the same answer the
+# adjudicator will, instead of a second, drifting copy of the same branching.
+try:
+    from adjudicate import pkg_modified as _pkg_modified, pkg_owner as _pkg_owner
+except ImportError:
+    _pkg_owner = _pkg_modified = None
+
 FINDINGS = []
+# Where this run writes its evidence. Checks that walk writable directories must not report
+# the collection's own output: it copies credential files and login databases with `cp -p`,
+# which reproduces the exact artifact a timestomp check looks for.
+REPORT_DIR = "."
+
+# Files that only ever exist at the root of a toolkit collection bundle.
+_BUNDLE_MARKERS = ("_status.json", "_custody_log.jsonl")
+_BUNDLE_GLOBS = ("_manifest_*.json", "_custody_*.json")
+_bundle_cache = {}
+
+
+_CRED_SHAPE_RE = re.compile(
+    rb"(?m)^[A-Za-z0-9._-]+:(\$[0-9a-z]+\$|[x*!]|:)"      # shadow/passwd/gshadow record
+    rb"|-----BEGIN (RSA |OPENSSH |EC |DSA |PGP )?PRIVATE KEY-----"
+    rb"|aws_secret_access_key|api[_-]?key\s*[=:]|password\s*[=:]")
+
+
+def _credential_shape(path):
+    """True if the file looks like a credential store, False if it is ordinary text, None if
+    it cannot be judged (binary, unreadable) — in which case the caller keeps the finding.
+
+    A filename is a lead. `passwd-rotation-runbook.md` and `secrets-management-notes.txt` are
+    documentation, and on a benign host both were reported as staged credential theft on the
+    strength of their names alone.
+    """
+    try:
+        with open(path, "rb") as fh:
+            head = fh.read(8192)
+    except OSError:
+        return None
+    if not head:
+        return False
+    if b"\x00" in head:                       # binary: a keyring, .kdbx, a dump - cannot judge
+        return None
+    try:
+        head.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+    return bool(_CRED_SHAPE_RE.search(head))
+
+
+def _valid_marker(path):
+    """A marker must be a real, non-empty, parseable file — existence is not enough.
+
+    `/run/user/<uid>/doc` is the flatpak document portal: a FUSE mount that SYNTHESISES
+    paths on access, so `os.path.exists` answers True for any name asked of it. A bare
+    existence test recognised it as a collection bundle and would have excluded a live
+    writable directory from every check that consults this.
+
+    Reading the file defeats that, and it also raises the bar for planting a marker to
+    suppress a scan: a valid JSON document rather than an empty file with the right name.
+    """
+    try:
+        if not os.path.isfile(path) or os.path.getsize(path) == 0:
+            return False
+        with open(path, "rb") as fh:
+            head = fh.read(4096)
+    except OSError:
+        return False
+    if path.endswith(".jsonl"):
+        return head.lstrip()[:1] == b"{"
+    try:
+        json.loads(head.decode("utf-8", "replace")) if len(head) < 4096 else None
+    except ValueError:
+        # A manifest larger than the peek is normal; only a short file that fails to parse
+        # is evidence the name is a coincidence.
+        return len(head) >= 4096
+    return True
+
+
+def _own_evidence_root(path):
+    """The collection bundle `path` belongs to, or None.
+
+    Excluding only THIS run's report directory was not enough. A responder who collects twice,
+    or who leaves a bundle on the host, has the earlier bundle sitting in a writable directory
+    full of `cp -p` copies of /etc/passwd and capability-bearing subject binaries — and the
+    next run reports its own previous evidence as credential staging and timestomping. On a
+    live host that was 12 of 22 High findings.
+
+    Recognised by the marker files a bundle always carries at its root, not by path, so it
+    works wherever the bundle was written.
+    """
+    d = os.path.abspath(path if os.path.isdir(path) else os.path.dirname(path))
+    for _ in range(6):                       # bundles nest a few levels: Evidence/NNN_x/file
+        if d in _bundle_cache:
+            if _bundle_cache[d]:
+                return d
+        else:
+            hit = any(_valid_marker(os.path.join(d, m)) for m in _BUNDLE_MARKERS) or \
+                  any(_valid_marker(p) for g in _BUNDLE_GLOBS
+                      for p in glob.glob(os.path.join(d, g)))
+            _bundle_cache[d] = hit
+            if hit:
+                return d
+        parent = os.path.dirname(d)
+        if parent == d:
+            break
+        d = parent
+    return None
+
+
+_noted_bundles = set()
+
+
+def _note_own_bundle(bundle):
+    """Remember a recognised bundle. Reported once in total by report_own_bundles()."""
+    _noted_bundles.add(bundle)
+
+
+def report_own_bundles():
+    """One finding naming every prior bundle skipped, not one finding per bundle.
+
+    Recorded rather than silently dropped: suppression keyed on marker files is suppression an
+    intruder could invoke by dropping a `_status.json` beside their tools, so the exclusion has
+    to leave a trace an analyst can see and challenge.
+
+    Aggregated because the first version emitted one Info per bundle and a host that had run
+    the test suite produced 86 of them — trading twelve false High findings for eighty-six
+    Info entries is not a fix, it is the same noise wearing a different severity.
+    """
+    if not _noted_bundles:
+        return
+    paths = sorted(_noted_bundles)
+    add("Info", "Prior Collection Bundles Skipped", f"{len(paths)} directory/directories",
+        "These carry this toolkit's own collection markers, so their contents were excluded "
+        "from the writable-directory checks: a bundle is full of `cp -p` copies of credential "
+        "files and subject binaries, which read as staged credentials and backdated "
+        "executables. Verify each is an evidence bundle you or a colleague left behind - the "
+        "markers are files, and a file can be planted: "
+        + ", ".join(paths[:40]) + (f" (+{len(paths) - 40} more)" if len(paths) > 40 else ""),
+        "-")
 # Executable/volatile locations an implant typically drops into.
 WRITABLE_DIRS = ("/tmp", "/var/tmp", "/dev/shm", "/run", "/var/run")
 # World-writable staging dirs only. Bare /run and /var/run are root-owned tmpfs
@@ -295,6 +437,25 @@ def check_kernel_modules():
     mods = read_file("/proc/modules")
     if not mods:
         return
+    # `modinfo -n` answering nothing means one of two very different things: this module has
+    # no file on disk, or this HOST cannot resolve module files at all. Without the second
+    # case ruled out, every loaded module reads as an in-memory rootkit — 210 High findings
+    # on a clean endpoint, which is what the benign scenario caught.
+    #
+    # modinfo lives in kmod and is absent from minimal images; /lib/modules/<release> is
+    # absent in a container, and on a host whose modules tree was stripped or not yet
+    # populated for the running kernel. In any of those the check has no evidence, and no
+    # evidence is not evidence of a rootkit.
+    release = os.uname().release
+    modtree = any(os.path.isdir(os.path.join(p, release))
+                  for p in ("/lib/modules", "/usr/lib/modules"))
+    if not shutil.which("modinfo") or not modtree:
+        add("Info", "Kernel Module Check Reduced Coverage", "-",
+            f"modinfo present: {bool(shutil.which('modinfo'))}; modules tree for {release}: "
+            f"{modtree}. Loaded modules could not be resolved to files on disk, so this run "
+            f"cannot tell a module with no backing file from one this host simply cannot look "
+            f"up - an in-memory LKM rootkit would NOT be reported here.", "-")
+        return
     for line in mods.splitlines():
         name = line.split()[0] if line.split() else None
         if not name:
@@ -331,15 +492,41 @@ CONTAINER_PATHS = ("/overlay/", "/containers/storage/", "/var/lib/docker/",
 
 
 def check_suid():
+    # The basename baseline is a fast path, not the test. Distros ship different SUID helpers
+    # — ssh-keysign, chage, expiry, crontab, pam_timestamp_check, wall — so a hand-kept list
+    # of names calls stock binaries "unexpected" on every host and grows forever. What makes a
+    # SUID binary unremarkable is that a package put it there and still vouches for its
+    # contents; the full inventory ships in suid_sgid_files.txt regardless of what is flagged.
     out = run(["find", "/", "-xdev", "-perm", "/6000", "-type", "f"])
+    unverifiable = []
     for path in filter(None, (l.strip() for l in out.splitlines())):
         if os.path.basename(path) in SUID_BASELINE:
             continue
         if any(seg in path for seg in CONTAINER_PATHS):
             continue
-        sev = "High" if any(path.startswith(d) for d in (*WRITABLE_DIRS, "/home")) else "Low"
+        in_writable = any(path.startswith(d) for d in (*WRITABLE_DIRS, "/home"))
+        owner = _pkg_owner(path) if (_pkg_owner and not in_writable) else None
+        if owner:
+            modified = _pkg_modified(path, owner)
+            if modified:
+                add("Critical", "Packaged SUID Binary Modified", path,
+                    f"SUID binary owned by {owner} no longer matches the package's recorded "
+                    f"contents - a trojaned setuid binary grants root to whoever calls it.",
+                    "T1548.001 (SetUID)")
+            elif modified is None:
+                # Owned, but no integrity tool answered. Not evidence of anything either way,
+                # so it is neither flagged nor silently dropped.
+                unverifiable.append(path)
+            continue
+        sev = "High" if in_writable else "Low"
         add(sev, "Unexpected SUID Binary", path,
+            "SUID/SGID binary that no package owns." if _pkg_owner else
             "SUID/SGID binary outside the base-OS baseline.", "T1548.001 (SetUID)")
+    if unverifiable:
+        add("Info", "SUID Integrity Unverified", f"{len(unverifiable)} binaries",
+            f"Package-owned SUID binaries whose integrity no tool on this host could check "
+            f"(install debsums/rpm/pacman/apk to close this): {', '.join(unverifiable[:10])}"
+            + (" ..." if len(unverifiable) > 10 else ""), "T1548.001 (SetUID)")
 
 
 # --- Check 8: persistence in cron / systemd referencing writable paths --------
@@ -390,6 +577,25 @@ def check_persistence():
                                 "T1543.002 (Systemd Service)")
         except Exception:
             pass
+    # OpenRC init scripts and their conf.d overrides (Alpine, Gentoo, Devuan). The whole
+    # script body is in scope, not one directive: an init script's start() runs arbitrary
+    # shell as root, and conf.d is sourced, so a payload can sit on any line of either.
+    for d in ("/etc/init.d", "/etc/conf.d"):
+        try:
+            entries = sorted(os.listdir(d))
+        except Exception:
+            continue
+        for fn in entries:
+            p = os.path.join(d, fn)
+            if not os.path.isfile(p):
+                continue
+            body = read_file(p) or ""
+            for ln in body.splitlines():
+                s = ln.strip()
+                if s and not s.startswith("#") and SUSPICIOUS_CMD.search(s):
+                    add("Medium", "Init Script Persistence", p,
+                        f"Init script runs suspicious payload at boot: {s[:160]}",
+                        "T1037.004 (RC Scripts)")
 
 
 # --- Check 9: high-entropy ELF in writable dirs (packed/encrypted implant) -----
@@ -1077,6 +1283,33 @@ def check_magic_mismatch():
 
 
 # --- Check 18: logging / telemetry tampering ----------------------------------
+def _login_evidence():
+    """What, other than wtmp, records that a session ever happened on this host.
+
+    Returns a short reason string, or None when nothing does.
+    """
+    # lastlog is a fixed-size record per uid; an all-zero file means nobody has ever
+    # logged in. Read in chunks so a sparse multi-MB file costs nothing.
+    try:
+        with open("/var/log/lastlog", "rb") as fh:
+            for chunk in iter(lambda: fh.read(1 << 16), b""):
+                if chunk.strip(b"\0"):
+                    return "lastlog holds login records"
+    except Exception:
+        pass
+    sess = re.compile(r"session opened for user|Accepted (password|publickey)")
+    for lf in ("/var/log/auth.log", "/var/log/secure"):
+        body = read_file(lf) or ""
+        if sess.search(body):
+            return f"{lf} records sessions"
+    try:
+        if os.path.getsize("/run/utmp") > 0:
+            return "utmp holds an active session"
+    except Exception:
+        pass
+    return None
+
+
 def check_log_tampering():
     # 18a. Core audit/logging services disabled or dead.
     for unit in ("auditd", "rsyslog", "systemd-journald"):
@@ -1118,13 +1351,31 @@ def check_log_tampering():
     # 18e. truncated auth/audit logs (size 0 on a running system = suspicious wipe).
     # btmp is excluded: it only records FAILED logins and is routinely empty on a
     # healthy host, so a zero-byte btmp is the normal case, not a wipe indicator.
+    #
+    # wtmp is only a wipe indicator if a session ever happened. An empty wtmp on a host
+    # nobody has logged into - a container, a freshly imaged machine - is the same bytes as
+    # a wiped one, and calling both a wipe means the finding carries no information. The
+    # observation is still reported; only the claim attached to it changes.
     for lf in ("/var/log/auth.log", "/var/log/secure", "/var/log/wtmp",
                "/var/log/audit/audit.log", "/var/log/syslog"):
         try:
-            if os.path.isfile(lf) and os.path.getsize(lf) == 0:
+            if not (os.path.isfile(lf) and os.path.getsize(lf) == 0):
+                continue
+            if lf.endswith("wtmp"):
+                why = _login_evidence()
+                if not why:
+                    add("Info", "No Login History Recorded", lf,
+                        "wtmp is zero bytes and nothing else on this host records a session "
+                        "either, so this is a host with no login history rather than a "
+                        "cleared one.", "T1070.002 (Clear Linux Logs)")
+                    continue
                 add("Medium", "Log File Truncated", lf,
-                    "Security/audit log exists but is zero bytes (possible log wipe).",
+                    f"wtmp is zero bytes while {why} - login history was cleared.",
                     "T1070.002 (Clear Linux Logs)")
+                continue
+            add("Medium", "Log File Truncated", lf,
+                "Security/audit log exists but is zero bytes (possible log wipe).",
+                "T1070.002 (Clear Linux Logs)")
         except Exception:
             pass
 
@@ -1182,6 +1433,25 @@ def check_privileged_task_integrity():
                     binpath = m.group(1)
                     if binpath.startswith("/") and not binpath.startswith(("/bin/sh", "/usr/bin/env")):
                         _audit_exec_target(binpath, p, "T1543.002 (Systemd Service)")
+    # OpenRC services run as root unless command_user= overrides -> audit command= target.
+    # The conf.d file of the same name can set or replace command=, so it is read second and
+    # wins, which is the order OpenRC itself resolves them in.
+    try:
+        svcs = sorted(f for f in os.listdir("/etc/init.d")
+                      if os.path.isfile(os.path.join("/etc/init.d", f)))
+    except Exception:
+        svcs = []
+    for svc in svcs:
+        src = os.path.join("/etc/init.d", svc)
+        body = read_file(src) or ""
+        conf = read_file(os.path.join("/etc/conf.d", svc))
+        if conf:
+            body += "\n" + conf
+        if re.search(r"(?im)^\s*command_user\s*=\s*[\"']?(?!root\b)\S", body):
+            continue
+        m = re.search(r"""(?im)^\s*command\s*=\s*["']?(/\S+?)["'\s]*$""", body)
+        if m:
+            _audit_exec_target(m.group(1), src, "T1037.004 (RC Scripts)")
     # System crontab / cron.d entries (run as root) -> audit the invoked binary.
     cron_files = ["/etc/crontab"]
     try:
@@ -1276,6 +1546,72 @@ _GTFO_PAT = re.compile(
     r"\b(base64|xxd|openssl\s+enc)\b[^|]*\|\s*(ba)?sh\b)", re.I)   # decode | sh
 
 
+def check_timestomp():
+    """Files whose content claims to be old while their metadata was touched recently.
+
+    `touch -d`, `utimensat` and every timestomping tool set atime and mtime — none of them can
+    set ctime, which the kernel updates on any inode change and exposes no interface to
+    rewrite. So a backdated file leaves mtime in the past and ctime at the moment of the
+    backdating, and that disagreement is the tell.
+
+    Scoped to the writable directories an implant is dropped into. On /etc and /usr the same
+    disagreement is ordinary — a package upgrade rewrites metadata while preserving upstream
+    mtimes — and flagging it there would bury the signal in every managed file on the host.
+    """
+    now = time.time()
+    own = os.path.abspath(REPORT_DIR or ".")
+    candidates = []
+    for base in IMPLANT_DIRS:
+        if not os.path.isdir(base):
+            continue
+        for root, _dirs, files in os.walk(base):
+            # Never flag our own evidence — this run's, or any earlier collection's. The
+            # collection copies /etc/shadow, passwd and subject binaries with `cp -p`, so a
+            # bundle carries preserved mtimes and a ctime from the moment of the copy: the
+            # exact shape this check looks for.
+            if os.path.abspath(root).startswith(own):
+                continue
+            bundle = _own_evidence_root(root)
+            if bundle:
+                _note_own_bundle(bundle)
+                continue
+            for fn in files:
+                p = os.path.join(root, fn)
+                try:
+                    st = os.lstat(p)
+                except OSError:
+                    continue
+                # Executables only. Timestomping hides an implant; a backdated `passwd` copy
+                # is what `cp -p` does for a living, and on a live host the non-executable
+                # hits were all ordinary preservation — systemd's os-release staging among
+                # them. Restricting to what can actually run is most of the precision.
+                if not stat.S_ISREG(st.st_mode) or not st.st_mode & 0o111:
+                    continue
+                skew = st.st_ctime - st.st_mtime
+                # A day's separation, and the metadata change is recent enough to belong to
+                # this intrusion rather than to the file's ordinary history.
+                if skew > 86400 and (now - st.st_ctime) < 30 * 86400:
+                    candidates.append((p, st, skew))
+
+    # Bulk operations are not timestomping. `cp -pr`, `tar -x` and `rsync -a` preserve mtimes
+    # across many files at once, and every one lands with the same ctime second. An intruder
+    # backdates a handful of implant files; a restore drops hundreds. Sharing a ctime second
+    # with several other files is the difference, and it is the discriminator rather than a
+    # threshold on the skew — which a patient attacker simply sets larger.
+    by_ctime = Counter(int(st.st_ctime) for _p, st, _s in candidates)
+    for p, st, skew in candidates:
+        bulk = by_ctime[int(st.st_ctime)]
+        if bulk > 3:
+            continue
+        add("High", "Timestamp Manipulation", p,
+            f"mtime is {int(skew / 86400)}d older than ctime "
+            f"(mtime={int(st.st_mtime)}, ctime={int(st.st_ctime)}) on an executable in a "
+            f"writable location - content backdated while the inode was changed recently. "
+            f"ctime cannot be set by any userspace API, which is why the two disagree. "
+            f"{bulk} file(s) share this ctime second, so this is not a bulk copy or extract.",
+            "T1070.006 (Timestomp)", subject_path=p)
+
+
 def check_gtfobins_exec():
     for pid in proc_pids():
         cmd = cmdline(pid)
@@ -1303,18 +1639,46 @@ def check_cred_access():
     cred_name = re.compile(r"(?i)(shadow|passwd|gshadow|sssd|krb5|\.kdbx|secrets|"
                            r"id_rsa|id_ed25519|\.pem|wallet|\.gnupg|aws.*credentials)")
     core_pat = re.compile(r"(?i)(^core(\.\d+)?$|\.core$|core\.\d+)")
+    own = os.path.abspath(REPORT_DIR or ".")
     for d in WRITABLE_DIRS:
         if not os.path.isdir(d):
             continue
         for root, _, files in os.walk(d):
             if root[len(d):].count(os.sep) > 3:
                 continue
+            # Not our own evidence, this run's or an earlier collection's. The collection
+            # copies /etc/passwd, shadow and the login databases into its output folder,
+            # which usually sits under /tmp — so this reported the collector's own artifacts
+            # as staged credential theft. See _own_evidence_root.
+            if os.path.abspath(root).startswith(own):
+                continue
+            bundle = _own_evidence_root(root)
+            if bundle:
+                _note_own_bundle(bundle)
+                continue
             for f in files:
                 p = os.path.join(root, f)
                 if cred_name.search(f) and not os.path.islink(p):
-                    add("High", "Staged Credential Artifact", p,
-                        f"Credential-store-like file in a writable/volatile dir: {f}",
-                        "T1003 (OS Credential Dumping)")
+                    # The NAME is the lead; the CONTENT decides the severity. `passwd`,
+                    # `secrets` and `wallet` appear in ordinary documentation — a
+                    # password-rotation runbook is not a staged credential store, and on a
+                    # benign host those were High findings purely because of their filenames.
+                    #
+                    # Structural, not a denylist of extensions: an attacker names the file
+                    # whatever they like, so what is checked is whether it LOOKS like a
+                    # credential store. Non-text (a .kdbx, a keyring, a core dump) keeps the
+                    # benefit of the doubt because it cannot be read for shape.
+                    shape = _credential_shape(p)
+                    if shape is False:
+                        add("Low", "Credential-Named File (verify)", p,
+                            f"Filename resembles a credential store but the contents are "
+                            f"ordinary text with no credential structure: {f}",
+                            "T1003 (OS Credential Dumping)")
+                    else:
+                        add("High", "Staged Credential Artifact", p,
+                            f"Credential-store-like file in a writable/volatile dir: {f}"
+                            + ("" if shape is None else " (contents match a credential store)"),
+                            "T1003 (OS Credential Dumping)")
                 elif core_pat.match(f):
                     # core dump of a credential-bearing process is a known dumping path.
                     add("Medium", "Process Core Dump", p,
@@ -1439,12 +1803,30 @@ def check_masquerade():
     for pid in proc_pids():
         cm = comm(pid)
         raw = exe_of(pid)
-        if cm.startswith("[") and cm.endswith("]"):
-            if raw:  # kernel threads cannot have an exe - this one does
+        cmd = cmdline(pid)
+        # A process presents a name in TWO places, and only one of them is comm.
+        #
+        # comm is seeded from the executable's basename at exec, so a process that spoofs by
+        # passing a crafted argv[0] to execve never shows the fake name there — and argv[0] is
+        # what `ps` prints by default, which is the review this evades. Reading comm alone
+        # caught the prctl(PR_SET_NAME) variant and missed the cheaper one.
+        #
+        # comm is also capped at 15 characters, so a longer bracketed name is truncated there
+        # and intact in argv[0]. Either one is the masquerade.
+        argv0 = cmd.split(" ", 1)[0] if cmd else ""
+        presented = next((n for n in (cm, argv0)
+                          if n.startswith("[") and n.endswith("]")), None)
+        if presented:
+            # Real kernel threads have no exe link and an empty cmdline. Requiring a resolved
+            # exe is what separates the masquerade from the genuine article.
+            if raw:
+                where = "comm" if presented == cm else "argv[0]"
                 add("High", "Fake Kernel Thread", f"PID: {pid}",
-                    f"Process presents kernel-thread name '{cm}' but has a userland binary "
-                    f"{raw} - masquerade to evade process review. cmd={cmdline(pid)[:120]}",
-                    "T1036.004 (Masquerade Task or Service), T1014 (Rootkit)")
+                    f"Process presents kernel-thread name '{presented}' via {where} but has a "
+                    f"userland binary {raw} - masquerade to evade process review. "
+                    f"comm={cm} cmd={cmd[:120]}",
+                    "T1036.004 (Masquerade Task or Service), T1014 (Rootkit)",
+                    subject_path=raw[:-10] if raw.endswith(" (deleted)") else raw)
             continue
         if not raw:
             continue
@@ -1763,9 +2145,26 @@ def _pid_uid0(pid):
 
 def _got_plt_scan_pid(pid, cm):
     maps = _read_maps_objects(pid)
-    lib_paths = [p for p in maps if p != "ANON"][:_GOT_PLT_MAX_LIBS_PER_PROC]
+    all_libs = [p for p in maps if p != "ANON"]
+    lib_paths = all_libs[:_GOT_PLT_MAX_LIBS_PER_PROC]
     if not lib_paths:
         return
+    # Libraries this scan will NOT have symbol tables for. A live pointer can still be
+    # resolved into them from /proc/<pid>/maps, so without this the check reports "resolves
+    # into no confirmed definer" about a library it simply never parsed — turning its own
+    # incomplete knowledge into a verdict.
+    #
+    # A GNOME file indexer maps 264 shared objects; at a 200-library cap, 64 of them —
+    # libglib among them — had no recorded definers, and every GOT slot that correctly
+    # resolved into one produced a finding. One process, 11,791 false findings, 98.5% of
+    # everything the hunt reported on a clean host.
+    unparsed = set(all_libs[_GOT_PLT_MAX_LIBS_PER_PROC:])
+    if len(all_libs) > _GOT_PLT_MAX_LIBS_PER_PROC:
+        add("Info", "GOT/PLT Hook Check Reduced Coverage", f"PID: {pid} ({cm})",
+            f"Process maps {len(all_libs)} shared objects; only the first "
+            f"{_GOT_PLT_MAX_LIBS_PER_PROC} had their symbol tables read. Resolutions into "
+            f"the remaining {len(all_libs) - _GOT_PLT_MAX_LIBS_PER_PROC} are not verified "
+            f"either way - a hook into one of them would not be reported here.", "-")
 
     # Load bias + defined-symbol set for every mapped library, so a PLT relocation's
     # live target can be checked against whichever library actually exports that
@@ -1782,14 +2181,18 @@ def _got_plt_scan_pid(pid, cm):
     for path in lib_paths:
         try:
             if os.path.getsize(path) > _GOT_PLT_MAX_LIB_SIZE:
+                unparsed.add(path)
                 continue
         except OSError:
+            unparsed.add(path)
             continue
         data = read_file(path, binary=True, limit=_GOT_PLT_MAX_LIB_SIZE)
         if not data:
+            unparsed.add(path)
             continue
         h = _elf_header(data)
         if h is None or not h["is64"]:
+            unparsed.add(path)
             continue
         phdrs = _elf_program_headers(data, h)
         bias = _elf_load_bias([m["start"] for m in maps[path]], phdrs)
@@ -1837,6 +2240,12 @@ def _got_plt_scan_pid(pid, cm):
                 # this shape before this check was added -- without it, ordinary
                 # unresolved lazy binding reads as "verify" noise on every process, every
                 # run.
+                continue
+            if region_path in unparsed:
+                # The pointer landed in a library whose symbol table this scan never read,
+                # so there is no basis to call the resolution unexpected. Silence here is
+                # the honest answer: the alternative is reporting the scan's own limits as
+                # the host's behavior. Coverage is reported once per process below.
                 continue
 
             add("Medium", "GOT Entry Relocation (verify)", f"PID: {pid} ({cm})",
@@ -1941,6 +2350,9 @@ def main():
     ap.add_argument("--quiet", action="store_true")
     args = ap.parse_args()
 
+    global REPORT_DIR
+    REPORT_DIR = args.report_dir
+
     checks = [
         check_hidden_processes, check_deleted_running, check_anon_exec_maps,
         check_preload, check_kernel_modules, check_writable_exec,
@@ -1951,9 +2363,10 @@ def main():
         check_io_uring, check_bpf_objects, check_capabilities,
         check_network, check_magic_mismatch, check_log_tampering,
         check_privileged_task_integrity, check_persistence_extended,
-        check_gtfobins_exec, check_cred_access,
+        check_gtfobins_exec, check_cred_access, check_timestomp,
         check_process_ancestry, check_masquerade, check_credential_access,
         check_got_plt_hooks, check_mwcp_structural_configs,
+        report_own_bundles,          # last: summarises what the checks above skipped
     ]
     for ch in checks:
         try:

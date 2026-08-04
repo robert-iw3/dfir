@@ -6,14 +6,17 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, Optional
 
-from .._common import find_json_objects
+from .._common import find_json_objects, structural_hit
 
-_FIELDS = (b'agent_id', b'callback_url', b'profile')
+# The serialized key form, not the bare word. The agent reads these out of JSON, so a live
+# config contains `"agent_id"`; `agent_id` on its own is how anything writing ABOUT the agent
+# spells it, this parser's own source included.
+_FIELDS = (b'"agent_id"', b'"callback_url"', b'"profile"')
 _JSON_ANCHOR = re.compile(rb'"agent_id"\s*:')
 
 
 def identify(data: bytes) -> bool:
-    return sum(1 for f in _FIELDS if f in data) >= 2
+    return structural_hit(data, _FIELDS, need=2) is not None
 
 
 def extract(data: bytes) -> Optional[Dict[str, Any]]:

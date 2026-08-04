@@ -1,0 +1,39 @@
+{
+  "name": "timeline_timestomp",
+  "incident_id": "IR-LAB-TIMELINE",
+  "description": "Sequencing, and the anti-forensics aimed at it. A dropper is backdated to look like it has been on the host for over a year; a second file is left alone as the control. The claims: the collection builds a filesystem timeline at all, that timeline carries the planted files, and the backdating is detected — which is possible only because ctime cannot be set by any userspace API.",
+
+  "plant": [
+    {"id": "stomped",   "type": "timestomp", "path": "/tmp/ir-lab-backdated",
+     "age_days": 400, "content": "#!/bin/sh\n# ir-lab backdated dropper\n"},
+
+    {"id": "control",   "type": "file", "path": "/tmp/ir-lab-honest", "mode": "755",
+     "content": "#!/bin/sh\n# ir-lab file with untouched timestamps\n"}
+  ],
+
+  "expect": [
+    {"id": "a filesystem timeline is built",
+     "artifact": "filesystem_timeline.body"},
+
+    {"id": "the timeline records whether it was truncated",
+     "artifact": "filesystem_timeline.meta.txt", "contains": "rows:"},
+
+    {"id": "the timeline is in TSK body format, usable by mactime",
+     "artifact": "filesystem_timeline.meta.txt", "contains": "TSK body file"},
+
+    {"id": "the backdated dropper appears in the timeline",
+     "artifact": "filesystem_timeline.body", "contains": "ir-lab-backdated", "needs_plant": "stomped"},
+
+    {"id": "an untouched file also appears — the timeline is not a findings list",
+     "artifact": "filesystem_timeline.body", "contains": "ir-lab-honest", "needs_plant": "control"},
+
+    {"id": "the backdating is FLAGGED as timestamp manipulation",
+     "finding_contains": "Timestamp Manipulation", "needs_plant": "stomped"},
+
+    {"id": "the flagged file is the backdated one",
+     "finding_contains": "ir-lab-backdated", "needs_plant": "stomped"},
+
+    {"id": "the untouched control file is NOT flagged — the check discriminates",
+     "finding_absent": "ir-lab-honest", "needs_plant": "control"}
+  ]
+}

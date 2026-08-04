@@ -186,6 +186,29 @@ class TestMiraiXorMechanism:
         prose = (b'The quick brown fox jumps over the lazy dog. ' * 200)
         assert mirai_gafgyt.identify(prose) is False
 
+    def test_no_false_positive_on_varied_english_documentation(self):
+        """Real prose, not one sentence repeated.
+
+        A repeated sentence decodes to the same few tokens under every key, so the
+        key-margin check carries it. Ordinary documentation has a real vocabulary and
+        does not: XOR by 0x20 maps every space to NUL, so the paragraph splits into
+        word-shaped tokens and reads as a dense string table -- and since unbroken text
+        contains no NULs, the raw baseline is zero and any key clears the improvement
+        ratio. Found on /usr/share/doc/cryptsetup/v1.1.3-ReleaseNotes by the FP corpus
+        audit, which samples this host rather than generated samples.
+        """
+        release_notes = (
+            b'== Cryptsetup 1.1.3 Release Notes ==\n\n'
+            b'=== changes since version 1.1.2 ===\n\n'
+            b'* Fix device alignment ioctl calls parameters.\n'
+            b'  (Device topology detection failed on some kernels.)\n'
+            b'* Support new device mapper interface and reread size properly.\n'
+            b'* Print detected alignment and offset in verbose mode.\n'
+            b'* Fix luksFormat to not overwrite the header when the device is busy.\n'
+            b'* Add optional verification of the passphrase during format.\n'
+        ) * 4
+        assert mirai_gafgyt.identify(release_notes) is False
+
     def test_recovers_correct_key(self):
         blob = _make_mirai_table(key=0x54)
         result = mirai_gafgyt.extract(blob)
@@ -525,3 +548,38 @@ def test_all_tp_samples_produce_at_least_one_hit():
         data = open(fp, "rb").read()
         hits = driver.extract_all(data)
         assert hits, f"no hit at all for TP sample {os.path.basename(fp)}"
+
+
+# Sample stem -> the module that must claim it, where the two names differ.
+_TP_OWNER = {"mirai": mirai_gafgyt, "ransomware_generic": generic_indicators,
+             "xmrig": xmrig_miner}
+
+
+def test_every_tp_sample_is_claimed_by_its_own_parser():
+    """The sample's OWN parser identifies it -- not merely some parser in the catalog.
+
+    The sweep above is satisfied by any hit, so a parser that stopped recognising its own
+    family still passes it as long as a second parser fires on the same bytes. Tightening a
+    family's gate is exactly the change that produces that, which is what makes this the
+    assertion that has to hold across such work.
+    """
+    modules = {m.__name__.rsplit(".", 1)[-1]: m for m in (
+        adaptix, generic_go_c2, havoc, merlin, mythic, pupy, sliver,
+        bpfdoor, ebury, mirai_gafgyt, smtp_exfil, xmrig_miner,
+        blackcat_linux, conti_linux, esxi_encryptor, generic_indicators, recovery_inhibition,
+        discord, dropbox, github, ngrok, pastebin, slack, telegram,
+        base64_elf_dropper, shell_pipeline_stager, anti_analysis, dns_tunnel)}
+    samples = sorted(glob.glob(os.path.join(TP, "*.bin")))
+    assert samples, f"no TP samples under {TP}"
+    unclaimed = []
+    for path in samples:
+        stem = os.path.splitext(os.path.basename(path))[0]
+        mod = _TP_OWNER.get(stem) or modules.get(stem)
+        assert mod is not None, f"TP sample {stem} has no parser of that name"
+        data = open(path, "rb").read()
+        # smtp_exfil exposes only extract(); a returned config is the same claim.
+        claimed = (mod.identify(data) is True if hasattr(mod, "identify")
+                   else mod.extract(data) is not None)
+        if not claimed:
+            unclaimed.append(stem)
+    assert not unclaimed, f"parsers no longer identify their own TP sample: {unclaimed}"
