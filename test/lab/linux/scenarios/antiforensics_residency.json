@@ -1,0 +1,56 @@
+{
+  "name": "antiforensics_residency",
+  "incident_id": "IR-LAB-ANTIFOR",
+  "description": "An intruder who cleans up after themselves and lives without a file on disk. These are the classes where the endpoint's own account of itself stops being trustworthy, so the assertions are about capturing raw evidence rather than a tool's summary of it.",
+
+  "plant": [
+    {"id": "immutable",  "type": "immutable", "path": "/usr/local/bin/ir-lab-locked",
+     "content": "ir-lab chattr +i — resists eradication\n"},
+
+    {"id": "deleted",    "type": "deleted_running", "path": "/tmp/ir-lab-fileless"},
+
+    {"id": "wtmp",       "type": "wtmp_trim"},
+
+    {"id": "dropped",    "type": "deleted_open_payload",
+     "path": "/tmp/ir-lab-dropped-payload", "marker": "IRLABDELETEDPAYLOAD"}
+  ],
+
+  "expect": [
+    {"id": "immutable attributes are collected",
+     "artifact": "lsattr_critical.txt", "needs_plant": "immutable"},
+
+    {"id": "a deleted-but-running binary is visible in the process table",
+     "artifact": "forensics/processes.txt", "contains": "ir-lab-fileless", "needs_plant": "deleted"},
+
+    {"id": "a deleted-but-running binary is FLAGGED as a finding",
+     "finding_contains": "ir-lab-fileless", "needs_plant": "deleted"},
+
+    {"id": "raw wtmp is captured, not just `last` output",
+     "artifact": "wtmp", "needs_plant": "wtmp"},
+
+    {"id": "raw btmp is captured, not just `lastb` output",
+     "artifact": "btmp", "needs_plant": "wtmp"},
+
+    {"id": "a truncated wtmp is FLAGGED as a log wipe",
+     "finding_contains": "Log File Truncated", "needs_plant": "wtmp"},
+
+    {"id": "an unlinked payload held open is FLAGGED",
+     "finding_contains": {"type": "Deleted Executable Recovered",
+                          "contains": "ir-lab-dropped-payload"},
+     "needs_plant": "dropped"},
+
+    {"id": "and its CONTENTS are recovered — the descriptor was the only copy",
+     "artifact": "deleted_files/*ir-lab-dropped-payload", "contains": "IRLABDELETEDPAYLOAD",
+     "needs_plant": "dropped"},
+
+    {"id": "the recovered bytes are hashed for custody",
+     "artifact": "deleted_files_manifest.json", "contains": "\"sha256\"",
+     "needs_plant": "dropped"},
+
+    {"id": "anonymous executable mappings are collected",
+     "artifact": "anon_exec_maps.txt"},
+
+    {"id": "hidden PIDs are checked for",
+     "artifact": "hidden_pids.txt"}
+  ]
+}

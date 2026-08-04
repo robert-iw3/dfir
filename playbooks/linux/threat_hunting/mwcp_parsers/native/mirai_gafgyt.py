@@ -22,6 +22,19 @@ _XOR_SCAN_WINDOW = 65536      # table sits early in .rodata; bounds the cost
 _XOR_MIN_TOKENS = 20          # printable NUL-delimited tokens of len>=4 after XOR
 _XOR_MIN_IMPROVEMENT = 3.0    # decoded token count must be >=3x the raw-byte baseline
 
+# A compiled string table is not a document. Prose and source are printable end to end and
+# carry word separators; a .rodata blob holding an obfuscated table is neither.
+_TEXT_PRINTABLE_FRACTION = 0.95
+_TEXT_WHITESPACE_FRACTION = 0.05
+
+
+def _reads_as_text(sample: bytes) -> bool:
+    printable = sum(1 for c in sample if 0x20 <= c <= 0x7e or c in b'\t\r\n')
+    spaces = sum(1 for c in sample if c in b' \t\r\n')
+    n = max(len(sample), 1)
+    return (printable / n >= _TEXT_PRINTABLE_FRACTION
+            and spaces / n >= _TEXT_WHITESPACE_FRACTION)
+
 
 _MIN_ALPHA_FRACTION = 0.6   # a token must be predominantly letters to count
 
@@ -117,6 +130,13 @@ def _xor_table_key(data: bytes) -> Optional[int]:
     per-byte expression takes on a 64KB window."""
     sample = data[:_XOR_SCAN_WINDOW]
     if len(sample) < 256:
+        return None
+    # Nothing is hidden in bytes that are already readable. Running the key search on prose
+    # finds 0x20, because space ^ 0x20 is NUL: every word separator becomes a delimiter and
+    # an English paragraph decodes into a "dense table" of word-shaped tokens. The raw
+    # baseline does not catch it either — unbroken text contains no NULs, so it scores zero
+    # and any key at all clears the improvement ratio.
+    if _reads_as_text(sample):
         return None
     baseline = max(_printable_token_count(sample), 1)
     scored = []

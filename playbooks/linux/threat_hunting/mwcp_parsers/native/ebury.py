@@ -25,6 +25,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, Optional
 
+from .._common import structural_hit
 from .._elf_utils import elf_dynamic_symbols
 
 _KEYUTILS_API_NAMESPACE = (b'keyctl', b'add_key', b'request_key')
@@ -63,7 +64,13 @@ def _verdict(data: bytes) -> Optional[Dict[str, Any]]:
     # and exceeding the caller's read cap is enough to send it down this path. The claim
     # this parser makes is specifically about a trojanised libkeyutils.so, so the object
     # must identify itself as that library -- a real carve of it contains its own SONAME.
-    if not any(marker in data for marker in _KEYUTILS_SONAME_MARKERS):
+    #
+    # A symbol table is a packed structure, so the fallback requires the names to sit
+    # together and out of running text. Otherwise this module's own source qualifies: it
+    # names the SONAME, the keyutils API and the network imports within a few lines.
+    if (structural_hit(data, _KEYUTILS_SONAME_MARKERS, need=1) is None
+            or structural_hit(data, _KEYUTILS_API_NAMESPACE, need=_MIN_NAMESPACE_HITS) is None
+            or structural_hit(data, _NETWORK_IMPORT_SYMS, need=_MIN_NETWORK_HITS) is None):
         return None
     namespace_hits = sorted({m.decode() for m in _KEYUTILS_API_NAMESPACE if m in data})
     network_hits = sorted({m.decode() for m in _NETWORK_IMPORT_SYMS if m in data})

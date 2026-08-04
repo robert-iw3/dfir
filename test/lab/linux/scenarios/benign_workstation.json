@@ -1,0 +1,64 @@
+{
+  "name": "benign_workstation",
+  "incident_id": "IR-LAB-BENIGN",
+  "description": "Ordinary host content that a naive check mistakes for an intrusion. Nothing here is malicious and NOTHING here should be High. This is the only scenario that asks what the collection said in addition to what it found — every precision defect so far came from a live host, because the other scenarios structurally cannot ask that question. When this one fails, the finding is a false positive with a reproducible cause attached.",
+
+  "plant": [
+    {"id": "release",  "type": "bulk_backdated", "dir": "/tmp/ir-lab-release",
+     "count": 25, "age_days": 300},
+
+    {"id": "docs",     "type": "file", "path": "/tmp/passwd-rotation-runbook.md",
+     "content": "# Password rotation runbook\nRotate service credentials quarterly.\n"},
+
+    {"id": "secrets_doc", "type": "file", "path": "/tmp/secrets-management-notes.txt",
+     "content": "Notes on where secrets live and who owns rotation.\n"},
+
+    {"id": "knownhosts", "type": "ssh_known_hosts", "home": "/root",
+     "hosts": ["build.example.internal ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBENIGNBUILDHOSTkeyhere"]},
+
+    {"id": "history",  "type": "bash_history", "path": "/root/.bash_history",
+     "lines": ["ls -la", "cd /var/log", "systemctl status sshd", "apt-get update",
+               "git pull", "python3 -m pytest"]},
+
+    {"id": "cronjob",  "type": "cron", "path": "/etc/cron.d/ir-lab-backup",
+     "line": "0 3 * * * root /usr/bin/rsync -a /srv/data /backup"}
+  ],
+
+  "expect": [
+    {"id": "a bulk archive extraction is NOT read as timestomping",
+     "max_findings": {"type": "Timestamp Manipulation", "at_most": 0},
+     "needs_plant": "release"},
+
+    {"id": "no reverse-shell finding on a host that has none",
+     "max_findings": {"type": "Reverse Shell Indicator", "at_most": 0}},
+
+    {"id": "a webshell is not invented where there is no web content",
+     "max_findings": {"type": "Webshell", "at_most": 0}},
+
+    {"id": "no GOT/PLT hook is reported on ordinary processes",
+     "max_findings": {"type": "GOT Entry Relocation (verify)", "at_most": 0}},
+
+    {"id": "documents whose NAMES resemble credential stores are not credential theft",
+     "max_findings": {"type": "Staged Credential Artifact", "at_most": 0},
+     "needs_plant": "docs"},
+
+    {"id": "the whole benign host stays under a High-finding budget",
+     "max_findings": {"severity": "High", "at_most": 2}},
+
+    {"id": "nothing fires on a benign host that is not declared and understood",
+     "only_types": {"allow": {
+       "Package Manager Transaction":         200,
+       "Credential-Named File (verify)":        2,
+       "Kernel Module Check Reduced Coverage":  1,
+       "Kallsyms Pseudo-Module (verify)":       1,
+       "No Login History Recorded":             1,
+       "SUID Integrity Unverified":             1
+     }}},
+
+    {"id": "collection still happened — this is a benign host, not an empty one",
+     "artifact": "forensics/processes.txt", "contains": "PID"},
+
+    {"id": "and the timeline was still built",
+     "artifact": "filesystem_timeline.body", "contains": "/tmp/ir-lab-release"}
+  ]
+}

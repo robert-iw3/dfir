@@ -84,6 +84,47 @@ def in_text_run(data: bytes, pos: int, pad: int = 64) -> bool:
     return False
 
 
+def structural_hit(data: bytes, literals, need: int = 2,
+                   window: int = CO_LOCATION_WINDOW):
+    """Offset where `need` distinct `literals` cluster together outside running text.
+
+    "N of these strings appear somewhere in the buffer" is the weakest possible test and it
+    is true of every document that *describes* the family — a parser's own source listing its
+    field names, a detection rule, incident notes, API documentation. A configuration a
+    program parses at runtime holds its fields together and is not embedded in sentences, so
+    both conditions are required: proximity, and not sitting in prose.
+
+    Returns the cluster's first offset (truthy positions start at 0, so callers must test
+    `is not None`), or None.
+    """
+    hits = []
+    for idx, lit in enumerate(literals):
+        start, seen = 0, 0
+        while True:
+            i = data.find(lit, start)
+            if i == -1:
+                break
+            hits.append((i, idx))
+            start, seen = i + 1, seen + 1
+            if seen > 256:                  # pathological repetition; enough to judge
+                break
+    if len(hits) < need:
+        return None
+    hits.sort()
+    lo = 0
+    for hi in range(len(hits)):
+        while hits[hi][0] - hits[lo][0] > window:
+            lo += 1
+        cluster = hits[lo:hi + 1]
+        if len({idx for _, idx in cluster}) < need:
+            continue
+        # Every member outside prose. One packed field beside a paragraph that mentions the
+        # rest is a description with a coincidence in it, not a recovered structure.
+        if all(not in_text_run(data, pos) for pos, _ in cluster):
+            return cluster[0][0]
+    return None
+
+
 def values_near(data: bytes, value_re: 're.Pattern', anchor, window: int = CO_LOCATION_WINDOW,
                 limit: int = 10) -> List[bytes]:
     """Matches of `value_re` that sit within `window` bytes of `anchor`.

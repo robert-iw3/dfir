@@ -6,7 +6,7 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, Optional
 
-from .._common import decode, find_json_objects, values_near
+from .._common import decode, find_json_objects, structural_hit, values_near
 
 _PROTO_FIELDS = (b'"psk"', b'"PSK"', b'"skew"', b'"maxRetry"', b'"proto"')
 _JSON_ANCHOR = re.compile(rb'"(?:psk|PSK|maxRetry)"\s*:')
@@ -14,7 +14,9 @@ _URL_RE = re.compile(rb'https?://[^\s\x00\'"<>]{4,200}', re.IGNORECASE)
 
 
 def identify(data: bytes) -> bool:
-    return sum(1 for f in _PROTO_FIELDS if f in data) >= 2
+    # Serialization keys travel together inside one marshalled message; the same keys
+    # quoted in a source file or an advisory are spread through running text.
+    return structural_hit(data, _PROTO_FIELDS, need=2) is not None
 
 
 def extract(data: bytes) -> Optional[Dict[str, Any]]:

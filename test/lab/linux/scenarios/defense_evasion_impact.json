@@ -1,0 +1,38 @@
+{
+  "name": "defense_evasion_impact",
+  "incident_id": "IR-LAB-EVASION",
+  "description": "An intruder covering their tracks: security logs emptied, shell history neutered at the source, and the at-job queue used for a delayed action. Each of these removes evidence rather than adding it, so the detections have to fire on ABSENCE — a log that exists and holds nothing, an rc file that disables recording. That is the hardest shape to test and the easiest to get quietly wrong.",
+
+  "plant": [
+    {"id": "logwipe",   "type": "log_truncate",
+     "paths": ["/var/log/auth.log", "/var/log/syslog"]},
+
+    {"id": "histoff",   "type": "file", "path": "/root/.bashrc",
+     "content": "# ir-lab\nexport HISTFILE=/dev/null\nexport HISTSIZE=0\nset +o history\n"},
+
+    {"id": "histwipe",  "type": "bash_history", "path": "/root/.bash_history", "lines": []},
+
+    {"id": "atjob",     "type": "file", "path": "/var/spool/cron/atjobs/ir-lab-at",
+     "content": "#!/bin/sh\n/usr/local/bin/ir-lab-implant --delayed\n", "mode": "755"}
+  ],
+
+  "expect": [
+    {"id": "an emptied auth log is FLAGGED as a wipe",
+     "finding_contains": "/var/log/auth.log", "needs_plant": "logwipe"},
+
+    {"id": "an emptied syslog is FLAGGED as a wipe",
+     "finding_contains": "/var/log/syslog", "needs_plant": "logwipe"},
+
+    {"id": "history neutered in an rc file is FLAGGED",
+     "finding_contains": "Shell History Disabled", "needs_plant": "histoff"},
+
+    {"id": "the rc file that disables history is collected verbatim",
+     "artifact": "shell_init_files.txt", "contains": "HISTFILE=/dev/null", "needs_plant": "histoff"},
+
+    {"id": "the shell history file is collected even when empty, with its size",
+     "artifact": "bash_history.txt", "contains": ".bash_history", "needs_plant": "histwipe"},
+
+    {"id": "the at-job queue is collected",
+     "artifact": "at_jobs.txt", "needs_plant": "atjob"}
+  ]
+}

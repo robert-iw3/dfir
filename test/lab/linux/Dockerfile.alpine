@@ -1,0 +1,27 @@
+# A musl/apk endpoint to collect FROM.
+#
+# Alpine is where the trust anchor is known to be incomplete: `pkg_owner()` has an apk branch
+# and `pkg_modified()` did not, so ownership resolved and integrity never could — the
+# DEFINITIVE package-integrity dimension silently never fired. Nothing errored; findings just
+# quietly carried less weight, which is the hardest kind of gap to notice without a test.
+#
+# Also the most common container base, so a containerised workload collected in anger is very
+# likely to be this.
+ARG ALPINE_VERSION=3.22
+FROM docker.io/library/alpine:${ALPINE_VERSION}
+
+# bash because the orchestrator is bash, and the GNU tools the collection shells out to:
+# busybox `find` has no -printf, which the MACB timeline needs.
+RUN apk add --no-cache \
+        bash python3 \
+        coreutils findutils grep sed procps \
+        iproute2 net-tools lsof \
+        util-linux e2fsprogs libcap \
+        openssh-client ca-certificates \
+        apk-tools \
+        openrc
+
+WORKDIR /work
+ENV IR_LAB=1
+
+CMD ["/bin/bash"]

@@ -8,7 +8,7 @@ import re
 import struct
 from typing import Any, Dict, Optional
 
-from .._common import decode
+from .._common import decode, in_text_run, structural_hit
 
 _MAGIC = b'\xde\xad\xbe\xef'
 _PROTO_FIELDS = (b'DemonID', b'SleepTime', b'Injection', b'encrypted_exchange_check')
@@ -18,16 +18,17 @@ _HOST_RE = re.compile(
 
 
 def identify(data: bytes) -> bool:
-    if _MAGIC in data:
-        pos = data.find(_MAGIC)
-        if pos + 8 <= len(data):
-            try:
-                size = struct.unpack_from('<I', data, pos + 4)[0]
-                if 0 < size < 8192:
-                    return True
-            except struct.error:
-                pass
-    return sum(1 for f in _PROTO_FIELDS if f in data) >= 2
+    pos = data.find(_MAGIC)
+    if pos != -1 and pos + 8 <= len(data) and not in_text_run(data, pos):
+        try:
+            size = struct.unpack_from('<I', data, pos + 4)[0]
+            if 0 < size < 8192:
+                return True
+        except struct.error:
+            pass
+    # Without the magic the claim rests entirely on field names, which is what a write-up of
+    # the wire format also contains. They have to sit together and out of running text.
+    return structural_hit(data, _PROTO_FIELDS, need=2) is not None
 
 
 def extract(data: bytes) -> Optional[Dict[str, Any]]:

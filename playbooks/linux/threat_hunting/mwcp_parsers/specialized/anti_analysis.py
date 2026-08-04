@@ -16,12 +16,21 @@ from __future__ import annotations
 
 from typing import Any, Dict, Optional
 
+from .._common import structural_hit
+
 _TRACERPID_FIELD = b'TracerPid:'
 _STATUS_PATHS = (b'/proc/self/status', b'/proc/self/stat')
 
 
 def identify(data: bytes) -> bool:
-    return _TRACERPID_FIELD in data and any(p in data for p in _STATUS_PATHS)
+    # The technique needs the path and the field name in the same code, so in a binary they
+    # sit together in .rodata. This module's own docstring names both while doing nothing of
+    # the kind, and so does every write-up of the technique.
+    #
+    # Paired explicitly rather than counted: '/proc/self/stat' is a prefix of
+    # '/proc/self/status', so "any two of these three" is satisfied by one path on its own.
+    return any(structural_hit(data, (_TRACERPID_FIELD, p), need=2) is not None
+               for p in _STATUS_PATHS)
 
 
 def extract(data: bytes) -> Optional[Dict[str, Any]]:

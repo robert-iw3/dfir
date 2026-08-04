@@ -82,6 +82,90 @@ def test_dossiers_to_findings_are_c2_typed():
     assert all("T1071" in x["MITRE"] for x in f) and all(x["Source"] == "memory_enrich" for x in f)
 
 
+# --- region provenance as a gate --------------------------------------------------------
+# The carver records each region's permissions and backing, and both were read into the
+# dossier and then ignored: an anonymous executable region and a read-write heap slice
+# produced identical High findings. They are different claims -- code the process was
+# RUNNING versus bytes it was HOLDING -- and this is what makes them score differently.
+
+def _dossier(**over):
+    base = {k: [] for k in ("ips", "domains", "urls", "onion", "xmr", "aws_keys",
+                            "telegram_tokens", "discord_webhooks", "miner_configs", "wallets")}
+    d = {"region_file": "r.bin", "pid": "6502", "process": "implant",
+         "base_address": "0x7f0000", "matched_rules": [],
+         "iocs": {**base, "private_keys": 0, "ips": ["45.77.13.9"]}}
+    d.update(over)
+    return d
+
+
+def _sev(findings, ftype="C2 Endpoint (memory)"):
+    return next(f["Severity"] for f in findings if f["Type"] == ftype)
+
+
+def _detail(findings, ftype="C2 Endpoint (memory)"):
+    return next(f["Details"] for f in findings if f["Type"] == ftype)
+
+
+def test_injected_region_keeps_the_full_execution_claim():
+    f = me.dossiers_to_findings([_dossier(region="anon", perms="rwx", injected=True)])
+    assert _sev(f) == "High"
+    assert "no on-disk backing" in _detail(f)
+
+
+def test_non_executable_region_is_held_not_run():
+    """A C2 string in rw- memory is data the process had, which any browser or editor has."""
+    f = me.dossiers_to_findings([_dossier(region="anon", perms="rw-")])
+    assert _sev(f) == "Medium"
+    assert "not code it was executing" in _detail(f)
+
+
+def test_executable_mapping_of_a_file_names_the_file_to_verify():
+    """An r-x mapping of a library is very often a rule grazing that library."""
+    f = me.dossiers_to_findings([_dossier(region="file", perms="r-x",
+                                          backing_path="/usr/lib/x86_64-linux-gnu/libc.so.6")])
+    assert _sev(f) == "Medium"
+    assert "libc.so.6" in _detail(f)
+
+
+def test_missing_provenance_changes_nothing():
+    """A sidecar the carver could not write is not evidence the region was harmless.
+
+    Downgrading on absent metadata would quietly weaken every real detection wherever a
+    carve lost its sidecar -- concluding from silence, in the direction that hides things.
+    """
+    f = me.dossiers_to_findings([_dossier()])
+    assert _sev(f) == "High"
+    assert "Region provenance" not in _detail(f)
+
+
+def test_credential_findings_are_not_re_weighted_by_region():
+    """A key recovered from a heap is exposed whether or not the region was executable.
+
+    The gate is about whether the process was RUNNING something, and that claim is no part
+    of "this credential was in memory".
+    """
+    d = _dossier(region="anon", perms="rw-")
+    d["iocs"]["ips"] = []
+    d["iocs"]["aws_keys"] = ["AKIAIOSFODNN7EXAMPLE"]
+    f = me.dossiers_to_findings([d])
+    assert _sev(f, "Cloud Credential in Memory") == "High"
+
+
+def test_region_context_is_applied_per_region_not_across_the_batch():
+    """Two regions in one run keep their own verdicts.
+
+    The findings list is shared across regions, so a gate applied to the whole list would
+    let the last region's provenance rewrite every earlier region's severity.
+    """
+    ran = _dossier(region="anon", perms="rwx", injected=True)
+    held = _dossier(region="anon", perms="rw-", region_file="r2.bin")
+    held["iocs"] = {**held["iocs"], "ips": ["203.0.113.77"]}
+    f = me.dossiers_to_findings([ran, held])
+    by_target = {x["Target"]: x["Severity"] for x in f}
+    assert by_target["45.77.13.9"] == "High"
+    assert by_target["203.0.113.77"] == "Medium"
+
+
 def test_enrich_writes_outputs_and_findings(tmp_path):
     carve = tmp_path / "carve"
     carve.mkdir()

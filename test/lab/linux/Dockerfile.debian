@@ -1,0 +1,31 @@
+# A disposable Linux endpoint to collect FROM.
+#
+# The point of this image is to be a realistic host, not a test rig: the collection
+# orchestrator runs inside it against artifacts a scenario planted, and the assertions ask
+# whether the collection recovered them. Nothing about the collector is stubbed.
+#
+# Debian rather than Alpine, deliberately. The toolkit's trust anchor is package ownership
+# and integrity (`dpkg -S`, `debsums -s`) — on a distro without a real package database those
+# checks return None and the most important thing this lab could prove would quietly not be
+# exercised at all.
+ARG DEBIAN_VERSION=13-slim
+FROM docker.io/library/debian:${DEBIAN_VERSION}
+
+# The endpoint's own tooling, which the collector shells out to. A host missing these is a
+# real case the collector degrades for, but it is not the case this lab is measuring.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        python3 python3-yaml \
+        procps iproute2 net-tools psmisc lsof \
+        systemd cron util-linux coreutils findutils \
+        e2fsprogs libcap2-bin \
+        dpkg debsums \
+        openssh-client \
+        ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# The toolkit is mounted read-only at run time rather than copied in, so the lab always
+# exercises the working tree and never a stale copy baked into an image.
+WORKDIR /work
+ENV IR_LAB=1
+
+CMD ["/bin/bash"]

@@ -94,6 +94,7 @@ def main() -> int:
     families = collections.Counter()
     identifies = collections.Counter()
     examples = collections.defaultdict(list)
+    id_examples = collections.defaultdict(list)
     scanned = collections.Counter()
 
     for label, path in _corpus(args.files_per_root):
@@ -122,6 +123,8 @@ def main() -> int:
                 continue
             if fired:
                 identifies[name] += 1
+                if len(id_examples[name]) < 5:
+                    id_examples[name].append(path)
 
     total_files = sum(scanned.values())
     total_findings = sum(families.values())
@@ -133,6 +136,7 @@ def main() -> int:
             "false_findings_total": total_findings,
             "false_findings_by_family": dict(families),
             "identify_hits_by_parser": dict(identifies),
+            "identify_hit_examples": {k: v for k, v in id_examples.items()},
         }, indent=2, sort_keys=True))
         return 0
 
@@ -150,6 +154,10 @@ def main() -> int:
         print("-" * 60)
         for name, n in identifies.most_common():
             print(f"{name:<40} {n:>6}")
+            # The file, not just the count: a count says a gate is loose and the path says
+            # why, which is the difference between recording the number and fixing it.
+            for p in id_examples[name]:
+                print(f"{'':<40}        {p}")
 
     if examples:
         print("\n--- where they fired ---")

@@ -96,23 +96,88 @@ def pkg_owner(path):
 
 
 def pkg_modified(path, owner):
-    """True if the package manager reports the on-disk file was altered."""
+    """Whether the package manager reports the on-disk file altered.
+
+    Three-valued, and the third value is the point: True modified, False verified intact,
+    None *not verifiable*. This is the DEFINITIVE dimension in the correlator, so a tool that
+    could not answer must not be recorded as either answer — "no checksum data for this
+    package" is not evidence of tampering, and "the audit did not run" is not evidence of
+    integrity.
+    """
     if not owner:
         return None
     if shutil.which("debsums"):
-        r = run(["debsums", "-s", path])
+        # debsums takes a PACKAGE. Handed a path it exits non-zero with "invalid package
+        # name", which says nothing about the file. -c lists changed paths on stdout;
+        # "no md5sums" arrives on stderr WITH rc 0, so the return code decides nothing here.
+        pkg = owner.split(",")[0].strip()
+        r = run(["debsums", "-c", pkg])
         if r is not None:
-            return bool(r.stdout.strip() or r.returncode != 0)
+            err = r.stderr or ""
+            if "no md5sums" in err or "invalid package name" in err:
+                return None
+            return any(ln.strip() == path for ln in (r.stdout or "").splitlines())
     if shutil.which("rpm"):
         r = run(["rpm", "-Vf", path])
-        if r is not None and r.stdout.strip():
-            # a '5' in the verify flags means the file's checksum differs
-            return any(re.match(r"^\S*5", ln) for ln in r.stdout.splitlines())
+        if r is not None:
+            out = r.stdout or ""
+            if "not owned by any package" in out + (r.stderr or ""):
+                return None
+            # `-Vf` verifies the whole owning package, so the line has to be matched to THIS
+            # path; a different changed file in the same package is not this file's verdict.
+            # Flags are positional and a '5' means the checksum differs.
+            for ln in out.splitlines():
+                parts = ln.split()
+                if len(parts) >= 2 and parts[-1] == path and "5" in parts[0]:
+                    return True
+            if r.returncode == 0 or out.strip():
+                # It ran: either nothing differs, or what differs is not this file.
+                return False
+            return None
     if shutil.which("pacman"):
-        r = run(["pacman", "-Qkk", path])
-        if r is not None and r.stdout.strip():
-            return "FAILED" in r.stdout or "modification" in r.stdout.lower()
+        # -Qkk also takes a package; pkg_owner returns "name version" from `pacman -Qo`.
+        pkg = owner.split()[0] if owner else ""
+        r = run(["pacman", "-Qkk", pkg])
+        if r is not None:
+            out = (r.stdout or "") + (r.stderr or "")
+            if not out.strip() or "was not found" in out:
+                return None
+            for ln in out.splitlines():
+                if path in ln and ("FAILED" in ln or "modification" in ln.lower()):
+                    return True
+            # "N total files, M altered files" is the summary it prints when it ran.
+            return False if "altered files" in out else None
+    if shutil.which("apk"):
+        # `apk audit --system` lists every package file whose contents no longer match, as
+        # "<status> <relative/path>" with no leading slash. It audits the whole system in one
+        # pass, so the answer is computed once rather than re-run per file.
+        audit = _apk_modified_set()
+        if audit is None:
+            return None
+        return path.lstrip("/") in audit
     return None
+
+
+_APK_AUDIT = _APK_AUDIT_OK = None
+
+
+def _apk_modified_set():
+    """Package files apk reports as changed — relative, no leading slash. Computed once.
+
+    None when the audit itself did not run: an empty set would otherwise read as "every file
+    is intact", which is the same mistake in the opposite direction.
+    """
+    global _APK_AUDIT, _APK_AUDIT_OK
+    if _APK_AUDIT_OK is None:
+        r = run(["apk", "audit", "--system"])
+        _APK_AUDIT_OK = r is not None and r.returncode == 0
+        _APK_AUDIT = set()
+        for ln in (r.stdout if r is not None else "").splitlines():
+            parts = ln.split(None, 1)
+            # Status letter then path. 'U' is a file whose contents differ from the package.
+            if len(parts) == 2 and parts[0] in ("U", "M"):
+                _APK_AUDIT.add(parts[1].strip())
+    return _APK_AUDIT if _APK_AUDIT_OK else None
 
 
 def path_trust(path):

@@ -237,12 +237,36 @@ def analyze(records, window_seconds=DEFAULT_WINDOW_SECONDS,
                     f"cron @ {when}", msg.strip(),
                     "T1053.003 (Scheduled Task/Job: Cron)")
 
-        # ── reverse-shell / dual-use execution anywhere in the journal ───────
+        # ── reverse-shell / dual-use execution in the journal ────────────────
+        #
+        # Where the record CAME FROM decides what a match means. A journal entry is either an
+        # execution record — cron, sudo, sshd, a shell, an audit event — or an application
+        # writing text to stdout. The same string means "a reverse shell ran" in the first
+        # case and "something printed those characters" in the second.
+        #
+        # Matching anywhere reported prose as execution: on a live host, five of six High
+        # findings were this toolkit's OWN test output, quoting `/dev/tcp/...` inside a
+        # PASSING assertion and forwarded to journald as container stdout. A security tool
+        # describing a reverse shell is not a reverse shell.
+        #
+        # Container output still produces a finding — a compromised container is a real case
+        # — but at Medium, saying plainly that it may be output rather than execution. The
+        # cron branch above already gates this way by requiring the record to be cron's.
         if REVSHELL_RE.search(msg):
-            add("High", "Reverse Shell Indicator",
-                f"{ident or 'journal'} @ {when}",
-                f"Reverse-shell / network one-liner in journal: {msg.strip()}",
-                "T1059.004 (Unix Shell), T1071 (Application Layer Protocol)")
+            from_container = bool(rec.get("CONTAINER_NAME") or rec.get("CONTAINER_ID")
+                                  or ident in ("conmon", "podman", "dockerd", "containerd"))
+            if from_container:
+                add("Medium", "Reverse Shell Indicator (container output)",
+                    f"{ident or 'journal'} @ {when}",
+                    f"Reverse-shell pattern in container stdout - application output, which "
+                    f"may be a command that ran inside the container or text describing "
+                    f"one: {msg.strip()}",
+                    "T1059.004 (Unix Shell), T1071 (Application Layer Protocol)")
+            else:
+                add("High", "Reverse Shell Indicator",
+                    f"{ident or 'journal'} @ {when}",
+                    f"Reverse-shell / network one-liner in journal: {msg.strip()}",
+                    "T1059.004 (Unix Shell), T1071 (Application Layer Protocol)")
 
         # ── defense evasion: log / audit / MAC tampering ─────────────────────
         if ("journal" in ident and ("vacuum" in msg.lower())) or "--vacuum" in msg:

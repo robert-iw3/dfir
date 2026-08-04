@@ -71,7 +71,8 @@ LINUX=(
     test_47_diamorphine_memory.py test_48_edr_kernel_helpers.py test_49_edr_iouring_bpf.py
     test_50_kernel_globals_memory.py test_51_memory_m234.py test_58_thread_inventory.py
     test_66_edr_got_plt_hooks.py test_67_edr_mwcp_structural.py
-    test_68_adjudicate_subject_resolution.py
+    test_68_adjudicate_subject_resolution.py test_69_package_integrity_anchor.py
+    test_70_login_records.py test_71_deleted_file_recovery.py
 )
 
 WINDOWS=(

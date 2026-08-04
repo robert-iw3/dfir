@@ -119,6 +119,11 @@ if [[ $SKIP_FORENSICS -eq 0 ]]; then
     { mount; echo; cat /proc/mounts; } > "${F}/mounts.txt" 2>/dev/null || true
     systemctl list-units --all --no-pager > "${F}/systemd_units.txt" 2>/dev/null || true
     systemctl list-unit-files --no-pager > "${F}/systemd_unit_files.txt" 2>/dev/null || true
+    # OpenRC equivalent, so a host with no systemd still yields a service inventory.
+    rc-update show -v > "${F}/openrc_services.txt" 2>/dev/null || true
+    { for f in /etc/init.d/* /etc/conf.d/*; do
+        [[ -f "$f" ]] && { echo "=== $f ==="; cat "$f"; }; done; } \
+        > "${F}/init_scripts.txt" 2>/dev/null || true
     cp -a /etc/passwd /etc/group "${F}/" 2>/dev/null || true
     [[ "$(id -u)" -eq 0 ]] && cp -a /etc/shadow "${F}/" 2>/dev/null || true
     { crontab -l 2>/dev/null; for u in /var/spool/cron/crontabs/* /var/spool/cron/*; do
@@ -209,6 +214,12 @@ if [[ $SKIP_HUNT -eq 0 ]]; then
     # journald -> findings (brute force, sudo abuse, new accounts, log/MAC tamper).
     # Reads forensics/journal.json if present, else live journalctl; never fatal.
     run_phase "JournalAnalysis" "$PY" "${HUNT_DIR}/journal_analysis.py" --report-dir "$OUT_DIR" --stamp "$RUN_STAMP" --live --quiet
+    # Raw wtmp/btmp/utmp/lastlog parsed directly, not `last` output: record-sequence breaks,
+    # lastlog and wtmp disagreeing about the same login, and failures followed by a success.
+    run_phase "LoginRecords" "$PY" "${HUNT_DIR}/login_records.py" --report-dir "$OUT_DIR" --stamp "$RUN_STAMP" --passwd /etc/passwd --quiet
+    # Contents of unlinked files still held open. The descriptor is the only copy left and it
+    # closes when the process exits, so this runs while the host is still live.
+    run_phase "DeletedFiles" "$PY" "${HUNT_DIR}/deleted_file_recovery.py" --report-dir "$OUT_DIR" --stamp "$RUN_STAMP" --quiet
     # container runtime + kubernetes workload hunt (privileged/escape/RBAC). Best-effort:
     # skips cleanly when no docker/podman/kubectl is present.
     run_phase "ContainerHunt" "$PY" "${HUNT_DIR}/container_hunt.py" --report-dir "$OUT_DIR" --stamp "$RUN_STAMP" --live --quiet
@@ -224,11 +235,14 @@ if [[ $SKIP_HUNT -eq 0 ]]; then
     EDR_JSON="${OUT_DIR}/EDR_Report_${RUN_STAMP}.json"
     RA_JSON="${OUT_DIR}/RemoteAccess_Findings_${RUN_STAMP}.json"
     JOURNAL_JSON="${OUT_DIR}/Journal_Findings_${RUN_STAMP}.json"
+    LOGIN_JSON="${OUT_DIR}/Login_Findings_${RUN_STAMP}.json"
+    DELETED_JSON="${OUT_DIR}/Deleted_File_Findings_${RUN_STAMP}.json"
     CONTAINER_JSON="${OUT_DIR}/Container_Findings_${RUN_STAMP}.json"
     THREAD_JSON="${OUT_DIR}/Thread_Inventory_${RUN_STAMP}.json"
     COMBINED="${OUT_DIR}/Combined_Findings_${RUN_STAMP}.json"
 
-    "$PY" - "$EDR_JSON" "$RA_JSON" "$JOURNAL_JSON" "$CONTAINER_JSON" "$THREAD_JSON" "$COMBINED" <<'PYMERGE' >>"$RUN_LOG" 2>&1 || true
+    "$PY" - "$EDR_JSON" "$RA_JSON" "$JOURNAL_JSON" "$LOGIN_JSON" "$DELETED_JSON" \
+        "$CONTAINER_JSON" "$THREAD_JSON" "$COMBINED" <<'PYMERGE' >>"$RUN_LOG" 2>&1 || true
 import json, sys
 merged = []
 for p in sys.argv[1:-1]:

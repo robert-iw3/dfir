@@ -1,0 +1,29 @@
+{
+  "name": "package_integrity",
+  "incident_id": "IR-LAB-PKGINT",
+  "description": "The toolkit's declared trust anchor, under test on whichever distro the endpoint is. The ssh CLIENT is backdoored in place and made SUID — real tradecraft, since a trojaned ssh harvests every credential the host uses to reach anywhere else. adjudicate.py calls a package-owned-but-modified binary Likely True Positive regardless of finding type, and the correlator promotes it to a DEFINITIVE dimension: the strongest verdict the Linux side reaches, because a package manager does not let installed files drift from their recorded contents. Run this on EVERY distro — pkg_modified branches to debsums, rpm -Vf, pacman -Qkk and apk audit, and a branch that never executes is a trust anchor nobody has weighed. The apk branch was missing entirely until Alpine was added here.",
+
+  "plant": [
+    {"id": "tampered", "type": "tamper_packaged_binary", "path": "/usr/bin/ssh"}
+  ],
+
+  "expect": [
+    {"id": "the tampered binary is FLAGGED (SUID outside the baseline)",
+     "finding_contains": "/usr/bin/ssh", "needs_plant": "tampered"},
+
+    {"id": "the package manager resolves OWNERSHIP of the binary",
+     "adjudication": {"subject_contains": "/usr/bin/ssh", "field": "PkgOwner",
+                      "contains": "openssh"},
+     "needs_plant": "tampered"},
+
+    {"id": "the package manager reports the file as MODIFIED — the trust anchor fires",
+     "adjudication": {"subject_contains": "/usr/bin/ssh", "field": "PkgModified",
+                      "equals": true},
+     "needs_plant": "tampered"},
+
+    {"id": "adjudication rates a tampered packaged binary a true positive",
+     "adjudication": {"subject_contains": "/usr/bin/ssh", "field": "Verdict",
+                      "equals": "Likely True Positive"},
+     "needs_plant": "tampered"}
+  ]
+}

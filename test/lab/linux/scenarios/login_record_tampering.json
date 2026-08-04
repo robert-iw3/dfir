@@ -1,0 +1,33 @@
+{
+  "name": "login_record_tampering",
+  "incident_id": "IR-LAB-LOGREC",
+  "description": "An intruder who edits the login history rather than deleting it. Truncating wtmp is the loud version and its file size gives it away; this removes ONE session and leaves the file full of plausible records, which is what a careful operator does and what `last` cannot report on. The only thing that can show it is a second database written independently by the same login: lastlog still holds the session wtmp no longer has. That is the entire reason the collection copies these files byte-for-byte instead of shipping `last` output, and until login_records.py existed nothing read them.",
+
+  "plant": [
+    {"id": "removed", "type": "login_record_delete"}
+  ],
+
+  "expect": [
+    {"id": "raw wtmp is captured, not just `last` output",
+     "artifact": "wtmp", "needs_plant": "removed"},
+
+    {"id": "raw lastlog is captured — the independent record",
+     "artifact": "lastlog", "needs_plant": "removed"},
+
+    {"id": "the removed session is FLAGGED by cross-checking the two databases",
+     "finding_contains": {"type": "Login Record Removed", "contains": "lastlog"},
+     "needs_plant": "removed"},
+
+    {"id": "the surviving sessions are still parsed and summarised",
+     "finding_contains": {"type": "Login History", "contains": "session"},
+     "needs_plant": "removed"},
+
+    {"id": "a file full of plausible records is NOT called a truncation",
+     "max_findings": {"type": "Log File Truncated", "at_most": 0},
+     "needs_plant": "removed"},
+
+    {"id": "and it is not called a sequence break either — the kept records are in order",
+     "max_findings": {"type": "Login Record Sequence Broken", "at_most": 0},
+     "needs_plant": "removed"}
+  ]
+}
