@@ -123,8 +123,13 @@
         "Value": true,
         "Status": "locked"
       },
+      "_comment_download_dir": "TRUE is the STRONGER setting here, not the weaker one. False means 'ask where to save', which opens the GTK file chooser — and this container has no desktop portal, no dbus session and software rendering, so that dialog ABORTS Firefox: exporting an IOC bundle killed the browser every time. True sends every download to the one directory named below, which the analyst cannot redirect. A fixed confined path is a tighter constraint than a picker that can write anywhere the process can reach, and browser.download.folderList=2 already declared this directory — it was simply never set.",
       "browser.download.useDownloadDir": {
-        "Value": false,
+        "Value": true,
+        "Status": "locked"
+      },
+      "browser.download.dir": {
+        "Value": "/home/analyst/downloads",
         "Status": "locked"
       },
       "browser.download.always_ask_before_handling_new_types": {

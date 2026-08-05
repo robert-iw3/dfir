@@ -1,5 +1,8 @@
 # Traefik static config — TLS termination in front of the IR Platform web UI.
 # File provider only (no docker socket exposed). HTTP is redirected to HTTPS.
+#
+# Web Server SRG: this file carries the entrypoint and logging half; TLS options, security
+# headers and the request limits are dynamic configuration, in dynamic-sso/dynamic.yml.
 global:
   checkNewVersion: false
   sendAnonymousUsage: false
@@ -14,6 +17,16 @@ entryPoints:
           scheme: https
   websecure:
     address: ":443"
+    # HTTP/2 is negotiated over ALPN on this entrypoint (SRG-APP-000439-WSR-000192). The
+    # stream ceiling is also the per-connection request bound — an unbounded multiplexer is a
+    # denial-of-service surface that request-rate limits do not see.
+    http2:
+      maxConcurrentStreams: 250
+    transport:
+      respondingTimeouts:
+        readTimeout: 60s
+        idleTimeout: 180s
+        writeTimeout: 60s
 
 providers:
   file:
@@ -23,4 +36,32 @@ providers:
 log:
   level: INFO
 
-accessLog: {}
+# Access logging, on and explicit rather than defaulted (SRG-APP-000089/000092). JSON because
+# these records are meant to be parsed by something other than a person.
+#
+# The fields are the SRG's questions: what happened (RequestMethod, RequestPath, RouterName),
+# when (StartUTC), where (ServiceName, ServiceAddr), the outcome (DownstreamStatus), and the
+# source (ClientHost).
+#
+# X-Forwarded-For is kept deliberately (SRG-APP-000098-WSR-000060): every analyst arrives
+# through the Boundary egress worker, so ClientHost is the SAME address for all of them and a
+# log without the forwarded header cannot attribute a request to an analyst at all.
+accessLog:
+  # A file, not stdout: the shipper reads it from a read-only mount, which keeps
+  # the container runtime's socket out of the log path entirely (SECURITY-MODEL P10).
+  filePath: /var/log/traefik/access.log
+  format: json
+  fields:
+    defaultMode: keep
+    names:
+      StartUTC: keep
+      RouterName: keep
+      ServiceName: keep
+      ServiceAddr: keep
+      DownstreamStatus: keep
+      Duration: keep
+    headers:
+      defaultMode: drop
+      names:
+        X-Forwarded-For: keep
+        User-Agent: keep

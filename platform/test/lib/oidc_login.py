@@ -10,8 +10,12 @@ It performs, per role:
   3. follow the redirect to oauth2-proxy's /api/oauth/callback/generic → session cookie
   4. GET the protected app with that cookie → must be authenticated (not 401)
 
-Usage: oidc_login.py <sso_base> <app_url> <username> <password>
+Usage: oidc_login.py <sso_base> <app_url> <username> <password> [rotate_to]
 Exit 0 = the role logged in end to end. Prints one summary line.
+
+Accounts are provisioned with a forced password update at first login. When Keycloak
+presents that form, `rotate_to` completes it (the login then ends on the NEW password);
+without it, the driver reports the demand distinctly so a test can assert enforcement.
 """
 import http.cookiejar
 import json
@@ -34,7 +38,7 @@ def build_opener():
     ), jar
 
 
-def main(sso_base, app_url, user, password):
+def main(sso_base, app_url, user, password, rotate_to=None):
     op, jar = build_opener()
     op.addheaders = [("User-Agent", "Mozilla/5.0 (X11; Linux x86_64) Firefox/140.0")]
 
@@ -68,6 +72,29 @@ def main(sso_base, app_url, user, password):
         print("FAIL: credentials rejected by Keycloak")
         return 1
 
+    # Forced first-login password update. The form's field names are Keycloak's own
+    # (password-new / password-confirm); its presence IS the enforcement.
+    if "password-new" in body:
+        if not rotate_to:
+            print("UPDATE_REQUIRED: Keycloak demands a password change before any session")
+            return 3
+        m = re.search(r'action="([^"]+)"', body)
+        if not m:
+            print("FAIL: update-password page carries no form action")
+            return 1
+        data = urllib.parse.urlencode({"password-new": rotate_to,
+                                       "password-confirm": rotate_to}).encode()
+        try:
+            with op.open(urllib.request.Request(m.group(1).replace("&amp;", "&"), data=data),
+                         timeout=25) as r:
+                final_url, body = r.geturl(), r.read().decode("utf-8", "replace")
+        except urllib.error.HTTPError as exc:
+            print(f"FAIL: password update POST -> HTTP {exc.code}")
+            return 1
+        if "password-new" in body or "/error" in final_url:
+            print("FAIL: the new password was refused (policy?) — still on the update form")
+            return 1
+
     # 4. The session must now authenticate against the protected app.
     try:
         with op.open(app_url, timeout=20) as r:
@@ -84,7 +111,7 @@ def main(sso_base, app_url, user, password):
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 5:
+    if len(sys.argv) not in (5, 6):
         print(__doc__)
         sys.exit(2)
     sys.exit(main(*sys.argv[1:]))

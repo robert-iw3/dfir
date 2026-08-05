@@ -6,6 +6,7 @@
  * findings, so nothing here loads the full set into the browser.
  */
 import { useState } from "react";
+import FindingEvidence, { hasEvidence } from "../components/FindingEvidence.jsx";
 import { Link, useSearchParams } from "react-router-dom";
 import { api } from "../api.js";
 import DataTable from "../components/DataTable.jsx";
@@ -138,6 +139,7 @@ export default function Findings() {
             { key: "run", label: "Run", sortable: false,
               render: (v) => (v ? <Link to={`/runs/${v}`}>view</Link> : "—") },
           ]}
+          renderDetail={(row) => (hasEvidence(row.raw) ? <FindingEvidence raw={row.raw} /> : null)}
         />
       )}
     </>

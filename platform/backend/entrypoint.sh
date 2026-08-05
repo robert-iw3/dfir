@@ -10,7 +10,12 @@ role="${1:-web}"
 # `environment:` block with an `env_file:`, and a variable that silently fails to arrive
 # leaves a process reporting nothing while looking correctly configured. This process
 # already knows what it is. An explicit value still wins.
-export IR_HEALTH_REPORT_ROLE="${IR_HEALTH_REPORT_ROLE:-${role}}"
+#
+# Only for the two roles that ARE reporters: any other command through this image — the log
+# shipper, a one-off manage.py — would otherwise report itself as the API.
+case "${role}" in
+    web|worker) export IR_HEALTH_REPORT_ROLE="${IR_HEALTH_REPORT_ROLE:-${role}}" ;;
+esac
 
 # --- Vault mode -------------------------------------------------------------
 # When IR_VAULT=1, secrets are not in the environment; a Vault Agent sidecar
@@ -74,29 +79,39 @@ except Exception as e:
 # Create the correlation database when it does not exist yet. CREATE DATABASE cannot run
 # inside a transaction, so it goes through a direct autocommit connection rather than a
 # migration.
-ensure_correlation_db() {
+# A side store must already exist. Creating it here needs the CREATEDB attribute, which the
+# app tier deliberately does not hold — hashicorp/db-bootstrap.py owns the one static admin
+# credential and creates every database before the application starts. Attempting it here
+# died with "permission denied to create database" and took the API down with it, which is
+# the security control working; the fix is to stop asking, not to widen the grant.
+#
+# Checked rather than assumed: a missing database must say so by name, because the migrate
+# that follows would otherwise fail with a connection error that names nothing useful.
+require_side_db() {  # NAME_VAR  DEFAULT_NAME  HOST_VAR  PORT_VAR
+    IR_DB_NAME_VAR="$1" IR_DB_NAME_DEFAULT="$2" IR_DB_HOST_VAR="$3" IR_DB_PORT_VAR="$4" \
     python - <<'PY'
 import os
+import sys
 
 import psycopg
 
-name = os.environ.get("CORRELATION_POSTGRES_DB", "ir_correlation")
-conn = psycopg.connect(
-    dbname="postgres",
-    user=os.environ.get("POSTGRES_USER", "ir_platform"),
-    password=os.environ.get("POSTGRES_PASSWORD", ""),
-    host=os.environ.get("CORRELATION_POSTGRES_HOST", os.environ.get("POSTGRES_HOST", "db")),
-    port=os.environ.get("CORRELATION_POSTGRES_PORT", os.environ.get("POSTGRES_PORT", "5432")),
-    autocommit=True,
-)
-with conn.cursor() as cur:
-    cur.execute("SELECT 1 FROM pg_database WHERE datname = %s", (name,))
-    if cur.fetchone():
-        print(f"[entrypoint] correlation database '{name}' present")
-    else:
-        cur.execute(f'CREATE DATABASE "{name}"')
-        print(f"[entrypoint] created correlation database '{name}'")
+name = os.environ.get(os.environ["IR_DB_NAME_VAR"], os.environ["IR_DB_NAME_DEFAULT"])
+try:
+    conn = psycopg.connect(
+        dbname=name,
+        user=os.environ.get("POSTGRES_USER", "ir_platform"),
+        password=os.environ.get("POSTGRES_PASSWORD", ""),
+        host=os.environ.get(os.environ["IR_DB_HOST_VAR"], os.environ.get("POSTGRES_HOST", "db")),
+        port=os.environ.get(os.environ["IR_DB_PORT_VAR"], os.environ.get("POSTGRES_PORT", "5432")),
+        connect_timeout=5,
+    )
+except Exception as exc:
+    print(f"[entrypoint] database '{name}' is not reachable: {exc}", file=sys.stderr)
+    print(f"[entrypoint] it is created by hashicorp/db-bootstrap.py — run the data-tier "
+          f"stage of deploy.sh before the application tier", file=sys.stderr)
+    raise SystemExit(1)
 conn.close()
+print(f"[entrypoint] database '{name}' present")
 PY
 }
 
@@ -111,8 +126,14 @@ case "$role" in
         python manage.py migrate --noinput
         # The derived correlation store is a separate database: create it if absent, then
         # migrate it explicitly. The router keeps `cases` out of it and it out of `default`.
-        ensure_correlation_db
+        require_side_db CORRELATION_POSTGRES_DB ir_correlation \
+                        CORRELATION_POSTGRES_HOST CORRELATION_POSTGRES_PORT
         python manage.py migrate --database=correlation --noinput
+        # Operational log store. Kept out of the evidence database: highest-volume writer in
+        # the platform, and explicitly not evidence.
+        require_side_db OPSLOG_POSTGRES_DB ir_opslog \
+                        OPSLOG_POSTGRES_HOST OPSLOG_POSTGRES_PORT
+        python manage.py migrate --database=opslog --noinput
         python manage.py seed_roles
         python manage.py collectstatic --noinput >/dev/null 2>&1 || true
         exec gunicorn ir_platform.wsgi:application \

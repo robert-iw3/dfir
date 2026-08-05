@@ -1,0 +1,12 @@
+# The toolchain is provenance, not a developer preference.
+#
+# An exact release is pinned so two builds of the same source produce the same binary — that is
+# the claim `build.sh --verify` makes, and a floating channel would quietly break it.
+#
+# Edition 2024 needs 1.85 or newer. The build proves the toolchain accepts it rather than
+# discovering otherwise partway through the dependency graph.
+[toolchain]
+channel = "1.97.1"
+targets = ["x86_64-unknown-linux-musl"]
+components = ["clippy", "rustfmt"]
+profile = "minimal"

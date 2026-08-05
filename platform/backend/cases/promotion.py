@@ -34,7 +34,7 @@ def promote_memory_findings(analysis_run, batch_size=500):
     """
     run = analysis_run.capture.run
     # A synthetic capture's findings are planted content, not observations. They are still
-    # promoted so the pipeline is visibly exercised end to end, but every one is labelled at
+    # promoted so the pipeline is visibly exercised end to end, but every one is labeled at
     # the source so no downstream reader — analyst, engine or export — has to infer it from
     # the capture record two joins away.
     synthetic = bool(analysis_run.capture.is_synthetic)

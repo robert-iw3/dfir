@@ -9,6 +9,7 @@ from .models import (
     CustodyEvent,
     Finding,
     Host,
+    HostIdentityChange,
     IOC,
     Investigation,
     MemoryAnalysisRun,
@@ -29,8 +30,12 @@ class FindingSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Finding
+        # `adjudicated_by` and `adjudication_conflict` are carried so the queue can show who
+        # owns a verdict and where an engine pass disagreed with an analyst. A conflict that
+        # exists only in the database is not review; it has to reach the person deciding.
         fields = ["id", "run", "hostname", "investigation", "finding_type", "target",
-                  "verdict", "confidence", "mitre", "tier", "subject_path", "source", "raw"]
+                  "verdict", "confidence", "mitre", "tier", "subject_path", "source", "raw",
+                  "adjudicated_by", "adjudication_conflict"]
 
 
 class IOCSerializer(serializers.ModelSerializer):
@@ -118,10 +123,24 @@ class CustodyEventSerializer(serializers.ModelSerializer):
         fields = ["id", "action", "actor", "detail", "entry_hash", "created_at"]
 
 
+class HostIdentityChangeSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = HostIdentityChange
+        fields = ["id", "field", "from_value", "to_value", "observed_at",
+                  "source_stamp", "actor", "created_at"]
+
+
 class HostSerializer(serializers.ModelSerializer):
+    # Former identities travel with the host, so a run collected under an older name can be
+    # read correctly. `machine_id` is exposed alongside them because it is what makes a rename
+    # traceable at all — a name history with no stable key behind it cannot be distinguished
+    # from two different machines.
+    identity_changes = HostIdentityChangeSerializer(many=True, read_only=True)
+
     class Meta:
         model = Host
-        fields = ["id", "hostname", "platform", "clock_context"]
+        fields = ["id", "hostname", "platform", "machine_id", "clock_context",
+                  "identity_changes"]
 
 
 class CollectionRunSerializer(serializers.ModelSerializer):

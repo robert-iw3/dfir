@@ -1,11 +1,74 @@
 # Rendered by docker-entrypoint.sh (envsubst) so the SSO proxy secret is injected at
 # runtime, never baked into the image. In non-SSO mode IR_SSO_PROXY_SECRET is empty and
 # the backend simply ignores the (empty) X-Proxy-Auth header, falling back to token auth.
+# Per-source connection ceiling (SRG-APP-000001-WSR-000001). Declared at http level, which is
+# where conf.d is included; the server block below applies it.
+limit_conn_zone $binary_remote_addr zone=perip:10m;
+
+# Modest headroom for a bounded cookie set — NOT room for an unbounded one.
+#
+# The gate issues a CSRF cookie per login attempt, and those are capped at the source
+# (`--cookie-csrf-per-request-limit`, deploy/enclave/docker-compose.yml). With that cap the
+# realistic worst case is a few CSRF cookies plus the session ticket and Keycloak's own — a
+# few kilobytes. The headroom here covers legitimate variance (a Keycloak identity token
+# grows with realm roles and group membership), not accumulation.
+#
+# Sizing this to fit an unbounded pile would have been the wrong fix: header buffers are a
+# per-connection memory bound, every analyst reaches the ingress through the broker from one
+# source address, and `limit_conn perip` therefore bounds them collectively rather than
+# individually. Multiplying per-connection memory to absorb a defect elsewhere weakens a
+# resource control (SRG-APP-000001-WSR-000001, SRG-APP-000246-WSR-000149) to hide a cause
+# that is fixable — so the cause is fixed and this stays close to the default.
+client_header_buffer_size 4k;
+large_client_header_buffers 4 16k;
+
 server {
     listen 8080;
     server_name _;
     root /usr/share/nginx/html;
     index index.html;
+
+    # The server must not name itself (SRG-APP-000266-WSR-000159). Traefik strips its own
+    # header on the way out; this stops nginx generating one in the first place, so an error
+    # served before the ingress sees it does not leak the version either.
+    # Written to files rather than the container's stdout, so the shipper can read them
+    # from a read-only mount without any container inspecting another.
+    access_log /var/log/nginx/access.log;
+    error_log  /var/log/nginx/error.log warn;
+
+    server_tokens off;
+
+    # No directory listing, ever (SRG-APP-000266-WSR-000142). The SPA fallback below means a
+    # miss lands on the application, not on an index of the document root.
+    autoindex off;
+
+    limit_conn perip 32;
+
+    # Types are stated rather than inherited (SRG-APP-000141-WSR-000081): the stock mime.types
+    # maps handlers this server has no business serving, and an unknown extension must be a
+    # download, not something the browser is invited to interpret.
+    types {
+        text/html                             html;
+        text/css                              css;
+        application/javascript                js mjs;
+        application/json                      json;
+        image/svg+xml                         svg;
+        image/png                             png;
+        image/jpeg                            jpg jpeg;
+        image/gif                             gif;
+        image/x-icon                          ico;
+        image/webp                            webp;
+        font/woff                             woff;
+        font/woff2                            woff2;
+        text/plain                            txt;
+    }
+    default_type application/octet-stream;
+
+    # Dotfiles, source maps and editor leftovers are refused explicitly (SRG-APP-000141-WSR-000083).
+    # None are in the image today; the rule is what keeps that true after a build change, and a
+    # source map hands a reader the unminified application.
+    location ~ /\. { deny all; access_log off; log_not_found off; }
+    location ~ \.(map|bak|old|orig|swp|log)$ { deny all; access_log off; log_not_found off; }
 
     # SPA client-side routing: unknown paths fall back to index.html.
     location / {

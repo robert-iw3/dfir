@@ -1,0 +1,4 @@
+{{- with secret "database/creds/keycloak" }}
+export KC_DB_USERNAME={{ .Data.username }}
+export KC_DB_PASSWORD={{ .Data.password }}
+{{- end }}

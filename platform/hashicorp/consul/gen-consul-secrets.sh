@@ -18,7 +18,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SEC="${IR_CONSUL_SECRET_DIR:-${HERE}/secrets}"
 DC="${IR_CONSUL_DATACENTER:-dc1}"
 
-MESH_SERVICES=(ir-postgres ir-minio ir-backend ir-worker ir-puller ir-vault ir-frontend)
+MESH_SERVICES=(ir-postgres ir-minio ir-redis ir-backend ir-worker ir-puller ir-vault ir-keycloak ir-frontend ir-oauth2-proxy ir-log-shipper)
 
 mkdir -p "${SEC}/tokens"
 chmod 700 "${SEC}" "${SEC}/tokens"

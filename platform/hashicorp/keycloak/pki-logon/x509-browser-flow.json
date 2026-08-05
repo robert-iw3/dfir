@@ -1,0 +1,54 @@
+{
+  "_comment": [
+    "The x509 browser flow, merged into the realm by deploy.sh when IR_PKI_LOGON=1.",
+    "Kept out of the realm file so an unconfigured deployment cannot import a certificate",
+    "flow it has no trust anchors for — that fails closed and locks everyone out.",
+    "",
+    "ALTERNATIVE, not REQUIRED: a user without a card falls through to the password form.",
+    "Making the certificate mandatory here means an administrator whose card is unreadable",
+    "cannot reach the platform to fix it. Requiring cards is a policy decision to make once",
+    "cards are known to work, by setting this to REQUIRED."
+  ],
+  "alias": "x509-browser",
+  "providerId": "basic-flow",
+  "topLevel": true,
+  "builtIn": false,
+  "authenticationExecutions": [
+    {
+      "authenticator": "auth-x509-client-username-form",
+      "requirement": "ALTERNATIVE",
+      "priority": 10,
+      "userSetupAllowed": false,
+      "authenticatorConfig": "x509-config"
+    },
+    {
+      "flowAlias": "x509-forms",
+      "requirement": "ALTERNATIVE",
+      "priority": 20,
+      "flowAlias_comment": "the password path, for users and situations without a card"
+    }
+  ],
+  "authenticatorConfig": [
+    {
+      "alias": "x509-config",
+      "config": {
+        "x509-cert-auth.mapping-source-selection": "Subject's Common Name",
+        "x509-cert-auth.canonical-dn-enabled": "true",
+        "x509-cert-auth.serialnumber-hex-enabled": "false",
+        "x509-cert-auth.regular-expression": "(.*?)(?:$)",
+        "x509-cert-auth.mapper-selection": "Username or Email",
+        "x509-cert-auth.timestamp-validation-enabled": "true",
+        "x509-cert-auth.crl-checking-enabled": "true",
+        "x509-cert-auth.crldp-checking-enabled": "false",
+        "x509-cert-auth.crl-relative-path": "/opt/keycloak/pki/crl",
+        "x509-cert-auth.ocsp-checking-enabled": "false",
+        "x509-cert-auth.confirmation-page-disallowed": "false"
+      },
+      "_comment": [
+        "crl-checking on, crldp OFF: a distribution point is a URL, and the enclave has no",
+        "route to one. Revocation is checked against lists staged into crl/ instead.",
+        "OCSP is off for the same reason — it is a live call to a responder."
+      ]
+    }
+  ]
+}

@@ -2,7 +2,7 @@
 
 *What passing proves:* Which service may reach which is stated explicitly, denied by default, and enforced on the wire — and the policy itself is protected by TLS and ACLs, so the services it governs cannot read or rewrite it.
 
-- Run: `uat_consul.sh` — 2026-07-31 19:13:17Z
+- Run: `uat_consul.sh` — 2026-08-05 22:01:15Z
 
 **Consul is running in the enclave with Connect enabled**
 
@@ -43,6 +43,7 @@
 |---|---|
 | ✅ PASS | intentions present for ir-postgres |
 | ✅ PASS | intentions present for ir-minio |
+| ✅ PASS | intentions present for ir-redis |
 | ✅ PASS | intentions present for ir-backend |
 
 **The pairs the platform needs are allowed**
@@ -58,6 +59,8 @@
 | ✅ PASS | ir-puller → ir-minio: ALLOWED |
 | ✅ PASS | ir-puller → ir-backend: ALLOWED |
 | ✅ PASS | ir-vault → ir-postgres: ALLOWED |
+| ✅ PASS | ir-backend → ir-redis: ALLOWED |
+| ✅ PASS | ir-worker → ir-redis: ALLOWED |
 
 **Everything else is denied — lateral movement is refused by rule**
 
@@ -67,35 +70,42 @@
 | ✅ PASS | ir-frontend → ir-minio: DENIED |
 | ✅ PASS | ir-receiver → ir-postgres: DENIED |
 | ✅ PASS | unknown-svc → ir-minio: DENIED |
+| ✅ PASS | ir-frontend → ir-redis: DENIED |
+| ✅ PASS | ir-puller → ir-redis: DENIED |
 
 **The policy is ENFORCED on the wire, not merely evaluated**
 
 | Result | Assertion — with evidence |
 |---|---|
-| ✅ PASS | platform services are registered in the catalog (15 entries) |
+| ✅ PASS | platform services are registered in the catalog (23 entries) |
 | ✅ PASS | ir-frontend → ir-postgres: the connection to db:5432 is actually refused |
 | ✅ PASS | ir-frontend → ir-minio: the connection to minio:9000 is actually refused |
+| ✅ PASS | ir-frontend → ir-redis: the connection to redis:6379 is actually refused |
 | ✅ PASS | ir-backend → ir-postgres: the allowed upstream carries traffic through its sidecar |
-| ✅ PASS | ir-vault → ir-postgres: minted a live credential through the mesh (v-approle-ir-platf-UwHGDI6B69xuvhWJpTsx-1785525202) |
+| ✅ PASS | ir-backend → ir-redis: the queue upstream carries traffic through its sidecar |
+| ✅ PASS | ir-worker → ir-redis: the celery worker answers over the queue through the mesh |
+| ✅ PASS | ir-vault → ir-postgres: minted a live credential through the mesh (v-approle-ir-platf-RQKvnhdSKQ4qItgKtZyc-1785967298) |
 
 **Every sidecar authenticated to the hardened control plane**
 
 | Result | Assertion — with evidence |
 |---|---|
 | ✅ PASS | db-sidecar is up and stable (0 restarts) |
-| ✅ PASS | db-sidecar shares its service's live network namespace (net:[4026534383]) |
+| ✅ PASS | db-sidecar shares its service's live network namespace (net:[4026534391]) |
 | ✅ PASS | minio-sidecar is up and stable (0 restarts) |
-| ✅ PASS | minio-sidecar shares its service's live network namespace (net:[4026534457]) |
+| ✅ PASS | minio-sidecar shares its service's live network namespace (net:[4026534470]) |
+| ✅ PASS | redis-sidecar is up and stable (0 restarts) |
+| ✅ PASS | redis-sidecar shares its service's live network namespace (net:[4026534532]) |
 | ✅ PASS | vault-sidecar is up and stable (0 restarts) |
-| ✅ PASS | vault-sidecar shares its service's live network namespace (net:[4026534126]) |
+| ✅ PASS | vault-sidecar shares its service's live network namespace (net:[4026534838]) |
 | ✅ PASS | backend-sidecar is up and stable (0 restarts) |
-| ✅ PASS | backend-sidecar shares its service's live network namespace (net:[4026534243]) |
+| ✅ PASS | backend-sidecar shares its service's live network namespace (net:[4026534805]) |
 | ✅ PASS | worker-sidecar is up and stable (0 restarts) |
-| ✅ PASS | worker-sidecar shares its service's live network namespace (net:[4026534809]) |
+| ✅ PASS | worker-sidecar shares its service's live network namespace (net:[4026534993]) |
 | ✅ PASS | frontend-sidecar is up and stable (0 restarts) |
-| ✅ PASS | frontend-sidecar shares its service's live network namespace (net:[4026534359]) |
+| ✅ PASS | frontend-sidecar shares its service's live network namespace (net:[4026534929]) |
 | ✅ PASS | puller-sidecar is up and stable (0 restarts) |
-| ✅ PASS | puller-sidecar shares its service's live network namespace (net:[4026534949]) |
+| ✅ PASS | puller-sidecar shares its service's live network namespace (net:[4026535117]) |
 
 **Result**
 
@@ -103,4 +113,4 @@
 |---|---|
 | ✅ PASS | mesh authorization holds: explicit allow-list, default-deny, enforced on the wire, on a TLS control plane the services cannot rewrite |
 
-**Verdict: PROVEN** — 49 assertions passed, 0 failed.
+**Verdict: PROVEN** — 59 assertions passed, 0 failed.

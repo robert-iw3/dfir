@@ -9,9 +9,41 @@
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-TOOLKIT_ROOT="$(cd "${HERE}/../.." && pwd)"     # ir_toolkit/
+# The toolkit tree (playbooks/, tools/) — located, not assumed. It sat beside platform/ in the
+# public repository and sits under toolkit/ in the development tree, so the parent is checked
+# first and the search widens from there. Zero or multiple matches fail LOUDLY: staging the
+# wrong tree produces an image that builds and analyzes with the wrong code.
+find_toolkit_root() {
+    local base cand hits
+    for base in "${HERE}/../.." "${HERE}/../../.."; do
+        [[ -d "${base}" ]] || continue
+        cand="$(cd "${base}" && pwd)"
+        [[ -d "${cand}/playbooks/linux" && -d "${cand}/tools" ]] && { printf '%s' "${cand}"; return 0; }
+        hits="$(find "${cand}" -maxdepth 3 -type d -path '*/playbooks/linux' \
+                -not -path '*/node_modules/*' -not -path '*/archive/*' 2>/dev/null)"
+        if [[ "$(grep -c . <<<"${hits}")" == "1" ]]; then
+            printf '%s' "$(cd "$(dirname "$(dirname "${hits}")")" && pwd)"; return 0
+        fi
+        [[ -n "${hits}" ]] && { echo "[build] ambiguous toolkit trees under ${cand}:" >&2
+                                printf '%s\n' "${hits}" >&2; return 1; }
+    done
+    echo "[build] cannot locate the toolkit tree (playbooks/linux + tools) from ${HERE}" >&2
+    return 1
+}
+
+TOOLKIT_ROOT="$(find_toolkit_root)" || exit 1
 IMAGE="${IR_WORKER_IMAGE:-ir-worker:latest}"
 RUNTIME="${IR_RUNTIME:-podman}"
+
+# Resolved before staging — ci/build-inputs.sh explains why in-tree and foreign paths are
+# resolved differently.
+. "${HERE}/../ci/build-inputs.sh"
+require dir  "${TOOLKIT_ROOT}/tools/vol3_wheels"              "Volatility wheels"
+require dir  "${TOOLKIT_ROOT}/playbooks/linux/threat_hunting" "hunt playbooks"
+require dir  "${TOOLKIT_ROOT}/playbooks/linux/investigation"  "investigation engine"
+require file "${HERE}/../shared/sysstats.py"                  "component self-reporting"
+require_report
+build_inputs_check_only && { echo "[build] worker inputs resolve"; exit 0; }
 
 CTX="$(mktemp -d)"
 trap 'rm -rf "${CTX}"' EXIT

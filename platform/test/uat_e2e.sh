@@ -9,7 +9,7 @@
 #   collector (edge) → receiver → [pull] → analysis findings → RBAC/audit/retention
 #     → carved regions → mediator staging → binja session + ghidra session
 #
-# Memory analysis runs on a SYNTHETIC capture and carved regions are SEEDED, both labelled as
+# Memory analysis runs on a SYNTHETIC capture and carved regions are SEEDED, both labeled as
 # such in the data: real carving needs a host's RAM and hours of scan, which tests the analyzer
 # rather than the platform. Everything downstream of the analyzer is the real path.
 #
@@ -73,7 +73,7 @@ EVID="$(mktemp -d)"
 ${RUNTIME} image exists ir-collector:latest 2>/dev/null \
     || bash "${PLATFORM}/collector/build.sh" >/dev/null 2>&1 \
     || bad "collector image failed to build"
-# Rootless and unprivileged, so memory capture takes the labelled synthetic fallback — the
+# Rootless and unprivileged, so memory capture takes the labeled synthetic fallback — the
 # collection path, custody seal and shipping are all real.
 if ${RUNTIME} run --rm --hostname "${HOST_E2E}" \
     -e IR_INCIDENT_ID="${INCIDENT}" \
@@ -189,7 +189,7 @@ grep -q '"action": *"ingest"' <<<"${AUDIT}" \
 
 # ============================================================ 5. carved regions
 say "5/7  Carved regions seeded, staged by the mediator"
-# Real ELF binaries from the backend image itself: real files, labelled simulated rows.
+# Real ELF binaries from the backend image itself: real files, labeled simulated rows.
 SAMPLES="$(mktemp -d)"
 for f in ls cat grep tar; do
     ${RUNTIME} exec ir-enclave_backend_1 sh -c "cat \$(command -v ${f})" > "${SAMPLES}/${f}.bin" 2>/dev/null

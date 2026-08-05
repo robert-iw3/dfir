@@ -1,7 +1,9 @@
-import { NavLink, Navigate, Route, Routes } from "react-router-dom";
+import { NavLink, Navigate, Route, Routes, useLocation } from "react-router-dom";
+import { api } from "./api.js";
 import { AuthProvider, can, useAuth } from "./auth.jsx";
 import { PrefsProvider, usePrefs } from "./components/prefs.jsx";
 import DeployWatch from "./components/DeployWatch.jsx";
+import ErrorBoundary from "./components/ErrorBoundary.jsx";
 import {
   IconAudit, IconComponents, IconCorrelation, IconDashboard, IconFindings, IconHealth, IconHosts,
   IconInvestigations, IconReversing, IconSearch, IconUsers,
@@ -86,6 +88,7 @@ function Sidebar() {
 
 function Shell() {
   const { user, ready } = useAuth();
+  const { pathname } = useLocation();
   if (!ready) return <div className="app"><div className="main"><div className="empty">Loading…</div></div></div>;
   if (!user) return <Login />;
   return (
@@ -95,6 +98,10 @@ function Shell() {
         {/* Sits above every view: a redeployment is something the person reading the page
             needs to be told about, whatever page they are on. */}
         <DeployWatch />
+        {/* Inside the shell, not around it: a view that fails keeps the navigation usable,
+            so an analyst can move to another page rather than reload a blank window. Keyed
+            on the path so leaving a broken view clears the error. */}
+        <ErrorBoundary key={pathname} where={pathname} onError={api.reportClientError}>
         <Routes>
           <Route path="/" element={<Dashboard />} />
           <Route path="/investigations" element={<Investigations />} />
@@ -118,6 +125,7 @@ function Shell() {
           <Route path="/admin" element={<Navigate to="/platform-health" replace />} />
           <Route path="/captures/:captureId/diff" element={<AnalysisDiff />} />
         </Routes>
+        </ErrorBoundary>
       </main>
     </div>
   );

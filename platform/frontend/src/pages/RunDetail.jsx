@@ -4,12 +4,49 @@ import { api } from "../api.js";
 import { can, useAuth } from "../auth.jsx";
 import { useData, Loading, Empty, verdictBadge } from "../components/common.jsx";
 import DataTable from "../components/DataTable.jsx";
+import FindingEvidence, { hasEvidence } from "../components/FindingEvidence.jsx";
 
 function fmtBytes(n) {
   if (!n) return "0 B";
   const u = ["B", "KB", "MB", "GB", "TB"];
   const i = Math.floor(Math.log(n) / Math.log(1024));
   return `${(n / Math.pow(1024, i)).toFixed(1)} ${u[i]}`;
+}
+
+/**
+ * A summary value as a chip. The engine's summary is an open map — an analyzer may add a
+ * key at any time, and some of them are structured (`adjudication` carries a verdict and
+ * its reason). `String(value)` rendered those as "[object Object]", which is not a value an
+ * analyst can act on and hides whatever the analyzer was reporting.
+ *
+ * Scalars render as themselves; a list of scalars joins; anything structured is summarized
+ * to its keys with the whole value on hover, so a chip stays a chip and nothing is lost.
+ */
+function summaryValue(v) {
+  if (v === null || v === undefined || v === "") return "—";
+  if (Array.isArray(v)) {
+    return v.every((x) => x === null || typeof x !== "object")
+      ? v.join(", ") || "—"
+      : `${v.length} entries`;
+  }
+  if (typeof v === "object") {
+    const keys = Object.keys(v);
+    // The common shape: one field carrying the answer. Show it rather than a key list.
+    for (const k of ["verdict", "value", "status", "result", "reason"]) {
+      if (typeof v[k] === "string" || typeof v[k] === "number") return String(v[k]);
+    }
+    return keys.length ? keys.join(", ") : "—";
+  }
+  return String(v);
+}
+
+// The full value, for the chip's tooltip — the summarized form above must never be the
+// only place the detail exists.
+function summaryTitle(v) {
+  if (v !== null && typeof v === "object") {
+    try { return JSON.stringify(v, null, 2); } catch { return String(v); }
+  }
+  return String(v);
 }
 
 /**
@@ -127,7 +164,7 @@ function MemoryCapture({ cap, onReanalyze }) {
             {a.summary && Object.keys(a.summary).length > 0 && (
               <div style={{ marginBottom: 8 }}>
                 {Object.entries(a.summary).map(([k, v]) => (
-                  <span className="tag" key={k}>{k}: {String(v)}</span>
+                  <span className="tag" key={k} title={summaryTitle(v)}>{k}: {summaryValue(v)}</span>
                 ))}
               </div>
             )}
@@ -174,6 +211,9 @@ export default function RunDetail() {
   const { data: adj } = useData(() => api.runAdjudication(id), [id], { refreshMs: 20000 });
   // One chain's events at a time — the list only carries counts.
   const [chain, setChain] = useState(null);
+  // Which finding's recovered evidence is expanded. One at a time: the panel is detail an
+  // analyst reads, not a column to scan.
+  const [openFinding, setOpenFinding] = useState(null);
   const openChain = (rootPid) =>
     api.runAdjudicationChain(id, rootPid).then(setChain).catch(() => setChain(null));
   if (!data) return <Loading error={error} />;
@@ -185,6 +225,9 @@ export default function RunDetail() {
         <span className={`status-${data.overall_status}`}>{data.overall_status || "—"}</span> ·{" "}
         {data.tp_count} TP · {data.custody_verified ? "custody ✓" : "custody unverified"}
       </p>
+
+      <h2>Custody</h2>
+      <CustodyPanel runId={id} />
 
       <h2>Findings</h2>
       {!data.finding_summary ? <Empty>No findings.</Empty> : (
@@ -220,7 +263,7 @@ export default function RunDetail() {
             </div>
           </div>
 
-          {/* Adjudication first. A rule name is not a verdict; the engine's judgement of a
+          {/* Adjudication first. A rule name is not a verdict; the engine's judgment of a
               process — what converged on it and why — is what an analyst acts on. */}
           <h2>Adjudication</h2>
           {!adj ? <div className="muted">Loading…</div> :
@@ -392,18 +435,44 @@ export default function RunDetail() {
           <div className="panel">
             <table>
               <thead><tr>
+                <th scope="col" style={{ width: 28 }}><span className="sr-only">Detail</span></th>
                 <th scope="col">Type</th><th scope="col">Target</th>
                 <th scope="col">Verdict</th><th scope="col">Source</th>
               </tr></thead>
               <tbody>
-                {(data.top_findings || []).map((f) => (
-                  <tr key={f.id}>
-                    <td>{f.finding_type}</td>
-                    <td className="mono">{f.target}</td>
-                    <td>{verdictBadge(f.verdict)}</td>
-                    <td>{f.source}</td>
-                  </tr>
-                ))}
+                {/* This is the page an analyst reaches from a host, so the recovered
+                    evidence has to be reachable HERE and not only from the paginated
+                    findings view — a beacon's user-agent, mutex and extracted C2 config
+                    are the reason the row matters. */}
+                {(data.top_findings || []).map((f) => {
+                  const has = hasEvidence(f.raw);
+                  const open = openFinding === f.id;
+                  return (
+                    <Fragment key={f.id}>
+                      <tr>
+                        <td>
+                          {has && (
+                            <button type="button" className="th-sort"
+                                    aria-expanded={open}
+                                    aria-label={open ? "Hide evidence" : "Show evidence"}
+                                    onClick={() => setOpenFinding(open ? null : f.id)}>
+                              {open ? "▾" : "▸"}
+                            </button>
+                          )}
+                        </td>
+                        <td>{f.finding_type}</td>
+                        <td className="mono">{f.target}</td>
+                        <td>{verdictBadge(f.verdict)}</td>
+                        <td>{f.source}</td>
+                      </tr>
+                      {has && open && (
+                        <tr className="rationale-row">
+                          <td colSpan={5}><FindingEvidence raw={f.raw} /></td>
+                        </tr>
+                      )}
+                    </Fragment>
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -426,5 +495,88 @@ export default function RunDetail() {
         />
       )}
     </>
+  );
+}
+
+
+/**
+ * B1.2 — the custody chain, and whether it still verifies.
+ *
+ * These guarantees already held; they were readable only in the receiver's log. A refusal
+ * an analyst cannot see is a control that protects the record without informing the person
+ * relying on it.
+ *
+ * Three states, kept apart on purpose. `broken` means the hash chain does not link and the
+ * evidence is in question. `unverified` means nobody has verified it yet — not a failure,
+ * and presenting the two the same way would either cry wolf or hide a real break.
+ */
+function CustodyPanel({ runId }) {
+  const { data, error } = useData(() => api.runCustody(runId), [runId]);
+  if (!data) return <Loading error={error} />;
+
+  const state = data.verification?.state;
+  const cls = state === "broken" ? "status-failed"
+    : state === "verified" ? "status-completed" : "muted";
+
+  return (
+    <div className="panel" style={{ padding: 12 }}>
+      <div className="row" style={{ gap: 16, flexWrap: "wrap" }}>
+        <span className={cls}>
+          {state === "broken" ? "CHAIN BROKEN"
+            : state === "verified" ? "chain intact, verified"
+            : "chain intact, not yet verified"}
+        </span>
+        <span className="muted">{data.event_count} custody event(s)</span>
+        {data.verification?.verified_by?.length > 0 && (
+          <span className="muted">verified by {data.verification.verified_by.join(", ")}</span>
+        )}
+      </div>
+
+      {state === "broken" && (
+        <div className="status-failed" style={{ marginTop: 8 }}>
+          The ledger stops linking at entry {data.chain_broken_at_index + 1}. Everything after
+          it is not covered by the seal — treat this run's evidence as unverified until the
+          break is explained.
+        </div>
+      )}
+
+      {data.chain.length === 0 ? (
+        <div className="empty" style={{ marginTop: 8 }}>No custody events recorded.</div>
+      ) : (
+        <table style={{ marginTop: 8 }}>
+          <thead>
+            <tr><th>When</th><th>Action</th><th>Actor</th><th>Entry hash</th></tr>
+          </thead>
+          <tbody>
+            {data.chain.map((e, i) => (
+              <tr key={i} className={data.chain_broken_at_index === i ? "status-failed" : ""}>
+                <td className="mono">{e.at ? new Date(e.at).toISOString() : "—"}</td>
+                <td>{e.action}</td>
+                <td>{e.actor || "—"}</td>
+                <td className="mono">{(e.entry_hash || "").slice(0, 16) || "—"}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+
+      {data.captures?.length > 0 && (
+        <>
+          <h3 style={{ marginTop: 12 }}>Captures</h3>
+          <table>
+            <thead><tr><th>SHA-256</th><th>Size</th><th>Retention</th></tr></thead>
+            <tbody>
+              {data.captures.map((c) => (
+                <tr key={c.id}>
+                  <td className="mono">{(c.sha256 || "").slice(0, 24) || "—"}</td>
+                  <td>{c.size_bytes?.toLocaleString?.() ?? c.size_bytes}</td>
+                  <td>{c.retention_status}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </>
+      )}
+    </div>
   );
 }

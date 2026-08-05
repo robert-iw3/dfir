@@ -1,0 +1,3 @@
+# Revocation lists, one per issuer. Staged in by an operator — the enclave has no route to a
+# CRL distribution point — on a cadence shorter than their validity. An expired list is treated
+# as no list, which fails closed.

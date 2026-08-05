@@ -235,7 +235,10 @@ class CollectionRunViewSet(viewsets.ReadOnlyModelViewSet):
         does not decide any of it.
         """
         run = self.get_object()
-        verdicts = run.process_verdicts.all()
+        # The CURRENT pass only. Superseded verdicts are kept as history — a reviewer needs
+        # to see what the engine concluded before it changed its mind — but showing them
+        # beside the live ones would present one PID twice carrying two verdicts.
+        verdicts = run.process_verdicts.filter(is_current=True)
         if request.query_params.get("verdict"):
             verdicts = verdicts.filter(engine_label=request.query_params["verdict"])
 
@@ -781,7 +784,7 @@ class RemediationView(APIView):
         if state:
             qs = qs.filter(status=state)
         return Response({
-            "catalog": remediation.catalogue(),
+            "catalog": remediation.catalog(),
             "requests": [
                 {"id": r.id, "action": r.action, "actor": r.actor, "reason": r.reason,
                  "status": r.status, "exit_code": r.exit_code, "output": r.output,
@@ -811,7 +814,7 @@ class RemediationView(APIView):
 class RemediationQueueView(APIView):
     """What the agent polls: queued requests, nothing else.
 
-    Service credential — the admin GET above carries the catalogue and full history, which the
+    Service credential — the admin GET above carries the catalog and full history, which the
     agent has no business reading, and IsAdmin refuses its token anyway. This returns the
     minimum a claim needs: id and action name.
     """
@@ -1073,33 +1076,7 @@ def _admin_delete(request, obj, obj_type):
     audit_mod.audit(request.user.username, f"{obj_type.lower()}.delete", role="admin",
                     method="DELETE", path=request.path, object_type=obj_type,
                     object_id=obj_id, detail={"repr": str(obj)})
+    # Correlation for a deleted investigation is dropped by the post_delete signal in
+    # cases/signals.py, which covers every deletion path rather than this one alone.
     obj.delete()
-    if obj_type == "Investigation":
-        _drop_correlation_for(obj_id)
     return Response(status=status.HTTP_204_NO_CONTENT)
-
-
-def _drop_correlation_for(investigation_id):
-    """Discard the derived correlation for an investigation that no longer exists.
-
-    The correlation store is a separate database and holds `investigation_id` as a plain
-    integer — there is no cross-database foreign key to cascade, by design. Nothing
-    therefore cleaned up after a deleted investigation, and PostgreSQL reuses the id: the
-    next investigation created inherited the previous one's campaigns and was shown another
-    incident's hosts.
-
-    Correlation is derived and rebuildable, so dropping it costs nothing that cannot be
-    recomputed.
-    """
-    from correlation.models import Campaign, CampaignEdge, CampaignHost, CorrelationRun, SharedIndicator
-
-    runs = list(CorrelationRun.objects.filter(investigation_id=investigation_id)
-                .values_list("id", flat=True))
-    if not runs:
-        return
-    campaigns = list(Campaign.objects.filter(run_id__in=runs).values_list("id", flat=True))
-    CampaignEdge.objects.filter(campaign_id__in=campaigns).delete()
-    CampaignHost.objects.filter(campaign_id__in=campaigns).delete()
-    SharedIndicator.objects.filter(run_id__in=runs).delete()
-    Campaign.objects.filter(id__in=campaigns).delete()
-    CorrelationRun.objects.filter(id__in=runs).delete()

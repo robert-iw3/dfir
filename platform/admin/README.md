@@ -74,3 +74,22 @@ podman exec ir-enclave_adminfwd_1 nc -z -w2 <dmz-service-ip> 8090   # must fail
 
 A forwarder that *can* reach the other tier is a regression in the segmentation model, not
 a convenience.
+
+## Account recovery — `kc-userctl.sh`
+
+Lockouts and forgotten passwords for the platform realm, recoverable only from the host
+running Keycloak — the script works through `podman exec` into the local container, so on
+any other machine it can do nothing. That is the safeguard: recovering an account takes
+the same access as recovering the identity store.
+
+```bash
+./kc-userctl.sh status default-analyst    # lockout state, pending required actions
+./kc-userctl.sh unlock default-analyst    # clear a brute-force lockout
+./kc-userctl.sh reset  default-analyst    # print a new SINGLE-USE temporary password
+```
+
+A reset never hands out a working session: the printed password admits one login, which
+Keycloak refuses to complete until the user replaces it. Demo-account provisioning itself
+is [`hashicorp/keycloak/provision-demo-users.sh`](../hashicorp/keycloak/provision-demo-users.sh),
+run by every deploy — create-if-absent with the `deploy/.env` initial values; existing
+users are never touched.

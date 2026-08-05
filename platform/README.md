@@ -202,7 +202,7 @@ ownership is stable across credential rotation.
 | [`deploy/NETWORKING.md`](deploy/NETWORKING.md) | Network design: VLANs, routing, firewall policy, IDPS placement, DNS |
 | [`troubleshooting/COMPONENTS.md`](troubleshooting/COMPONENTS.md) | Component reference: configuration, network path, and health probe for every hop |
 | [`troubleshooting/RUNBOOK.md`](troubleshooting/RUNBOOK.md) | Symptom-to-resolution runbook |
-| [`../change_logs/`](../change_logs/) | Defects found in this baseline: what was measured, what changed, what is still open |
+| [`change_logs/`](change_logs/) | What changed, and the assertion that proves it |
 | [`../planning/ROADMAP-FORENSIC-PLATFORM.md`](../planning/ROADMAP-FORENSIC-PLATFORM.md) | Roadmap and delivery status |
 
 ## Requirements
@@ -223,72 +223,56 @@ See [`deploy/README.md`](deploy/README.md) for per-tier installation and configu
 
 ---
 
-## Developer note | @RW - Sign off 7/31
+## Implementation status
 
-This repository is the **public baseline** of the platform: evidence ingress, chain of
-custody, server-side memory analysis, retention, RBAC and audit, SSO, multi-host
-correlation, and the analyst web application — deployed and validated end to end.
+Implemented and validated end to end: evidence ingress, chain of custody, server-side memory
+analysis, retention, RBAC and audit, SSO, multi-host correlation, and the analyst web
+application.
 
-Development continues privately from this point. The following are **not publicly
-available** and are not tracked in this repository:
+**Validated through UAT** against real evidence — collection, custody-sealed ingress,
+server-side Volatility analysis of a 24 GB capture, adjudication by the investigation engine,
+carved-region reverse engineering on an isolated workstation, and the audit and retention paths
+around them. Assertions run against the deployed stack rather than fixtures.
+
+Treat this as a working reference implementation of the architecture and workflow rather than a
+tuned detection product. Detection depth is an ongoing track; the surrounding system — ingress,
+custody, retention, RBAC, audit, correlation — is complete and exercised.
+
+**Defects are tracked and fixed.** UAT exercised the Linux memory-analysis path in depth and
+surfaced gaps in existing detection logic; those are recorded as remediation items in
+[`planning/BACKLOG.md`](../planning/BACKLOG.md) §12a. Each fix is recorded in
+[`change_logs/`](change_logs/) with the evidence that found it, what changed, and what
+remains open.
+
+**Endpoint coverage is Linux.** The collection container, the memory analysis path, the
+investigation engine and the reverse-engineering flow are all exercised against Linux hosts.
+The architecture is platform-agnostic — evidence ingress, custody, retention, RBAC, audit and
+correlation make no assumption about the endpoint's operating system, and the finding schema is
+shared. What is absent is per-platform collection and detection depth, not the surrounding
+system.
+
+## Roadmap
+
+Ordered and detailed in
+[`planning/CONSOLIDATED-BACKLOG.md`](../planning/CONSOLIDATED-BACKLOG.md); the design decisions
+behind it, and their open questions, are in
+[`planning/DECISIONS.md`](../planning/DECISIONS.md).
 
 | Track | Covers |
 |---|---|
-| Windows / macOS endpoint support | Collection and analysis for non-Linux endpoints |
-| Web Server SRG | DISA Web Server SRG hardening of the web tier and its runtime |
-| Ansible automation | Multi-host deployment and host preparation, lint-gated |
+| Windows endpoint support | AFF4 collection (go-winpmem) and MemProcFS-based analysis |
+| High-performance evidence pipeline | Resumable chunked ingest of multi-GB memory images (AFF4 / raw / LiME), and the derivation chain over what is extracted from them |
 | Parallel analysis capacity | Scaling memory analysis across workers and hosts for fleet-scale intake |
 | Horizontal data scalability | Streaming/resumable evidence pipeline, distributed object storage, capacity sizing |
 | Sharded SQL metadata storage | Optional horizontal partitioning of the metadata stores |
-| Improved campaign correlation models | Beyond shared-indicator clustering — scoring, confidence modeling, actor attribution |
-| UI enhancements | Case management, frontier-AI-assisted analysis, data management |
-| Enhanced ETL pipeline | Normalization, enrichment and ingestion at fleet scale |
+| Campaign correlation models | Beyond shared-indicator clustering — scoring, confidence modeling, actor attribution |
+| UI enhancements | Case management, visualization with drill-down, data management |
+| Web Server SRG | DISA Web Server SRG hardening of the web tier and its runtime |
+| Ansible automation | Multi-host deployment and host preparation, lint-gated |
 
-Planning for these tracks lives with the private work. The roadmaps in this repository
-describe the public baseline and mark those tracks as private rather than detailing them.
+### Known limit: analysis throughput
 
-### Status of this baseline
-
-This baseline is a **proof of concept, validated end to end through UAT**: collection,
-custody-sealed ingress, server-side Volatility analysis against a real 24 GB capture,
-adjudication by the toolkit's investigation engine, carved-region reverse engineering on an
-isolated workstation, and the audit and retention paths around them.
-
-UAT exercised the Linux memory-analysis path in depth, and the detection gaps it surfaced are
-recorded as remediation items against existing logic — see
-[`planning/BACKLOG.md`](../planning/BACKLOG.md) §12a. Those are defects in what ships here and
-will be addressed here.
-
-Detection **enhancements** identified during that work continue on the private track and are
-not published. The distinction is deliberate:
-
-- **Bugs in the baseline** — wrong verdicts from shipped logic, string-presence matching where
-  a structural gate is required, incorrect handling of existing evidence — are fixed in this
-  repository.
-- **Enhancements beyond it** — new detection depth, scoring and confidence modeling, fleet-scale
-  analysis capacity — are private tracks named above and detailed nowhere in this repository.
-
-**Baseline 1.0 fixes continue to be published here.** Development moving to a private track
-does not freeze this mirror: defects in what already ships keep being corrected and pushed,
-and each one is recorded in [`change_logs/`](../change_logs/) with the evidence it was found
-by, what changed, and what remains open. Only existing issues — a fix that would require new
-capability belongs to a private track and is not published, and no entry describes work that
-is not in this repository.
-
-Treat this as a working reference implementation of the architecture and workflow, not as a
-tuned detection product.
-
-**Endpoint coverage in this repository is Linux.** The collection container, the memory
-analysis path, the investigation engine and the reverse-engineering flow are all exercised
-against Linux hosts. Windows and macOS endpoint support — collection and the analysis that
-follows it — is developed on the private track and is not published here. The architecture
-is platform-agnostic: evidence ingress, custody, retention, RBAC, audit and correlation make
-no assumption about the endpoint's operating system, and the finding schema is shared. What
-is absent is the per-platform collection and detection depth, not the surrounding system.
-
-### Known limit of the baseline: analysis throughput
-
-The baseline analyzes **one capture at a time**. A 24 GB capture takes 75–100 minutes, so a
+The platform analyzes **one capture at a time**. A 24 GB capture takes 75–100 minutes, so a
 20-host incident is roughly a day of wall-clock and a 100-host incident is closer to a week.
 
 The ceiling is staging I/O rather than CPU: each analysis copies the whole capture from the

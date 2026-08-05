@@ -12,6 +12,29 @@ Related: [`WORKFLOW-RE.md`](WORKFLOW-RE.md), [`WORKFLOW-ADMIN.md`](WORKFLOW-ADMI
 
 ---
 
+## 0. First login
+
+`deploy.sh enclave` provisions the demo accounts and **prints each initial credential in
+its output** when it creates the account — the deploy printout is where the password is
+found. The values come from `deploy/.env` (`IR_DEMO_*_PASSWORD`).
+
+An initial credential is **single-use**: Keycloak refuses the first login a session until
+the password is replaced, so a printed value stops working the moment anyone has used it.
+
+| Account | Role |
+|---|---|
+| `default-admin` | platform administration |
+| `default-analyst` | investigation work (this document) |
+| `default-auditor` | read-only audit review |
+| `default-reverse-engineer` | carved-region analysis |
+
+Locked out, or the password is gone? An administrator runs
+[`admin/kc-userctl.sh`](admin/kc-userctl.sh) — `unlock` clears a lockout, `reset` issues a
+new single-use temporary password. Both work only on the host running Keycloak; that is
+the safeguard, not a limitation.
+
+---
+
 ## 1. Open the incident
 
 **Investigations → the incident.** The detail page lists every host collected under it,

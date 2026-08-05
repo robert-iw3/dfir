@@ -1,0 +1,448 @@
+#!/usr/bin/env bash
+# ==============================================================================
+# SCHEMA INTEGRITY — the store refuses what the application merely avoided.
+#
+# Every assertion here tries to BREAK an invariant and requires the database to stop it.
+# Asserting that a constraint appears in pg_constraint proves the DDL ran, not that the
+# defect is closed: the defect was a read-then-write race, so the test has to race.
+#
+# Non-destructive: works in a savepoint that is rolled back, so a run leaves the evidence
+# store exactly as it found it.
+# ==============================================================================
+set -uo pipefail
+
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PLATFORM="$(cd "${HERE}/.." && pwd)"
+
+. "${HERE}/lib/report.sh"
+report_begin 45 schema "Schema integrity — invariants enforced by the database" \
+    "Identity and idempotency are refused at the store, not merely avoided by the application: a concurrent duplicate host is rejected, a re-posted collection cannot duplicate, and the queries the UI runs use the indexes built for them. Adjudication is held to the same standard — a re-analysis supersedes rather than deletes, and an automated pass cannot discard an analyst's verdict without recording that it disagreed."
+RUNTIME="${IR_RUNTIME:-podman}"
+BE=ir-enclave_backend_1
+be() { ${RUNTIME} exec -i "${BE}" "$@"; }
+
+say "Preconditions"
+[[ "$(${RUNTIME} inspect "${BE}" --format '{{.State.Status}}' 2>/dev/null)" == "running" ]] \
+    && ok "${BE} running" || { bad "${BE} not running — deploy the enclave first"; report_finish; exit 1; }
+
+# Anything the probe script prints that is not an assertion is kept, not dropped. A traceback
+# matches none of these prefixes, so swallowing unknown lines let an exception truncate a whole
+# section while the suite still reported PASS — the assertions that never ran looked identical
+# to assertions that did not exist. DONECHK is the last line the script prints; its absence is
+# what turns a crash into a failure rather than a shorter report.
+TRACE=""; COMPLETED=0
+while read -r line; do
+    case "${line}" in
+        PASSCHK*) ok "${line#PASSCHK }" ;;
+        FAILCHK*) bad "${line#FAILCHK }" ;;
+        SECTION*) say "${line#SECTION }" ;;
+        DONECHK)  COMPLETED=1 ;;
+        *)        TRACE="${TRACE}${line}"$'\n' ;;
+    esac
+done < <(be python3 - <<'PYEOF' 2>&1
+import os, django
+os.environ.setdefault("DJANGO_SETTINGS_MODULE", "ir_platform.settings"); django.setup()
+from django.db import IntegrityError, transaction
+from django.utils import timezone
+from django.db.utils import ProgrammingError
+from cases.models import CollectionRun, Finding, Host, Investigation
+
+def chk(cond, label):
+    print(("PASSCHK " if cond else "FAILCHK ") + label)
+
+MID = "uat-schema-machine-id-0001"
+
+print("SECTION Host identity — one machine cannot become two")
+try:
+    with transaction.atomic():
+        Host.objects.create(hostname="uat-schema-a", machine_id=MID)
+        # The second create is the losing side of the race the constraint exists to stop.
+        refused = False
+        try:
+            with transaction.atomic():
+                Host.objects.create(hostname="uat-schema-b", machine_id=MID)
+        except IntegrityError:
+            refused = True
+        chk(refused, "a second host claiming the same machine-id is REFUSED by the database")
+
+        # Blank machine-id means "not recorded" and must stay repeatable — a non-partial
+        # index would collapse every such host into one.
+        blanks_ok = True
+        try:
+            with transaction.atomic():
+                Host.objects.create(hostname="uat-schema-blank-1", machine_id="")
+                Host.objects.create(hostname="uat-schema-blank-2", machine_id="")
+        except IntegrityError:
+            blanks_ok = False
+        chk(blanks_ok, "hosts with NO machine-id remain distinct — the constraint is partial")
+        raise RuntimeError("rollback")
+except RuntimeError:
+    pass
+chk(not Host.objects.filter(machine_id=MID).exists(), "the probe left no rows behind")
+
+print("SECTION Collection idempotency — one collection cannot be counted twice")
+inv = Investigation.objects.order_by("id").first()
+host = Host.objects.order_by("id").first()
+if inv and host:
+    try:
+        with transaction.atomic():
+            r1 = CollectionRun.objects.create(investigation=inv, host=host, stamp="uat-schema-stamp")
+            refused = False
+            try:
+                with transaction.atomic():
+                    CollectionRun.objects.create(investigation=inv, host=host, stamp="uat-schema-stamp")
+            except IntegrityError:
+                refused = True
+            chk(refused, "re-posting the same (investigation, host, stamp) is REFUSED by the database")
+
+            # A different stamp is a different collection and must still be allowed, or
+            # re-collection of a host would be blocked — the opposite of what is wanted.
+            allowed = True
+            try:
+                with transaction.atomic():
+                    CollectionRun.objects.create(investigation=inv, host=host, stamp="uat-schema-stamp-2")
+            except IntegrityError:
+                allowed = False
+            chk(allowed, "a SECOND collection of the same host under a new stamp is still accepted")
+            raise RuntimeError("rollback")
+    except RuntimeError:
+        pass
+    chk(not CollectionRun.objects.filter(stamp__startswith="uat-schema-stamp").exists(),
+        "the probe left no runs behind")
+else:
+    chk(False, "no investigation/host available to test run idempotency")
+
+print("SECTION Host identity is historised, not overwritten")
+# Driven through resolve_host — the real ingest path — because the defect was that this
+# function overwrote the name while its comment claimed an audit trail held it.
+from cases.ingest import resolve_host
+from cases.models import HostIdentityChange
+
+RENAME_MID = "uat-schema-rename-0001"
+try:
+    with transaction.atomic():
+        h1 = resolve_host({"hostname": "uat-old-name", "machine_id": RENAME_MID,
+                           "hostname_source": "host-mount"},
+                          {"stamp": "uat-stamp-1"})
+        h2 = resolve_host({"hostname": "uat-new-name", "machine_id": RENAME_MID,
+                           "hostname_source": "host-mount"},
+                          {"stamp": "uat-stamp-2"})
+        chk(h1.id == h2.id, "a renamed machine still resolves to ONE host (machine-id is the key)")
+        chk(h2.hostname == "uat-new-name", "the host follows the current name")
+
+        changes = list(HostIdentityChange.objects.filter(host=h2, field="hostname"))
+        chk(len(changes) == 1, f"the rename produced exactly one history row ({len(changes)})")
+        if changes:
+            c = changes[0]
+            chk(c.from_value == "uat-old-name" and c.to_value == "uat-new-name",
+                f"the history names what it WAS and what it became ({c.from_value} -> {c.to_value})")
+            chk(c.source_stamp == "uat-stamp-2",
+                f"the history names the collection that observed it ({c.source_stamp})")
+
+        # A collection that reports the SAME name must not manufacture history.
+        resolve_host({"hostname": "uat-new-name", "machine_id": RENAME_MID,
+                      "hostname_source": "host-mount"}, {"stamp": "uat-stamp-3"})
+        chk(HostIdentityChange.objects.filter(host=h2, field="hostname").count() == 1,
+            "an unchanged name writes NO history row")
+
+        # An untrusted name — the collecting container's own id — must not be taken as a
+        # rename, or every containerised collection would rewrite the machine's identity.
+        resolve_host({"hostname": "3f9a1c2b4d5e", "machine_id": RENAME_MID,
+                      "hostname_source": "container-fallback"}, {"stamp": "uat-stamp-4"})
+        h_after = Host.objects.get(id=h2.id)
+        chk(h_after.hostname == "uat-new-name",
+            "a container-fallback name is REFUSED as a rename — identity is not rewritten by it")
+        raise RuntimeError("rollback")
+except RuntimeError:
+    pass
+chk(not Host.objects.filter(machine_id=RENAME_MID).exists(), "the rename probe left no rows behind")
+
+print("SECTION Indexes serve the queries they were built for")
+from django.db import connections
+cur = connections["default"].cursor()
+# The technique filter is jsonb containment; a B-tree cannot serve it. Proving the planner
+# CHOOSES the GIN index is the difference between having an index and using one.
+cur.execute("SET LOCAL enable_seqscan = off")
+cur.execute("EXPLAIN SELECT id FROM cases_finding WHERE mitre @> '[\"T1021.001\"]'::jsonb")
+plan = " ".join(r[0] for r in cur.fetchall())
+chk("finding_mitre_gin" in plan, f"the ATT&CK containment query uses the GIN index")
+cur.execute("EXPLAIN SELECT id FROM cases_finding WHERE source = 'memory'")
+plan2 = " ".join(r[0] for r in cur.fetchall())
+chk("finding_source_idx" in plan2 or "Index" in plan2, "the source filter uses an index")
+
+# raw is deliberately unindexed; assert that decision holds rather than drifting.
+cur.execute("""SELECT count(*) FROM pg_indexes
+               WHERE tablename='cases_finding' AND indexdef ILIKE '%raw%'""")
+chk(cur.fetchone()[0] == 0,
+    "Finding.raw carries no index — it is read in Python, never queried by key in SQL")
+
+print("SECTION S5 — a re-analysis supersedes the prior adjudication, never deletes it")
+from django.db.models import Count as _C
+from cases.models import CollectionRun, MemoryAnalysisRun, MemoryCapture, ProcessVerdict
+# Against a run that HAS been adjudicated: asserting supersede on an empty table would pass
+# while the behavior was absent.
+pv_run = CollectionRun.objects.filter(process_verdicts__isnull=False).distinct().first()
+chk(pv_run is not None, "a run carrying engine adjudication exists to assert against")
+if pv_run:
+    live_n = ProcessVerdict.objects.filter(run=pv_run, is_current=True).count()
+    chk(live_n > 0, f"the run's current adjudication is present ({live_n} PIDs)")
+    # One PID must never appear twice in the LIVE set — that is what superseding buys over
+    # accumulating, and it is the failure an analyst would see as a duplicated process.
+    dup = ProcessVerdict.objects.filter(run=pv_run, is_current=True) \
+        .values("pid").annotate(n=_C("id")).filter(n__gt=1).count()
+    chk(dup == 0, f"no PID carries two live verdicts ({dup} duplicated)")
+    # The supersede path exercised rather than described: mark the live set superseded the
+    # way investigation.persist does, confirm the rows SURVIVE and leave the live set, then
+    # roll back so the deployment is untouched.
+    try:
+        with transaction.atomic():
+            total_before = ProcessVerdict.objects.filter(run=pv_run).count()
+            ProcessVerdict.objects.filter(run=pv_run, is_current=True).update(
+                is_current=False, superseded_at=timezone.now())
+            total_after = ProcessVerdict.objects.filter(run=pv_run).count()
+            still_live = ProcessVerdict.objects.filter(run=pv_run, is_current=True).count()
+            chk(total_after == total_before,
+                f"superseding DESTROYS NOTHING — {total_before} rows before, {total_after} after")
+            chk(still_live == 0,
+                f"the superseded pass leaves the live set ({live_n} -> {still_live})")
+            chk(ProcessVerdict.objects.filter(run=pv_run, is_current=False,
+                                              superseded_at__isnull=False).count() >= live_n,
+                "every superseded row records WHEN it was superseded")
+            raise RuntimeError("rollback")
+    except RuntimeError:
+        pass
+    chk(ProcessVerdict.objects.filter(run=pv_run, is_current=True).count() == live_n,
+        "the supersede probe left the deployment's adjudication as it found it")
+
+print("SECTION S6 — purging an image keeps the conclusions drawn from it")
+cap = MemoryCapture.objects.filter(analyses__isnull=False).distinct().first()
+chk(cap is not None, "an analyzed capture exists to assert against")
+if cap:
+    # The guarantee: an image can be purged for retention and the ANALYSIS survives, or the
+    # platform erases its own conclusions the moment storage policy runs.
+    n_analyses = MemoryAnalysisRun.objects.filter(capture=cap).count()
+    n_findings = Finding.objects.filter(run=cap.run, source="memory").count()
+    n_verdicts = ProcessVerdict.objects.filter(analysis__capture=cap).count()
+    was = cap.retention_status
+    try:
+        with transaction.atomic():
+            MemoryCapture.objects.filter(id=cap.id).update(retention_status="purged")
+            chk(MemoryAnalysisRun.objects.filter(capture=cap).count() == n_analyses,
+                f"purging the image leaves every analysis run intact ({n_analyses})")
+            chk(Finding.objects.filter(run=cap.run, source="memory").count() == n_findings,
+                f"purging the image leaves its findings intact ({n_findings})")
+            chk(ProcessVerdict.objects.filter(analysis__capture=cap).count() == n_verdicts,
+                f"purging the image leaves the per-PID adjudication intact ({n_verdicts})")
+            raise RuntimeError("rollback")
+    except RuntimeError:
+        pass
+    chk(MemoryCapture.objects.get(id=cap.id).retention_status == was,
+        "the purge probe left the capture's retention state as it found it")
+
+print("SECTION S3/S4 — an automated pass may not quietly discard a human determination")
+# Driven through `_apply_to_findings` itself, with real ProcessVerdict rows: the defect was
+# that this function overwrote whatever it found, so asserting on the field alone would pass
+# while the behavior stayed absent.
+from cases.investigation import NON_DETECTION_TYPES, _apply_to_findings, _finding_pid
+from cases.models import FindingReclassification
+
+adj_run = (CollectionRun.objects
+           .filter(process_verdicts__isnull=False, findings__isnull=False)
+           .distinct().first())
+analysis = (MemoryAnalysisRun.objects.filter(capture__run=adj_run).order_by("-id").first()
+            if adj_run else None)
+chk(adj_run is not None and analysis is not None,
+    "an adjudicated run with a memory analysis pass exists to assert against")
+
+target, pvs = None, []
+if adj_run and analysis:
+    pvs = list(ProcessVerdict.objects.filter(run=adj_run, is_current=True))
+    by_pid = {v.pid: v for v in pvs if v.pid is not None}
+    for _f in Finding.objects.filter(run=adj_run):
+        if any(_f.finding_type.startswith(p) for p in NON_DETECTION_TYPES):
+            continue
+        _pid = _finding_pid(_f)
+        _pid = 0 if _pid is None else _pid
+        if _pid in by_pid:
+            target = (_f, by_pid[_pid])
+            break
+    chk(target is not None, "a finding the engine holds a verdict for exists to assert against")
+
+if target:
+    f, v = target
+    was = (f.verdict, f.adjudicated_by, f.adjudication_conflict or {})
+    # A verdict the engine actively disagrees with, so "unchanged" cannot be mistaken for
+    # agreement.
+    held = "True Positive" if v.verdict != "True Positive" else "False Positive"
+
+    try:
+        with transaction.atomic():
+            Finding.objects.filter(id=f.id).update(
+                verdict=held, confidence="High",
+                adjudicated_by="analyst", adjudication_conflict={})
+            before_n = FindingReclassification.objects.filter(finding_id=f.id).count()
+            _apply_to_findings(adj_run, analysis, pvs)
+            after = Finding.objects.get(id=f.id)
+            chk(after.verdict == held,
+                f"an engine pass does NOT overwrite the analyst's verdict "
+                f"(kept {held}; the engine said {v.verdict})")
+            conflict = after.adjudication_conflict or {}
+            chk(conflict.get("engine_verdict") == v.verdict,
+                f"the disagreement is RECORDED for review instead of applied "
+                f"(engine: {conflict.get('engine_verdict')})")
+            chk(conflict.get("analysis_run") == analysis.id,
+                f"the conflict names the pass that disagreed (run {conflict.get('analysis_run')})")
+            chk(FindingReclassification.objects.filter(finding_id=f.id).count() == before_n,
+                "a refused overwrite writes no history — nothing changed to record")
+            raise RuntimeError("rollback")
+    except RuntimeError:
+        pass
+
+    # Precedence is not a blanket freeze: a verdict the engine owns is still its own to
+    # revise, or re-adjudication would stop working the moment this landed.
+    try:
+        with transaction.atomic():
+            stale = "True Positive" if v.verdict != "True Positive" else "False Positive"
+            Finding.objects.filter(id=f.id).update(
+                verdict=stale, confidence="Low",
+                adjudicated_by="engine", adjudication_conflict={})
+            _apply_to_findings(adj_run, analysis, pvs)
+            after = Finding.objects.get(id=f.id)
+            chk(after.verdict == v.verdict,
+                f"a verdict the ENGINE owns is still revised by a later pass "
+                f"({stale} -> {after.verdict})")
+            row = (FindingReclassification.objects
+                   .filter(finding_id=f.id, actor="investigation-engine")
+                   .order_by("-id").first())
+            chk(row is not None and row.from_verdict == stale and row.to_verdict == v.verdict,
+                f"the change of mind is history naming BOTH values "
+                f"({row.from_verdict} -> {row.to_verdict})" if row
+                else "the engine's change of verdict produced NO history row")
+            chk(row is not None and str(analysis.id) in row.note,
+                "the history row names the analysis pass that decided it")
+            chk(after.adjudication_run_id == analysis.id,
+                "the finding records which pass produced its verdict")
+            raise RuntimeError("rollback")
+    except RuntimeError:
+        pass
+
+    # Agreement must clear a standing conflict, or the analyst is sent back to a question
+    # the engine has stopped asking.
+    try:
+        with transaction.atomic():
+            Finding.objects.filter(id=f.id).update(
+                verdict=v.verdict, confidence=v.confidence, adjudicated_by="analyst",
+                adjudication_conflict={"engine_verdict": "stale", "analysis_run": 0})
+            _apply_to_findings(adj_run, analysis, pvs)
+            after = Finding.objects.get(id=f.id)
+            chk(after.adjudication_conflict == {},
+                "where the engine AGREES, the standing conflict is cleared")
+            chk(after.verdict == v.verdict and after.adjudicated_by == "analyst",
+                "agreement does not quietly transfer ownership away from the analyst")
+            raise RuntimeError("rollback")
+    except RuntimeError:
+        pass
+
+    now = Finding.objects.get(id=f.id)
+    chk((now.verdict, now.adjudicated_by, now.adjudication_conflict or {}) == was,
+        f"the precedence probes left the finding exactly as they found it ({was[0]})")
+
+# The migration's backfill is what protects verdicts that already existed. Untested, S4
+# would hold only for findings adjudicated after it deployed — the ones least at risk.
+cur.execute("""SELECT count(*) FROM cases_finding
+                WHERE adjudicated_by = '' AND jsonb_exists(raw, 'adjudication')""")
+_n = cur.fetchone()[0]
+chk(_n == 0, f"no engine-adjudicated finding was left unowned by the backfill ({_n} stranded)")
+
+cur.execute("""SELECT count(*) FROM cases_finding f
+                WHERE f.adjudicated_by <> 'analyst' AND EXISTS (
+                      SELECT 1 FROM cases_findingreclassification r
+                       WHERE r.finding_id = f.id AND r.actor <> 'investigation-engine')""")
+_n = cur.fetchone()[0]
+chk(_n == 0, f"every finding an analyst reclassified is marked as theirs ({_n} unprotected)")
+
+# --- T1: the lifecycle is enforced by the model, not by whoever calls it ------------------
+from cases.models import Investigation, InvalidTransition
+from django.db import transaction as _txn
+
+_sp = _txn.savepoint()
+_inv = Investigation.objects.create(name="uat-lifecycle", incident_id="UAT-T1")
+chk(_inv.status == "open", "a new investigation starts open")
+
+_refused = False
+try:
+    _inv.transition_to("archived")          # skipping the whole engagement
+except InvalidTransition:
+    _refused = True
+chk(_refused, "the model REFUSES open -> archived; archival cannot skip conclusion")
+
+_inv.transition_to("concluded")
+chk(_inv.concluded_at is not None, "concluding stamps concluded_at for the stalled-case query")
+
+_inv.transition_to("open")
+chk(_inv.concluded_at is None,
+    "reopening CLEARS concluded_at — a reopened case is not a concluded one")
+
+_inv.transition_to("concluded")
+_inv.transition_to("archived")
+_terminal = False
+try:
+    _inv.transition_to("open")
+except InvalidTransition:
+    _terminal = True
+chk(_terminal, "archived is terminal — its evidence has been moved out")
+_txn.savepoint_rollback(_sp)
+
+# --- T2: the rollup outlives the rows it summarizes ---------------------------------------
+from cases.ingest import roll_up_sightings
+from cases.models import CollectionRun, Host, IndicatorSighting, IOC
+
+_sp = _txn.savepoint()
+_inv = Investigation.objects.create(name="uat-sightings", incident_id="UAT-T2")
+_host = Host.objects.create(hostname="uat-t2-host", machine_id="uat-t2-machine")
+_run = CollectionRun.objects.create(investigation=_inv, host=_host, stamp="uat-t2-1")
+_iocs = [IOC(run=_run, ioc_type="mutex", value="Global\\uat-t2-mutex")]
+IOC.objects.bulk_create(_iocs)
+roll_up_sightings(_run, _iocs)
+
+_s = IndicatorSighting.objects.filter(ioc_type="mutex", value="Global\\uat-t2-mutex")
+chk(_s.count() == 1, "ingest writes an indicator sighting beside the IOC rows")
+_row = _s.first()
+chk(_row.investigation_id == _inv.id and _row.hostname == "uat-t2-host",
+    "the sighting carries its investigation and hostname denormalized")
+
+_run2 = CollectionRun.objects.create(investigation=_inv, host=_host, stamp="uat-t2-2")
+_iocs2 = [IOC(run=_run2, ioc_type="mutex", value="Global\\uat-t2-mutex")]
+IOC.objects.bulk_create(_iocs2)
+roll_up_sightings(_run2, _iocs2)
+chk(_s.count() == 1 and _s.first().sighting_count == 2,
+    "a re-collection increments the sighting rather than duplicating it")
+
+# The point of the whole model: deleting the evidence must NOT delete the summary.
+_run.delete(); _run2.delete()
+chk(IOC.objects.filter(value="Global\\uat-t2-mutex").count() == 0,
+    "deleting the runs took their IOC rows with them")
+chk(_s.count() == 1,
+    "and the indicator sighting SURVIVED — the cross-case pivot still answers")
+_txn.savepoint_rollback(_sp)
+
+print("DONECHK")
+PYEOF
+)
+
+say "Probe completed"
+if [[ "${COMPLETED}" == "1" ]]; then
+    ok "every assertion in the probe ran — no section was cut short"
+else
+    bad "the probe DID NOT finish — assertions after the failure never ran"
+    printf '%s\n' "${TRACE}" >&2
+fi
+
+say "Result"
+if [[ "${FAILED}" == "0" ]]; then
+    ok "the schema enforces its own invariants — the application no longer has to be careful"
+else
+    bad "schema integrity does NOT hold — see failures above"
+fi
+report_finish
+exit "${FAILED}"

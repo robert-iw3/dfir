@@ -15,8 +15,11 @@ COPY toolkit /opt/toolkit
 RUN chmod +x /opt/toolkit/Invoke-IRCollection-Linux.sh 2>/dev/null || true \
     && chmod +x /opt/toolkit/tools/avml 2>/dev/null || true
 
-# Collector entrypoint + custody + synthetic-sample helper.
-COPY collect.sh ship.sh make_sample.py symbol_requisites.py preflight.py custody.py /opt/collector/
+# Collector entrypoint + custody + synthetic-sample helper. scenario_inject.py is inert
+# unless IR_SCENARIO_FILE names a corpus scenario, and shipping it keeps the corpus on the
+# same image a real collection runs from — a separate test image would prove nothing.
+COPY collect.sh ship.sh make_sample.py symbol_requisites.py preflight.py custody.py \
+     scenario_inject.py /opt/collector/
 RUN chmod +x /opt/collector/collect.sh
 
 # Build-time smoke test: python + bash present, custody module imports, avml staged.

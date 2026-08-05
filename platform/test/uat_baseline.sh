@@ -96,7 +96,7 @@ if [[ -f "${HOST_ID}" ]]; then
     [[ "${SRC}" == "host-mount" || "${SRC}" == "override" ]] \
         && ok "hostname resolved from ${SRC} (${NAME})" \
         || bad "hostname_source is '${SRC}' — evidence would file under a container id"
-    [[ -n "${MID}" ]] && ok "machine-id recorded (${MID:0:12}…)" \
+    [[ -n "${MID}" ]] && ok "machine-id recorded (${#MID} chars, value withheld)" \
         || bad "no machine-id — collection cannot be tied to a memory image ingested separately"
 else
     bad "_host_identity.json missing — nothing identifies the source machine"
@@ -330,6 +330,22 @@ n_theme="$(${RUNTIME} logs ir-enclave_keycloak_1 2>&1 | grep -c "Failed to find 
 [[ "${n_theme:-0}" -eq 0 ]] \
     && ok "no theme-load failures in the identity provider" \
     || bad "${n_theme} theme-load failure(s) — the theme is not reaching the container"
+
+say "Manifests describe what is actually here"
+# The code graph is GENERATED from source and is a manifest: services, the script graph, the
+# API surface, and which UAT proves which service. It went stale unnoticed once — two services
+# and two UATs existed in the tree and not in the graph — because nothing failed when it
+# drifted. Asserted here so a run catches it rather than someone noticing.
+#
+# --check only COMPARES; it never rewrites, so this stays read-only like the rest of the suite.
+GRAPH_GEN="$(cd "${PLATFORM}/.." && pwd)/gen_code_graph.py"
+if [[ ! -f "${GRAPH_GEN}" ]]; then
+    bad "gen_code_graph.py not found — the code graph cannot be verified"
+elif python3 "${GRAPH_GEN}" --check >/dev/null 2>&1; then
+    ok "the code graph matches the tree — services, scripts, routes and their UATs are current"
+else
+    bad "the code graph is STALE — run gen_code_graph.py (a service, script, route or UAT changed)"
+fi
 
 # ------------------------------------------------------------------------ verdict
 say "Baseline"

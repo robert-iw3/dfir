@@ -40,7 +40,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from . import audit
-from .models import Finding, ProcessVerdict
+from .models import Finding, FindingReclassification, ProcessVerdict
 
 TOOLKIT = os.environ.get("IR_TOOLKIT_DIR", "/opt/toolkit")
 ENGINE_MODULE = "playbooks.linux.investigation.live_runner"
@@ -54,7 +54,7 @@ NON_DETECTION_TYPES = (
     "Unnamed Carved Module",
 )
 
-# Engine label -> the platform's verdict vocabulary. This is a rename, not a judgement:
+# Engine label -> the platform's verdict vocabulary. This is a rename, not a judgment:
 # each engine label has exactly one counterpart on the ladder the collector already uses.
 VERDICT_LABEL = {
     "True Positive": "True Positive",
@@ -201,14 +201,17 @@ def run_engine(report_dir, timeout=1800):
 def persist(analysis_run, report):
     """Record the engine's per-PID verdicts and apply them to the findings.
 
-    Re-analysis replaces the previous adjudication for the run rather than accumulating:
+    Re-analysis SUPERSEDES the previous adjudication for the run rather than deleting it:
     the engine's output is derived from evidence, so a newer pass over the same evidence
-    supersedes the older one.
+    wins — but the pass it replaced is what a reviewer compares against when the engine
+    changes its mind about a PID, and deleting it left the platform unable to say what it
+    had concluded an hour earlier.
     """
     run = analysis_run.capture.run
     summary = report.get("summary", {}) or {}
 
-    ProcessVerdict.objects.filter(run=run).delete()
+    ProcessVerdict.objects.filter(run=run, is_current=True).update(
+        is_current=False, superseded_at=timezone.now(), superseded_by=analysis_run)
 
     rows = []
     for label, entries in (("True Positive", report.get("true_positives") or []),
@@ -248,10 +251,16 @@ def persist(analysis_run, report):
     }
     analysis_run.save(update_fields=["investigation"])
 
-    applied = _apply_to_findings(run, rows)
+    # A synthetic capture carries no real process tree, so the engine's unattributed bucket
+    # is a property of the placeholder image, not of the host. Keep the on-host adjudication
+    # rather than overwriting it — consistent with evaluate_compromise excluding synthetic
+    # memory findings.
+    synthetic = bool(getattr(analysis_run.capture, "is_synthetic", False))
+    applied = _apply_to_findings(run, analysis_run, rows, exclude_unattributed=synthetic)
 
     # A host is compromised when the engine says a process on it is a true positive. That
-    # decision now comes from the engine rather than from counting rule matches.
+    # decision now comes from the engine rather than from counting rule matches — except on
+    # synthetic memory, where the on-host adjudication stands and the count includes it.
     run.tp_count = run.findings.filter(verdict="True Positive").count()
     run.evaluate_compromise()
     run.save(update_fields=["tp_count", "compromised"])
@@ -268,7 +277,7 @@ def persist(analysis_run, report):
     return {"pids": len(rows), "findings_updated": applied, **summary}
 
 
-def _apply_to_findings(run, verdicts):
+def _apply_to_findings(run, analysis_run, verdicts, exclude_unattributed=False):
     """Carry each process verdict onto the findings attributed to that process.
 
     The engine judges processes; the triage queue lists findings. A finding belonging to a
@@ -276,35 +285,76 @@ def _apply_to_findings(run, verdicts):
     of correlating onto a PID. Findings the engine could not attribute to any process keep
     whatever verdict they already had, which for a memory lead is Indeterminate: an
     unattributed rule match is precisely the case the workflow says not to act on alone.
+
+    `exclude_unattributed` drops the PID-0 bucket, used when the memory image is synthetic:
+    the engine then has no real process tree, so its unattributed verdict is an artifact of
+    the placeholder image rather than a judgment of the host — and applying it would
+    overturn the on-host adjudication with a reading it has no basis for. The same reason
+    `evaluate_compromise` excludes synthetic memory findings.
+
+    Two rules govern what this is allowed to do to a verdict:
+
+      * **An analyst determination stands.** Where the engine disagrees with one, it records
+        the disagreement on the finding and leaves the verdict alone. An automated pass that
+        quietly overturns a human judgment invalidates whatever report cited it, and the
+        analyst has no way to notice.
+      * **A change of verdict is history, not an edit.** Every one writes a
+        `FindingReclassification` naming both values and the pass that decided — the same
+        record an analyst's own reclassification leaves, because "who changed this and why"
+        should not have two answers depending on who did it.
     """
     # `is not None`, not truthiness: PID 0 is the engine's bucket for findings it could not
     # attribute to any process — an unattributed full-image YARA sweep lands there, and on a
     # real capture that is most of them. Treating 0 as absent silently excluded the largest
     # group of findings the engine had actually judged.
     by_pid = {v.pid: v for v in verdicts if v.pid is not None}
+    if exclude_unattributed:
+        by_pid.pop(0, None)
     if not by_pid:
         return 0
 
-    updated = []
+    updated, conflicted, history = [], [], []
+
+    def record(f, from_verdict, from_confidence, note):
+        history.append(FindingReclassification(
+            finding_id=f.id, investigation_id=run.investigation_id,
+            actor="investigation-engine", role="engine",
+            from_verdict=from_verdict, to_verdict=f.verdict,
+            from_confidence=from_confidence, to_confidence=f.confidence,
+            note=note,
+        ))
+
     for f in Finding.objects.filter(run=run).only(
-        "id", "verdict", "confidence", "raw", "target", "finding_type"
+        "id", "verdict", "confidence", "raw", "target", "finding_type",
+        "adjudicated_by", "adjudication_run", "adjudication_conflict",
     ):
         # Diagnostics describe the analysis, not the host. "YARA Scan Coverage Incomplete"
         # reports that a scan gave up early; inheriting a process's true-positive verdict
         # would assert that an incomplete scan is evidence of compromise.
         #
         # A previously inherited verdict is cleared rather than left alone, so re-running
-        # adjudication repairs rows stamped before this rule existed.
+        # adjudication repairs rows stamped before this rule existed. An analyst who ruled
+        # on a diagnostic is exempt: clearing that is the silent overwrite S4 forbids, and
+        # the repair has no more standing than any other engine conclusion.
         if any(f.finding_type.startswith(p) for p in NON_DETECTION_TYPES):
+            if f.adjudicated_by == "analyst":
+                continue
             raw = f.raw if isinstance(f.raw, dict) else {}
             if raw.pop("adjudication", None) or f.verdict != "Indeterminate":
+                was, was_conf = f.verdict, f.confidence
                 f.verdict, f.confidence, f.raw = "Indeterminate", "Low", raw
+                f.adjudicated_by = "engine"
+                f.adjudication_run_id = analysis_run.id
                 updated.append(f)
+                if was != f.verdict:
+                    record(f, was, was_conf,
+                           f"analysis run {analysis_run.id}: {f.finding_type} describes the "
+                           "analysis rather than the host, so it carries no verdict about it")
             continue
         pid = _finding_pid(f)
         # A finding with no PID in it is unattributed, and unattributed is where the engine
         # files it too — under PID 0, its `[host/kernel]` pseudo-process. Matching that
-        # convention is what lets the engine's judgement of the unattributed set reach the
+        # convention is what lets the engine's judgment of the unattributed set reach the
         # findings in it, rather than leaving them looking unexamined.
         if pid is None:
             pid = 0
@@ -320,6 +370,24 @@ def _apply_to_findings(run, verdicts):
             "positive_weight": v.positive_weight,
             "rationale": v.rationale[:1000],
         }
+        # S4 — the analyst holds this verdict. Record what the engine would have said and
+        # move on; the disagreement is a review item, not a result. Carrying the analysis
+        # run id rather than a timestamp keeps this stable across passes: the same pass
+        # reaching the same disagreement writes nothing, a new one updates it.
+        if f.adjudicated_by == "analyst":
+            conflict = {} if f.verdict == v.verdict else {
+                "engine_verdict": v.verdict,
+                "engine_confidence": v.confidence,
+                "engine_label": v.engine_label,
+                "analysis_run": analysis_run.id,
+                "rationale": v.rationale[:1000],
+            }
+            prior = f.adjudication_conflict if isinstance(f.adjudication_conflict, dict) else {}
+            if prior != conflict:
+                f.adjudication_conflict = conflict
+                conflicted.append(f)
+            continue
+
         raw = f.raw if isinstance(f.raw, dict) else {}
         # The stamp is written whenever the engine reached a conclusion about this
         # process, including when that conclusion matches the verdict the finding already
@@ -327,17 +395,40 @@ def _apply_to_findings(run, verdicts):
         # the engine's most common conclusion is Undetermined, which maps to the same
         # Indeterminate a promoted lead starts at, so every one of those findings ended up
         # indistinguishable from one the engine had never looked at.
+        #
+        # `adjudication_run` is deliberately NOT part of this comparison. It names the pass
+        # that produced the verdict; a later pass that agreed produced nothing, and folding
+        # it in would rewrite every finding on every re-adjudication.
         if f.verdict == v.verdict and f.confidence == v.confidence \
-           and raw.get("adjudication") == stamp:
+           and raw.get("adjudication") == stamp and f.adjudicated_by == "engine":
             continue
 
+        was, was_conf = f.verdict, f.confidence
         f.verdict = v.verdict
         f.confidence = v.confidence
+        f.adjudicated_by = "engine"
+        f.adjudication_run_id = analysis_run.id
         raw["adjudication"] = stamp
         f.raw = raw
         updated.append(f)
 
-    Finding.objects.bulk_update(updated, ["verdict", "confidence", "raw"], batch_size=500)
+        # Only a changed verdict is a reclassification. A confidence adjustment or a
+        # re-stamp is the engine restating itself, and filing those as history would bury
+        # the changes of mind that matter among rows that assert nothing.
+        if was != v.verdict:
+            record(f, was, was_conf,
+                   f"analysis run {analysis_run.id}: {v.engine_label} on pid {v.pid} "
+                   f"({v.process}), weight {v.positive_weight} — {v.rationale[:800]}")
+
+    Finding.objects.bulk_update(
+        updated,
+        ["verdict", "confidence", "raw", "adjudicated_by", "adjudication_run"],
+        batch_size=500,
+    )
+    # Separate write: an analyst-held finding must not have verdict, confidence or raw
+    # written back at all, even with the values they already carry.
+    Finding.objects.bulk_update(conflicted, ["adjudication_conflict"], batch_size=500)
+    FindingReclassification.objects.bulk_create(history, batch_size=500)
     return len(updated)
 
 

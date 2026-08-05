@@ -4,53 +4,62 @@ Derives the multi-host intrusion picture from collected evidence.
 Reads `cases` (per-host, custody-sealed) and writes `correlation` (derived, multi-host).
 The direction is one-way by design: nothing here mutates collected evidence.
 
-Clustering is evidence-driven, never proximity-driven. Two hosts join the same campaign
-only when they share a concrete artifact — an indicator, an implicated account, or an
-observed movement between them. Hosts that merely appear in the same investigation, or
-were collected at a similar time, are not linked; an engagement that uncovers two
-unrelated compromises yields two campaigns.
+Clustering is evidence-driven, never proximity-driven, and **weighted**: two hosts join the
+same campaign when their strongest shared evidence clears a threshold, not merely because
+they share something. Sharing alone merges whatever it touches, so one account present
+across the fleet fused unrelated compromises into a single campaign.
+
+Each candidate pair is scored from the behavior graph (`behavior.py`) on link type, how rare
+the shared thing is in this deployment, the verdict of the evidence behind it, and whether
+the timing coheres (`linkage.py`). Every link keeps its per-factor breakdown — including the
+ones the engine declined — so a merge can be defended and a refusal explained.
+
+Hosts that merely appear in the same investigation, or were collected at a similar time, are
+not linked; an engagement that uncovers two unrelated compromises yields two campaigns.
 """
 from collections import defaultdict
 
 from django.db import transaction
 from django.utils import timezone
 
-from cases.models import CollectionRun, Finding, IOC, Principal
+from cases.models import CollectionRun, Finding, Host, IOC, Principal
 
-from .models import Campaign, CampaignEdge, CampaignHost, CorrelationRun, SharedIndicator
+from .behavior import build_graph
+from .confidence import band_for
+from .fingerprint import build_fingerprint, compare, profile_as_fingerprint
+from .linkage import (
+    CONFIRMING_VERDICTS, build_links, cluster as weighted_cluster, cohesion,
+)
+from .models import (ActorProfile, AttributionCandidate, BehaviorEvent, BehaviorNode,
+                     Campaign, CampaignEdge, CampaignFingerprint, CampaignHost,
+                     CampaignSimilarity, CorrelationRun, SharedIndicator)
 
-ALGORITHM_VERSION = "1.0"
+# Below these a match is coincidence with a number on it. Ranking such a thing beside a real
+# one is how a heuristic turns into a false accusation, so they are floors on what is STORED,
+# not just on what is displayed.
+ATTRIBUTION_FLOOR = 0.25
+SIMILARITY_FLOOR = 0.30
+
+# 2.0 = weighted linkage replaces union-find. Two hosts join a campaign when their strongest
+# shared evidence clears a threshold, not because they share anything at all — so an account
+# present on the whole fleet no longer fuses unrelated compromises. Runs correlated under
+# 1.x remain readable; supersession, never mutation.
+ALGORITHM_VERSION = "2.0"
 
 # Techniques that place a host at the start of an intrusion rather than downstream of it.
 INITIAL_ACCESS = ("T1566", "T1190", "T1133", "T1078", "T1200", "T1091", "T1195")
 
 
-class _Union:
-    """Union-find over hostnames; clusters hosts that share evidence."""
+def sets_compromise_baseline(finding_type, verdict):
+    """Whether a finding can establish WHEN a host first showed compromise.
 
-    def __init__(self):
-        self.parent = {}
-
-    def add(self, x):
-        self.parent.setdefault(x, x)
-
-    def find(self, x):
-        self.add(x)
-        while self.parent[x] != x:
-            self.parent[x] = self.parent[self.parent[x]]
-            x = self.parent[x]
-        return x
-
-    def union(self, a, b):
-        ra, rb = self.find(a), self.find(b)
-        if ra != rb:
-            self.parent[rb] = ra
-
-    def clusters(self):
-        out = defaultdict(set)
-        for node in self.parent:
-            out[self.find(node)].add(node)
-        return list(out.values())
+    Two kinds cannot. A movement record, because a movement out of a host is recorded on that
+    host — an edge would set the very baseline it is later compared against, making the
+    contradiction test unanswerable. And an Indeterminate one, because ordinary fleet life
+    (an inventory scan, an agent install, a patch push) sits on every host at every hour and
+    asserts nothing about compromise.
+    """
+    return finding_type != "Lateral Movement" and verdict in CONFIRMING_VERDICTS
 
 
 def _movement_edges(runs_by_host):
@@ -101,23 +110,29 @@ def correlate_investigation(investigation_id, investigation_name=""):
             continue
         carriers[("account", pr.name)].add(host)
 
-    # --- Cluster ---------------------------------------------------------------------
-    uf = _Union()
-    for host in compromised:
-        uf.add(host)
-    for hosts in carriers.values():
-        hosts = sorted(hosts)
-        for other in hosts[1:]:
-            uf.union(hosts[0], other)
-
     edges = _movement_edges(runs_by_host)
-    for e in edges:
-        if e["src"] in compromised and e["dst"] in compromised:
-            uf.union(e["src"], e["dst"])
 
     # --- Per-host technique + timing profile -----------------------------------------
     techniques = defaultdict(set)
     host_first = {}
+    # When each host first showed COMPROMISE, over the findings able to establish that —
+    # see `sets_compromise_baseline`. Only the contradiction test reads it.
+    host_first_standalone = {}
+    # The intrusion's own clock: the earliest CONFIRMING finding of any kind, movement
+    # included. `host_first` above is the earliest finding at all, which on every endpoint is
+    # ordinary fleet life hours before anything happened — the corpus's inventory scan puts
+    # all 25 hosts at 01:00, so "first activity" read as the scanner's schedule, every host
+    # looked simultaneous, and temporal coherence had nothing left to discriminate with.
+    host_first_confirmed = {}
+    # When each TECHNIQUE was first observed on each HOST, from the confirming finding that
+    # carried it. The campaign's tradecraft order is read from this rather than from host
+    # first_activity, which is the earliest thing on a host at all and therefore fleet-wide
+    # benign noise.
+    #
+    # Kept per host so it can be narrowed to one campaign's hosts. An investigation-wide map
+    # lets a second, unrelated campaign in the same case set the times — the same mistake as
+    # fingerprinting the run's whole node set instead of the campaign's.
+    technique_first_host = defaultdict(dict)
     for f in Finding.objects.filter(run_id__in=run_ids).select_related("run__host"):
         host = f.run.host.hostname
         if host not in compromised:
@@ -125,13 +140,37 @@ def correlate_investigation(investigation_id, investigation_name=""):
         for t in (f.mitre or []):
             techniques[host].add(t)
         observed = (f.raw or {}).get("observed_at")
-        if observed and (host not in host_first or observed < host_first[host]):
+        if not observed:
+            continue
+        if host not in host_first or observed < host_first[host]:
             host_first[host] = observed
+        if sets_compromise_baseline(f.finding_type, f.verdict) and (
+                host not in host_first_standalone
+                or observed < host_first_standalone[host]):
+            host_first_standalone[host] = observed
+        # Technique timing takes CONFIRMING findings of every kind, movement included. The
+        # movement exclusion above is narrow and specific: a movement cannot testify about
+        # when its own source host was compromised. It testifies perfectly well about when
+        # the technique it used was seen, and lateral movement techniques are only ever
+        # carried by movement findings — excluding them here left T1021 with no time at all,
+        # falling back to the host's benign first_activity and sorting before the phish.
+        if f.verdict in CONFIRMING_VERDICTS:
+            if (host not in host_first_confirmed
+                    or observed < host_first_confirmed[host]):
+                host_first_confirmed[host] = observed
+            seen = technique_first_host[host]
+            for t in (f.mitre or []):
+                base = (t or "").split(".")[0].strip().upper()
+                if base and (base not in seen or observed < seen[base]):
+                    seen[base] = observed
 
     def as_dt(value):
         if not value:
             return None
-        parsed = timezone.datetime.fromisoformat(value)
+        try:
+            parsed = timezone.datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        except (TypeError, ValueError):
+            return None
         return parsed if timezone.is_aware(parsed) else timezone.make_aware(parsed)
 
     with transaction.atomic(using="correlation"):
@@ -151,11 +190,48 @@ def correlate_investigation(investigation_id, investigation_name=""):
             is_current=True,
         )
 
+        # L0: the behavior graph, over the WHOLE population — clean hosts included, because
+        # rarity is measured against everyone, and fleet-wide software must be visible as
+        # fleet-wide.
+        graph_nodes, graph_events = build_graph(crun, run_ids)
+
+        # L1: score every candidate pair from that graph, then take connected components over
+        # the links that clear the threshold. Timestamps are resolved to datetimes first —
+        # temporal coherence compares instants, and comparing ISO strings would order
+        # "2026-07-20T09:00" against a datetime by text.
+        # Standalone confirming evidence first, then any confirming, then the raw earliest.
+        #
+        # The order matters. A movement is confirming evidence, but taking it first lets a
+        # record the engine has DISCOUNTED set the clock: the contradicted 07:30 edge became
+        # the campaign's start, so the headline said the intrusion began before its own
+        # patient zero was phished. Standalone evidence is the host testifying about itself.
+        intrusion_first = {
+            h: host_first_standalone.get(h) or host_first_confirmed.get(h, v)
+            for h, v in host_first.items()
+        }
+        first_dt = {h: as_dt(v) for h, v in intrusion_first.items()}
+        standalone_dt = {h: as_dt(v) for h, v in host_first_standalone.items()}
+        for e in edges:
+            e["observed_dt"] = as_dt(e.get("observed_at"))
+        # Rarity is measured against every host the deployment knows, not against this case.
+        # Scoping it to the investigation made a two-host intrusion's shared C2 "common" and
+        # refused the link, while the identical evidence inside a larger case linked fine.
+        links = build_links(crun, compromised, first_dt, edges,
+                            population=Host.objects.count(),
+                            first_standalone=standalone_dt)
+
+        crun.input_summary.update({
+            "behavior_nodes": graph_nodes, "behavior_events": graph_events,
+            "candidate_links": len(links),
+            "linked": sum(1 for l in links.values() if l.linked),
+        })
+        crun.save(update_fields=["input_summary"])
+
         # Indicators shared by more than one host carry the cross-host signal; a
         # single-host indicator says nothing about linkage and is already in `cases`.
         shared = {k: v for k, v in carriers.items() if len(v) > 1}
 
-        for cluster in uf.clusters():
+        for cluster in weighted_cluster(compromised, links):
             cluster = {h for h in cluster if h in compromised}
             if not cluster:
                 continue
@@ -174,27 +250,49 @@ def correlate_investigation(investigation_id, investigation_name=""):
                 and any(t.startswith(INITIAL_ACCESS) for t in techniques.get(h, ()))
             ]
             if entered:
-                pz = min(entered, key=lambda h: host_first.get(h, "9999"))
+                pz = min(entered, key=lambda h: intrusion_first.get(h, "9999"))
             else:
                 unreached = [h for h in cluster if h not in destinations]
-                pz = min(unreached or cluster, key=lambda h: host_first.get(h, "9999"))
+                pz = min(unreached or cluster, key=lambda h: intrusion_first.get(h, "9999"))
 
             vector = next(
                 (t for t in sorted(techniques.get(pz, ())) if t.startswith(INITIAL_ACCESS)),
                 "",
             )
 
-            times = [as_dt(host_first[h]) for h in cluster if host_first.get(h)]
+            times = [as_dt(intrusion_first[h]) for h in cluster if intrusion_first.get(h)]
             cluster_shared = {k: v for k, v in shared.items() if v & cluster}
+            c_min, c_mean = cohesion(cluster, links)
+
+            # Named from the campaign's OWN evidence, not from the case it sits in. Every
+            # campaign took the investigation's name, so two intrusions in one engagement
+            # were indistinguishable on the page and in the similarity table — which is the
+            # one place a name has to mean something, since it is what an analyst reads when
+            # deciding whether two cases share an actor.
+            # Family AND patient zero, because one actor runs more than one intrusion: the
+            # corpus's two campaigns are both EmberFox with rotated infrastructure, and on
+            # the family alone the similarity table read "seen before: EmberFox" against a
+            # campaign of the same name. A name that cannot tell two rows apart is not one.
+            family = sorted({v for (kind, v), hosts in carriers.items()
+                             if kind == "malware_family" and hosts & cluster})
+            if family and pz:
+                label = f"{family[0]} · {pz}"
+            elif family:
+                label = family[0]
+            elif pz:
+                label = f"{pz} intrusion"
+            else:
+                label = investigation_name or f"Investigation {investigation_id}"
 
             campaign = Campaign.objects.create(
                 run=crun, investigation_id=investigation_id,
-                label=investigation_name or f"Investigation {investigation_id}",
+                label=label,
                 patient_zero=pz if len(cluster) > 1 or vector else "",
                 initial_vector=vector,
                 first_activity=min(times) if times else None,
                 last_activity=max(times) if times else None,
                 host_count=len(cluster),
+                cohesion_min=c_min, cohesion_mean=c_mean,
                 confidence="High" if cluster_edges and vector else "Medium",
                 linking_evidence=[
                     {"kind": k[0], "value": k[1], "hosts": sorted(v & cluster)}
@@ -210,15 +308,17 @@ def correlate_investigation(investigation_id, investigation_name=""):
                 else:
                     role = "affected"
                 entry = next((e for e in cluster_edges if e["dst"] == host), None)
+                band, band_factors = band_for(host, links)
                 CampaignHost.objects.create(
                     campaign=campaign,
                     host_id=compromised[host].host_id,
                     hostname=host, role=role,
-                    first_activity=as_dt(host_first.get(host)),
+                    first_activity=as_dt(intrusion_first.get(host)),
                     entry_technique=(entry or {}).get("technique", ""),
                     entry_account=(entry or {}).get("account", ""),
                     tp_count=compromised[host].tp_count,
                     techniques=sorted(techniques.get(host, ())),
+                    confidence_band=band, confidence_factors=band_factors,
                 )
 
             for e in cluster_edges:
@@ -236,7 +336,93 @@ def correlate_investigation(investigation_id, investigation_name=""):
                     first_seen=first_seen.get((kind, value)),
                 )
 
+    # L4/L5 run after every campaign in this investigation exists, because a fingerprint is
+    # per campaign and cross-campaign similarity compares finished ones.
+    build_fingerprints(crun, investigation_id, technique_first_host={
+        host: {t: as_dt(v) for t, v in seen.items()}
+        for host, seen in technique_first_host.items()})
+    attribute(crun, investigation_id)
+
     return crun
+
+
+def build_fingerprints(crun, investigation_id, technique_first_host=None):
+    """L4 — one fingerprint per campaign in this run, from its own slice of the L0 graph."""
+    made = []
+    technique_first_host = technique_first_host or {}
+    for campaign in Campaign.objects.filter(run=crun):
+        hosts = list(campaign.hosts.all())
+        hostnames = {h.hostname for h in hosts}
+        # Technique times narrowed to THIS campaign's hosts, so a second intrusion in the
+        # same investigation cannot set this one's tradecraft order.
+        technique_first = {}
+        for name in hostnames:
+            for t, when in (technique_first_host.get(name) or {}).items():
+                if when and (t not in technique_first or when < technique_first[t]):
+                    technique_first[t] = when
+        edges = list(campaign.edges.all())
+        # Only the nodes this campaign's hosts actually touched. Fingerprinting the whole
+        # run would describe the investigation, and two campaigns in one investigation are
+        # two intrusions precisely because the engine declined to link them.
+        events = [e for e in BehaviorEvent.objects.filter(run=crun) if e.hostname in hostnames]
+        nodes = {e.node_id for e in events}
+        node_rows = [n for n in BehaviorNode.objects.filter(run=crun) if n.id in nodes]
+        # Nodes this campaign adjudicated as compromise, for the fingerprint's verdict floor.
+        confirmed_nodes = {e.node_id for e in events if e.verdict in CONFIRMING_VERDICTS}
+
+        vector = build_fingerprint(hosts, edges, node_rows,
+                                   technique_first=technique_first,
+                                   confirmed_nodes=confirmed_nodes)
+        made.append(CampaignFingerprint.objects.create(
+            run=crun, campaign=campaign, investigation_id=investigation_id, **vector))
+    return made
+
+
+def attribute(crun, investigation_id):
+    """L5 — advisory actor candidates, and campaigns elsewhere that share this tradecraft.
+
+    Both comparisons read stored fingerprints and neither writes an actor onto a case. A
+    platform that assigns attribution has converted a similarity score into a claim nobody
+    made; this ranks and explains, and a person decides.
+    """
+    profiles = [(p, profile_as_fingerprint(p)) for p in ActorProfile.objects.all()]
+    # Every other investigation's CURRENT fingerprints. Superseded runs are excluded: a
+    # similarity to a conclusion that has already been recomputed is not a finding.
+    current_runs = CorrelationRun.objects.filter(is_current=True).exclude(
+        investigation_id=investigation_id).values_list("id", flat=True)
+    others = list(CampaignFingerprint.objects.filter(run_id__in=list(current_runs))
+                  .select_related("campaign"))
+
+    candidates, similarities = [], []
+    for fp in CampaignFingerprint.objects.filter(run=crun).select_related("campaign"):
+        mine = _vector(fp)
+        for profile, pf in profiles:
+            score, rationale = compare(mine, pf)
+            if score >= ATTRIBUTION_FLOOR:
+                candidates.append(AttributionCandidate(
+                    run=crun, campaign=fp.campaign, actor_key=profile.key,
+                    actor_name=profile.name, score=score, source="heuristic",
+                    rationale={**rationale, "library_provenance": profile.provenance}))
+        for other in others:
+            score, rationale = compare(mine, _vector(other))
+            if score >= SIMILARITY_FLOOR:
+                similarities.append(CampaignSimilarity(
+                    run=crun, campaign=fp.campaign,
+                    other_campaign_id=other.campaign_id,
+                    other_investigation_id=other.investigation_id,
+                    other_label=other.campaign.label, score=score, rationale=rationale))
+
+    AttributionCandidate.objects.bulk_create(candidates, batch_size=200)
+    CampaignSimilarity.objects.bulk_create(similarities, batch_size=200)
+    return candidates, similarities
+
+
+def _vector(fp):
+    return {
+        "techniques": fp.techniques, "technique_ngrams": fp.technique_ngrams,
+        "artifact_conventions": fp.artifact_conventions, "c2_pattern": fp.c2_pattern,
+        "account_chain": fp.account_chain, "basis": fp.basis,
+    }
 
 
 def correlate_all():

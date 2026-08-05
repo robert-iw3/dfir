@@ -243,7 +243,7 @@ elif [[ "${ENGINE}" == "native-scan" ]]; then
     if [[ "${DEEP_EXPECTED}" -eq 1 ]]; then
         bad "fell back to the structural scan despite a symbol table being present"
     else
-        ok "reduced-depth scan, correctly labelled (engine=native-scan)"
+        ok "reduced-depth scan, correctly labeled (engine=native-scan)"
         ok "run is marked reduced_depth so it cannot be mistaken for a full analysis"
     fi
     REQ=$(parse symbol_requests)

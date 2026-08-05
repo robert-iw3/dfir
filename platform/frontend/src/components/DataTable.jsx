@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { Fragment, useMemo, useState } from "react";
 
 /**
  * Searchable, filterable, sortable table.
@@ -52,10 +52,14 @@ export default function DataTable({
   query: extQuery, sort: extSort, onQueryChange,
   // selection (bulk triage)
   selectable = false, selected = [], onToggleRow, onToggleAll,
+  // Per-row detail. Returns the node to show under a row, or null when it has none —
+  // rows without detail get no expander, so the control never promises an empty panel.
+  renderDetail,
 }) {
   const [query, setQuery] = useState("");
   const [filters, setFilters] = useState({});
   const [sort, setSort] = useState("");
+  const [expanded, setExpanded] = useState(null);
 
   const activeQuery = serverMode ? (extQuery ?? "") : query;
   const activeSort = serverMode ? (extSort ?? "") : sort;
@@ -151,6 +155,7 @@ export default function DataTable({
                          onChange={(e) => onToggleAll?.(e.target.checked)} />
                 </th>
               )}
+              {renderDetail && <th scope="col" style={{ width: 28 }}><span className="sr-only">Detail</span></th>}
               {columns.map((c) => (
                 <SortHeader key={c.key} col={c} sort={activeSort} onSort={onSort} />
               ))}
@@ -158,14 +163,36 @@ export default function DataTable({
           </thead>
           <tbody>
             {filtered.length === 0 ? (
-              <tr><td colSpan={columns.length + (selectable ? 1 : 0)} className="empty">{emptyText}</td></tr>
-            ) : filtered.map((row, i) => (
-              <tr key={row.id ?? i} className={selected.includes(row.id) ? "row-on" : ""}>
+              <tr><td colSpan={columns.length + (selectable ? 1 : 0) + (renderDetail ? 1 : 0)} className="empty">{emptyText}</td></tr>
+            ) : filtered.map((row, i) => {
+              // A row may carry more than its columns show — a finding's recovered
+              // indicators, for one. Expanded detail is opt-in per row so the table stays
+              // scannable and the evidence is one click away rather than in another view.
+              const detail = renderDetail?.(row);
+              const open = detail && expanded === (row.id ?? i);
+              return (
+              <Fragment key={row.id ?? i}>
+              <tr className={selected.includes(row.id) ? "row-on" : ""}>
                 {selectable && (
                   <td>
                     <input type="checkbox" aria-label={`Select row ${row.id}`}
                            checked={selected.includes(row.id)}
                            onChange={() => onToggleRow?.(row.id)} />
+                  </td>
+                )}
+                {/* The cell is present whenever the table has a detail column, even when
+                    THIS row has none — omitting it would shift every later cell into the
+                    wrong column for that row only. */}
+                {renderDetail && (
+                  <td>
+                    {detail && (
+                      <button type="button" className="th-sort"
+                              aria-expanded={open}
+                              aria-label={open ? "Hide detail" : "Show detail"}
+                              onClick={() => setExpanded(open ? null : (row.id ?? i))}>
+                        {open ? "▾" : "▸"}
+                      </button>
+                    )}
                   </td>
                 )}
                 {columns.map((c) => {
@@ -177,7 +204,14 @@ export default function DataTable({
                   );
                 })}
               </tr>
-            ))}
+              {open && (
+                <tr className="rationale-row">
+                  <td colSpan={columns.length + (selectable ? 1 : 0) + 1}>{detail}</td>
+                </tr>
+              )}
+              </Fragment>
+              );
+            })}
           </tbody>
         </table>
       </div>

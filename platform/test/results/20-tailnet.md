@@ -2,7 +2,7 @@
 
 *What passing proves:* An analyst workstation reaches the platform only over an authenticated WireGuard tunnel to the bastion, with no route to any internal host.
 
-- Run: `uat_tailnet.sh` — 2026-07-31 22:31:44Z
+- Run: `uat_tailnet.sh` — 2026-08-05 16:02:06Z
 
 **Control plane**
 
@@ -40,7 +40,7 @@
 
 | Result | Assertion — with evidence |
 |---|---|
-| ✅ PASS | analyst reached the brokered port over the tunnel (100.64.0.1:8443) |
+| ✅ PASS | analyst opened TCP to 100.64.0.1:8443 over the tunnel |
 
 **Broker — the forwarder binds the tunnel, not a network beside it**
 

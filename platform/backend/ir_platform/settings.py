@@ -36,10 +36,17 @@ INSTALLED_APPS = [
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
+    # Required for GinIndex on Finding.mitre, which serves the ATT&CK containment filter.
+    # Django refuses to start without it rather than ignoring the index silently, which is
+    # the preferable failure: an index the planner never gets is worse than a hard error.
+    "django.contrib.postgres",
     "rest_framework",
     "rest_framework.authtoken",
     "corsheaders",
     "cases",
+    # Operational telemetry — API request logs and browser errors. Its own database; see
+    # opslog/models.py for why it is not in the evidence store.
+    "opslog",
     "correlation",
 ]
 
@@ -52,6 +59,10 @@ MIDDLEWARE = [
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
+    # Last, so it wraps the view: the duration recorded is what the caller waited for, and an
+    # exception escaping the view is captured with its traceback rather than only reaching
+    # container stdout, where nobody reading the UI can get to it.
+    "opslog.middleware.RequestLogMiddleware",
 ]
 
 ROOT_URLCONF = "ir_platform.urls"
@@ -91,6 +102,18 @@ DATABASES = {
         "PASSWORD": _env("CORRELATION_POSTGRES_PASSWORD", _env("POSTGRES_PASSWORD", "ir_platform")),
         "HOST": _env("CORRELATION_POSTGRES_HOST", _env("POSTGRES_HOST", "127.0.0.1")),
         "PORT": _env("CORRELATION_POSTGRES_PORT", _env("POSTGRES_PORT", "5432")),
+        "CONN_MAX_AGE": int(_env("POSTGRES_CONN_MAX_AGE", "60")),
+    },
+    # Operational log store. Highest-volume writer in the platform and explicitly NOT
+    # evidence, so it is kept out of the database that carries chain of custody: it must not
+    # compete with collection for I/O, ride evidence backups, or inflate a case restore.
+    "opslog": {
+        "ENGINE": "django.db.backends.postgresql",
+        "NAME": _env("OPSLOG_POSTGRES_DB", "ir_opslog"),
+        "USER": _env("OPSLOG_POSTGRES_USER", _env("POSTGRES_USER", "ir_platform")),
+        "PASSWORD": _env("OPSLOG_POSTGRES_PASSWORD", _env("POSTGRES_PASSWORD", "ir_platform")),
+        "HOST": _env("OPSLOG_POSTGRES_HOST", _env("POSTGRES_HOST", "127.0.0.1")),
+        "PORT": _env("OPSLOG_POSTGRES_PORT", _env("POSTGRES_PORT", "5432")),
         "CONN_MAX_AGE": int(_env("POSTGRES_CONN_MAX_AGE", "60")),
     },
 }

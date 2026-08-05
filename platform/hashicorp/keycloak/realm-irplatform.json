@@ -67,81 +67,16 @@
       ]
     }
   ],
-  "users": [
-    {
-      "username": "default-admin",
-      "enabled": true,
-      "emailVerified": true,
-      "email": "default-admin@ir.local",
-      "firstName": "Default",
-      "lastName": "Admin",
-      "credentials": [
-        {
-          "type": "password",
-          "value": "default-admin-pw",
-          "temporary": false
-        }
-      ],
-      "groups": [
-        "/admin"
-      ]
-    },
-    {
-      "username": "default-analyst",
-      "enabled": true,
-      "emailVerified": true,
-      "email": "default-analyst@ir.local",
-      "firstName": "Default",
-      "lastName": "Analyst",
-      "credentials": [
-        {
-          "type": "password",
-          "value": "default-analyst-pw",
-          "temporary": false
-        }
-      ],
-      "groups": [
-        "/analyst"
-      ]
-    },
-    {
-      "username": "default-auditor",
-      "enabled": true,
-      "emailVerified": true,
-      "email": "default-auditor@ir.local",
-      "firstName": "Default",
-      "lastName": "Auditor",
-      "credentials": [
-        {
-          "type": "password",
-          "value": "default-auditor-pw",
-          "temporary": false
-        }
-      ],
-      "groups": [
-        "/auditor"
-      ]
-    },
-    {
-      "username": "default-reverse-engineer",
-      "enabled": true,
-      "emailVerified": true,
-      "email": "default-reverse-engineer@ir.local",
-      "firstName": "Default",
-      "lastName": "Reverse Engineer",
-      "credentials": [
-        {
-          "type": "password",
-          "value": "default-reverse-engineer-pw",
-          "temporary": false
-        }
-      ],
-      "groups": [
-        "/reverse_engineer"
-      ]
-    }
-  ],
   "loginTheme": "dfir",
   "displayName": "DFIR_TOOLKIT",
-  "displayNameHtml": "<span>DFIR_TOOLKIT</span>"
+  "displayNameHtml": "<span>DFIR_TOOLKIT</span>",
+  "ssoSessionMaxLifespan": 28800,
+  "ssoSessionIdleTimeout": 900,
+  "accessTokenLifespan": 300,
+  "bruteForceProtected": true,
+  "permanentLockout": false,
+  "failureFactor": 5,
+  "waitIncrementSeconds": 60,
+  "maxFailureWaitSeconds": 900,
+  "passwordPolicy": "length(15) and upperCase(1) and lowerCase(1) and digits(1) and specialChars(1) and notUsername(undefined) and notEmail(undefined) and passwordHistory(5) and forceExpiredPasswordChange(60) and hashAlgorithm(pbkdf2-sha512) and hashIterations(210000)"
 }

@@ -71,6 +71,19 @@ services:
     volumes:
       - /tmp/.X11-unix:/tmp/.X11-unix
       - ../../traefik/certs:/certs:ro,z   # platform CA, trusted at start-up
+      # Where an export actually LANDS. Without this the kiosk writes into its own
+      # filesystem, which the profile wipe and the next deploy destroy — the analyst
+      # exports a bundle and it is gone, so the supported handoff never completes.
+      #
+      # This is the ONE writable host path the kiosk has, and it is the deliberate
+      # boundary crossing: a dedicated directory, never $HOME itself. The browser still
+      # has no route off the tailnet and every export is written to the audit ledger
+      # server-side, so what crosses here is recorded before it moves.
+      #
+      # A PLAIN variable with no inline default: podman-compose does not expand a nested
+      # ${A:-${B}/x} and passes the literal string through as a path. deploy.sh resolves
+      # this per platform (Linux/macOS/Windows) and creates it before this tier starts.
+      - ${IR_EXPORT_DIR}:/home/analyst/downloads:z
     cap_drop: [ALL]
     security_opt:
       - no-new-privileges:true

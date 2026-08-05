@@ -20,7 +20,10 @@ def _cfg():
 
 def client():
     c = _cfg()
-    return boto3.client(
+    # Its own Session, not the boto3.client() shortcut: the shortcut lazily builds a shared
+    # default session, and two threads building it at once deadlock inside botocore. The log
+    # shipper's health thread and its ship loop are exactly that pair.
+    return boto3.session.Session().client(
         "s3",
         endpoint_url=c["ENDPOINT_URL"] or None,  # None -> real AWS S3 regional endpoint
         aws_access_key_id=c["ACCESS_KEY"],

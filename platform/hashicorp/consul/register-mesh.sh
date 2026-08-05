@@ -129,17 +129,32 @@ JSON
 # network can reach is the sidecar — which refuses anything the intentions deny.
 service ir-postgres ir-enclave_db_1     5432
 service ir-minio    ir-enclave_minio_1  9000
+service ir-redis    ir-enclave_redis_1  6379
 
 # Consumers reach each destination on 127.0.0.1 at the same port number the service normally
 # uses, so only the host changes in application configuration.
 DATA_UPSTREAMS="$(ups ir-postgres 5432),$(ups ir-minio 9000)"
-service ir-backend ir-enclave_backend_1 8000 "${DATA_UPSTREAMS}"
-service ir-worker  ir-enclave_worker_1  9999 "${DATA_UPSTREAMS}"
+# The queue's two ends additionally get the ir-redis upstream; the puller has no task traffic.
+APP_UPSTREAMS="${DATA_UPSTREAMS},$(ups ir-redis 6379)"
+service ir-backend ir-enclave_backend_1 8000 "${APP_UPSTREAMS}"
+service ir-worker  ir-enclave_worker_1  9999 "${APP_UPSTREAMS}"
 service ir-puller  ir-enclave_puller_1  9998 "${DATA_UPSTREAMS}"
 
 # Vault's database secrets engine dials Postgres to mint and revoke the dynamic users. Without a
 # sidecar, credential issuing would be the one path bypassing the mesh.
 service ir-vault ir-enclave_vault_1 8200 "$(ups ir-postgres 5432)"
+
+# The identity store rides the mesh to Postgres like every other consumer. Only its database
+# connection: OIDC traffic still reaches `keycloak` by name, so it keeps its own namespace.
+service ir-keycloak ir-enclave_keycloak_1 8080 "$(ups ir-postgres 5432)"
+
+# The log shipper reaches the object store, where the ir-logs bucket lives, and the database,
+# where its Component Health self-report lands.
+service ir-log-shipper ir-enclave_log-shipper_1 9997 "${DATA_UPSTREAMS}"
+
+# The SSO gate reaches only the queue, where its sessions live. It is deliberately NOT given
+# the data tier: the gate authenticates users and holds no case data.
+service ir-oauth2-proxy ir-enclave_oauth2-proxy_1 4180 "$(ups ir-redis 6379)"
 
 # The frontend reaches only the backend: the most exposed service in the enclave, and the one
 # whose compromise the intentions are most concerned with.

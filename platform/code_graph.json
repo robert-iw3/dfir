@@ -87,6 +87,51 @@
    "to": "enclave/minio"
   },
   {
+   "from": "enclave/redis-sidecar",
+   "kind": "shares_netns",
+   "to": "enclave/redis"
+  },
+  {
+   "from": "enclave/redis-sidecar",
+   "kind": "depends_on",
+   "to": "enclave/redis"
+  },
+  {
+   "from": "enclave/keycloak",
+   "kind": "shares_netns",
+   "to": "enclave/keycloak-sidecar"
+  },
+  {
+   "from": "enclave/keycloak",
+   "kind": "depends_on",
+   "to": "enclave/keycloak-sidecar"
+  },
+  {
+   "from": "enclave/kc-vault-agent",
+   "kind": "depends_on",
+   "to": "enclave/vault"
+  },
+  {
+   "from": "enclave/oauth2-proxy",
+   "kind": "shares_netns",
+   "to": "enclave/oauth2-proxy-sidecar"
+  },
+  {
+   "from": "enclave/oauth2-proxy",
+   "kind": "depends_on",
+   "to": "enclave/oauth2-proxy-sidecar"
+  },
+  {
+   "from": "enclave/log-shipper",
+   "kind": "shares_netns",
+   "to": "enclave/log-shipper-sidecar"
+  },
+  {
+   "from": "enclave/log-shipper",
+   "kind": "depends_on",
+   "to": "enclave/log-shipper-sidecar"
+  },
+  {
    "from": "enclave/traefik",
    "kind": "depends_on",
    "to": "enclave/frontend"
@@ -254,12 +299,27 @@
   {
    "from": "deploy/deploy.sh",
    "kind": "runs",
+   "to": "hashicorp/keycloak/provision-demo-users.sh"
+  },
+  {
+   "from": "deploy/deploy.sh",
+   "kind": "runs",
+   "to": "hashicorp/keycloak/realm-converge.sh"
+  },
+  {
+   "from": "deploy/deploy.sh",
+   "kind": "runs",
    "to": "hashicorp/vault/vault-unseal.sh"
   },
   {
    "from": "deploy/deploy.sh",
    "kind": "runs",
    "to": "test/lib/evidence.sh"
+  },
+  {
+   "from": "deploy/deploy.sh",
+   "kind": "runs",
+   "to": "test/uat_baseline.sh"
   },
   {
    "from": "deploy/deploy.sh",
@@ -334,7 +394,17 @@
   {
    "from": "deploy/deploy.sh",
    "kind": "drives",
+   "to": "enclave/kc-vault-agent"
+  },
+  {
+   "from": "deploy/deploy.sh",
+   "kind": "drives",
    "to": "enclave/keycloak"
+  },
+  {
+   "from": "deploy/deploy.sh",
+   "kind": "drives",
+   "to": "enclave/log-shipper"
   },
   {
    "from": "deploy/deploy.sh",
@@ -345,6 +415,11 @@
    "from": "deploy/deploy.sh",
    "kind": "drives",
    "to": "enclave/oauth2-proxy"
+  },
+  {
+   "from": "deploy/deploy.sh",
+   "kind": "drives",
+   "to": "enclave/oauth2-proxy-sidecar"
   },
   {
    "from": "deploy/deploy.sh",
@@ -429,12 +504,32 @@
   {
    "from": "hashicorp/consul/register-mesh.sh",
    "kind": "drives",
+   "to": "enclave/keycloak"
+  },
+  {
+   "from": "hashicorp/consul/register-mesh.sh",
+   "kind": "drives",
+   "to": "enclave/log-shipper"
+  },
+  {
+   "from": "hashicorp/consul/register-mesh.sh",
+   "kind": "drives",
    "to": "enclave/minio"
   },
   {
    "from": "hashicorp/consul/register-mesh.sh",
    "kind": "drives",
+   "to": "enclave/oauth2-proxy"
+  },
+  {
+   "from": "hashicorp/consul/register-mesh.sh",
+   "kind": "drives",
    "to": "enclave/puller"
+  },
+  {
+   "from": "hashicorp/consul/register-mesh.sh",
+   "kind": "drives",
+   "to": "enclave/redis"
   },
   {
    "from": "hashicorp/consul/register-mesh.sh",
@@ -445,6 +540,16 @@
    "from": "hashicorp/consul/register-mesh.sh",
    "kind": "drives",
    "to": "enclave/worker"
+  },
+  {
+   "from": "hashicorp/keycloak/provision-demo-users.sh",
+   "kind": "drives",
+   "to": "enclave/keycloak"
+  },
+  {
+   "from": "hashicorp/keycloak/realm-converge.sh",
+   "kind": "drives",
+   "to": "enclave/keycloak"
   },
   {
    "from": "hashicorp/vault/rotate-app-creds.sh",
@@ -540,6 +645,81 @@
    "from": "troubleshooting/remediation-agent.sh",
    "kind": "drives",
    "to": "enclave/worker-sidecar"
+  },
+  {
+   "from": "test/run_uats.sh",
+   "kind": "drives",
+   "to": "agent/remediation-agent"
+  },
+  {
+   "from": "test/run_uats.sh",
+   "kind": "drives",
+   "to": "dmz/broker"
+  },
+  {
+   "from": "test/run_uats.sh",
+   "kind": "drives",
+   "to": "dmz/coredns"
+  },
+  {
+   "from": "test/run_uats.sh",
+   "kind": "drives",
+   "to": "dmz/headscale"
+  },
+  {
+   "from": "test/run_uats.sh",
+   "kind": "drives",
+   "to": "dmz/receiver"
+  },
+  {
+   "from": "test/run_uats.sh",
+   "kind": "drives",
+   "to": "enclave/backend"
+  },
+  {
+   "from": "test/run_uats.sh",
+   "kind": "drives",
+   "to": "enclave/boundary"
+  },
+  {
+   "from": "test/run_uats.sh",
+   "kind": "drives",
+   "to": "enclave/consul"
+  },
+  {
+   "from": "test/run_uats.sh",
+   "kind": "drives",
+   "to": "enclave/coredns"
+  },
+  {
+   "from": "test/run_uats.sh",
+   "kind": "drives",
+   "to": "enclave/keycloak"
+  },
+  {
+   "from": "test/run_uats.sh",
+   "kind": "drives",
+   "to": "enclave/traefik"
+  },
+  {
+   "from": "test/run_uats.sh",
+   "kind": "drives",
+   "to": "enclave/vault"
+  },
+  {
+   "from": "test/run_uats.sh",
+   "kind": "drives",
+   "to": "enclave/worker"
+  },
+  {
+   "from": "test/run_uats.sh",
+   "kind": "drives",
+   "to": "workstation/browser"
+  },
+  {
+   "from": "test/run_uats.sh",
+   "kind": "drives",
+   "to": "workstation/tailnet"
   },
   {
    "from": "test/seed_regions.sh",
@@ -650,6 +830,41 @@
    "from": "test/uat_consul.sh",
    "kind": "drives",
    "to": "enclave/vault-agent"
+  },
+  {
+   "from": "test/uat_consul.sh",
+   "kind": "drives",
+   "to": "enclave/worker"
+  },
+  {
+   "from": "test/uat_corpus.sh",
+   "kind": "runs",
+   "to": "collector/build.sh"
+  },
+  {
+   "from": "test/uat_corpus.sh",
+   "kind": "runs",
+   "to": "test/lib/report.sh"
+  },
+  {
+   "from": "test/uat_corpus.sh",
+   "kind": "drives",
+   "to": "dmz/receiver"
+  },
+  {
+   "from": "test/uat_corpus.sh",
+   "kind": "drives",
+   "to": "enclave/backend"
+  },
+  {
+   "from": "test/uat_corpus.sh",
+   "kind": "drives",
+   "to": "enclave/puller"
+  },
+  {
+   "from": "test/uat_corpus.sh",
+   "kind": "drives",
+   "to": "enclave/worker"
   },
   {
    "from": "test/uat_dns.sh",
@@ -824,7 +1039,62 @@
   {
    "from": "test/uat_full_stack.sh",
    "kind": "drives",
+   "to": "workstation/browser"
+  },
+  {
+   "from": "test/uat_full_stack.sh",
+   "kind": "drives",
    "to": "workstation/probe"
+  },
+  {
+   "from": "test/uat_keycloak_db.sh",
+   "kind": "runs",
+   "to": "deploy/deploy.sh"
+  },
+  {
+   "from": "test/uat_keycloak_db.sh",
+   "kind": "runs",
+   "to": "hashicorp/keycloak/realm-converge.sh"
+  },
+  {
+   "from": "test/uat_keycloak_db.sh",
+   "kind": "runs",
+   "to": "test/lib/report.sh"
+  },
+  {
+   "from": "test/uat_keycloak_db.sh",
+   "kind": "drives",
+   "to": "enclave/backend"
+  },
+  {
+   "from": "test/uat_keycloak_db.sh",
+   "kind": "drives",
+   "to": "enclave/consul"
+  },
+  {
+   "from": "test/uat_keycloak_db.sh",
+   "kind": "drives",
+   "to": "enclave/db"
+  },
+  {
+   "from": "test/uat_keycloak_db.sh",
+   "kind": "drives",
+   "to": "enclave/kc-vault-agent"
+  },
+  {
+   "from": "test/uat_keycloak_db.sh",
+   "kind": "drives",
+   "to": "enclave/keycloak"
+  },
+  {
+   "from": "test/uat_keycloak_db.sh",
+   "kind": "drives",
+   "to": "enclave/vault-agent"
+  },
+  {
+   "from": "test/uat_keycloak_db.sh",
+   "kind": "drives",
+   "to": "enclave/worker"
   },
   {
    "from": "test/uat_memory_analysis.sh",
@@ -880,6 +1150,66 @@
    "from": "test/uat_repairs.sh",
    "kind": "drives",
    "to": "enclave/consul"
+  },
+  {
+   "from": "test/uat_schema.sh",
+   "kind": "runs",
+   "to": "test/lib/report.sh"
+  },
+  {
+   "from": "test/uat_schema.sh",
+   "kind": "drives",
+   "to": "enclave/backend"
+  },
+  {
+   "from": "test/uat_srg_webtier.sh",
+   "kind": "runs",
+   "to": "test/lib/report.sh"
+  },
+  {
+   "from": "test/uat_srg_webtier.sh",
+   "kind": "drives",
+   "to": "dmz/bastion"
+  },
+  {
+   "from": "test/uat_srg_webtier.sh",
+   "kind": "drives",
+   "to": "enclave/backend"
+  },
+  {
+   "from": "test/uat_srg_webtier.sh",
+   "kind": "drives",
+   "to": "enclave/consul"
+  },
+  {
+   "from": "test/uat_srg_webtier.sh",
+   "kind": "drives",
+   "to": "enclave/frontend"
+  },
+  {
+   "from": "test/uat_srg_webtier.sh",
+   "kind": "drives",
+   "to": "enclave/keycloak"
+  },
+  {
+   "from": "test/uat_srg_webtier.sh",
+   "kind": "drives",
+   "to": "enclave/log-shipper"
+  },
+  {
+   "from": "test/uat_srg_webtier.sh",
+   "kind": "drives",
+   "to": "enclave/oauth2-proxy"
+  },
+  {
+   "from": "test/uat_srg_webtier.sh",
+   "kind": "drives",
+   "to": "enclave/redis"
+  },
+  {
+   "from": "test/uat_srg_webtier.sh",
+   "kind": "drives",
+   "to": "enclave/traefik"
   },
   {
    "from": "test/uat_tailnet.sh",
@@ -1037,6 +1367,31 @@
    "to": "enclave/vault-agent"
   },
   {
+   "from": "test/uat_consul.sh",
+   "kind": "proves",
+   "to": "enclave/worker"
+  },
+  {
+   "from": "test/uat_corpus.sh",
+   "kind": "proves",
+   "to": "dmz/receiver"
+  },
+  {
+   "from": "test/uat_corpus.sh",
+   "kind": "proves",
+   "to": "enclave/backend"
+  },
+  {
+   "from": "test/uat_corpus.sh",
+   "kind": "proves",
+   "to": "enclave/puller"
+  },
+  {
+   "from": "test/uat_corpus.sh",
+   "kind": "proves",
+   "to": "enclave/worker"
+  },
+  {
    "from": "test/uat_dns.sh",
    "kind": "proves",
    "to": "dmz/bastion"
@@ -1159,7 +1514,47 @@
   {
    "from": "test/uat_full_stack.sh",
    "kind": "proves",
+   "to": "workstation/browser"
+  },
+  {
+   "from": "test/uat_full_stack.sh",
+   "kind": "proves",
    "to": "workstation/probe"
+  },
+  {
+   "from": "test/uat_keycloak_db.sh",
+   "kind": "proves",
+   "to": "enclave/backend"
+  },
+  {
+   "from": "test/uat_keycloak_db.sh",
+   "kind": "proves",
+   "to": "enclave/consul"
+  },
+  {
+   "from": "test/uat_keycloak_db.sh",
+   "kind": "proves",
+   "to": "enclave/db"
+  },
+  {
+   "from": "test/uat_keycloak_db.sh",
+   "kind": "proves",
+   "to": "enclave/kc-vault-agent"
+  },
+  {
+   "from": "test/uat_keycloak_db.sh",
+   "kind": "proves",
+   "to": "enclave/keycloak"
+  },
+  {
+   "from": "test/uat_keycloak_db.sh",
+   "kind": "proves",
+   "to": "enclave/vault-agent"
+  },
+  {
+   "from": "test/uat_keycloak_db.sh",
+   "kind": "proves",
+   "to": "enclave/worker"
   },
   {
    "from": "test/uat_memory_analysis.sh",
@@ -1200,6 +1595,56 @@
    "from": "test/uat_repairs.sh",
    "kind": "proves",
    "to": "enclave/consul"
+  },
+  {
+   "from": "test/uat_schema.sh",
+   "kind": "proves",
+   "to": "enclave/backend"
+  },
+  {
+   "from": "test/uat_srg_webtier.sh",
+   "kind": "proves",
+   "to": "dmz/bastion"
+  },
+  {
+   "from": "test/uat_srg_webtier.sh",
+   "kind": "proves",
+   "to": "enclave/backend"
+  },
+  {
+   "from": "test/uat_srg_webtier.sh",
+   "kind": "proves",
+   "to": "enclave/consul"
+  },
+  {
+   "from": "test/uat_srg_webtier.sh",
+   "kind": "proves",
+   "to": "enclave/frontend"
+  },
+  {
+   "from": "test/uat_srg_webtier.sh",
+   "kind": "proves",
+   "to": "enclave/keycloak"
+  },
+  {
+   "from": "test/uat_srg_webtier.sh",
+   "kind": "proves",
+   "to": "enclave/log-shipper"
+  },
+  {
+   "from": "test/uat_srg_webtier.sh",
+   "kind": "proves",
+   "to": "enclave/oauth2-proxy"
+  },
+  {
+   "from": "test/uat_srg_webtier.sh",
+   "kind": "proves",
+   "to": "enclave/redis"
+  },
+  {
+   "from": "test/uat_srg_webtier.sh",
+   "kind": "proves",
+   "to": "enclave/traefik"
   },
   {
    "from": "test/uat_tailnet.sh",
@@ -1275,6 +1720,7 @@
   "Correlation": {
    "campaignGraph": "/correlation/campaigns/",
    "campaignTimeline": "/correlation/campaigns/",
+   "campaignTradecraft": "/correlation/campaigns/",
    "correlation": "/correlation/investigations/",
    "investigations": "/investigations/",
    "recorrelate": "?",
@@ -1319,7 +1765,8 @@
    "reanalyze": "/captures/",
    "run": "/runs/",
    "runAdjudication": "?",
-   "runAdjudicationChain": "?"
+   "runAdjudicationChain": "?",
+   "runCustody": "/runs/"
   },
   "Users": {
    "createUser": "/users/",
@@ -1343,9 +1790,12 @@
     "enclave/coredns",
     "enclave/db",
     "enclave/db-bootstrap",
+    "enclave/kc-vault-agent",
     "enclave/keycloak",
+    "enclave/log-shipper",
     "enclave/minio",
     "enclave/oauth2-proxy",
+    "enclave/oauth2-proxy-sidecar",
     "enclave/puller",
     "enclave/redis",
     "enclave/traefik",
@@ -1364,8 +1814,11 @@
     "hashicorp/consul/consul-acl-bootstrap.sh",
     "hashicorp/consul/gen-consul-secrets.sh",
     "hashicorp/consul/register-mesh.sh",
+    "hashicorp/keycloak/provision-demo-users.sh",
+    "hashicorp/keycloak/realm-converge.sh",
     "hashicorp/vault/vault-unseal.sh",
-    "test/lib/evidence.sh"
+    "test/lib/evidence.sh",
+    "test/uat_baseline.sh"
    ]
   },
   "hashicorp/access/tailnet_bootstrap.sh": {
@@ -1386,10 +1839,26 @@
     "enclave/consul",
     "enclave/db",
     "enclave/frontend",
+    "enclave/keycloak",
+    "enclave/log-shipper",
     "enclave/minio",
+    "enclave/oauth2-proxy",
     "enclave/puller",
+    "enclave/redis",
     "enclave/vault",
     "enclave/worker"
+   ],
+   "runs": []
+  },
+  "hashicorp/keycloak/provision-demo-users.sh": {
+   "drives": [
+    "enclave/keycloak"
+   ],
+   "runs": []
+  },
+  "hashicorp/keycloak/realm-converge.sh": {
+   "drives": [
+    "enclave/keycloak"
    ],
    "runs": []
   },
@@ -1406,6 +1875,26 @@
   "hashicorp/vault/vault-unseal.sh": {
    "drives": [
     "enclave/vault"
+   ],
+   "runs": []
+  },
+  "test/run_uats.sh": {
+   "drives": [
+    "agent/remediation-agent",
+    "dmz/broker",
+    "dmz/coredns",
+    "dmz/headscale",
+    "dmz/receiver",
+    "enclave/backend",
+    "enclave/boundary",
+    "enclave/consul",
+    "enclave/coredns",
+    "enclave/keycloak",
+    "enclave/traefik",
+    "enclave/vault",
+    "enclave/worker",
+    "workstation/browser",
+    "workstation/tailnet"
    ],
    "runs": []
   },
@@ -1448,9 +1937,22 @@
     "enclave/backend",
     "enclave/consul",
     "enclave/frontend",
-    "enclave/vault-agent"
+    "enclave/vault-agent",
+    "enclave/worker"
    ],
    "runs": [
+    "test/lib/report.sh"
+   ]
+  },
+  "test/uat_corpus.sh": {
+   "drives": [
+    "dmz/receiver",
+    "enclave/backend",
+    "enclave/puller",
+    "enclave/worker"
+   ],
+   "runs": [
+    "collector/build.sh",
     "test/lib/report.sh"
    ]
   },
@@ -1499,11 +2001,28 @@
     "enclave/puller",
     "enclave/traefik",
     "enclave/worker",
+    "workstation/browser",
     "workstation/probe"
    ],
    "runs": [
     "deploy/deploy.sh",
     "test/lib/evidence.sh",
+    "test/lib/report.sh"
+   ]
+  },
+  "test/uat_keycloak_db.sh": {
+   "drives": [
+    "enclave/backend",
+    "enclave/consul",
+    "enclave/db",
+    "enclave/kc-vault-agent",
+    "enclave/keycloak",
+    "enclave/vault-agent",
+    "enclave/worker"
+   ],
+   "runs": [
+    "deploy/deploy.sh",
+    "hashicorp/keycloak/realm-converge.sh",
     "test/lib/report.sh"
    ]
   },
@@ -1535,6 +2054,30 @@
     "agent/remediation-agent",
     "enclave/backend",
     "enclave/consul"
+   ],
+   "runs": [
+    "test/lib/report.sh"
+   ]
+  },
+  "test/uat_schema.sh": {
+   "drives": [
+    "enclave/backend"
+   ],
+   "runs": [
+    "test/lib/report.sh"
+   ]
+  },
+  "test/uat_srg_webtier.sh": {
+   "drives": [
+    "dmz/bastion",
+    "enclave/backend",
+    "enclave/consul",
+    "enclave/frontend",
+    "enclave/keycloak",
+    "enclave/log-shipper",
+    "enclave/oauth2-proxy",
+    "enclave/redis",
+    "enclave/traefik"
    ],
    "runs": [
     "test/lib/report.sh"
@@ -1761,12 +2304,45 @@
     "networks": [],
     "shares_netns_of": "frontend"
    },
-   "keycloak": {
-    "depends_on": [],
-    "image": "localhost/ir-keycloak:latest",
+   "kc-vault-agent": {
+    "depends_on": [
+     "vault"
+    ],
+    "image": "localhost/vault:2.0.3",
     "networks": [
-     "internal",
-     "dmzlink"
+     "internal"
+    ],
+    "shares_netns_of": null
+   },
+   "keycloak": {
+    "depends_on": [
+     "keycloak-sidecar"
+    ],
+    "image": "localhost/ir-keycloak:latest",
+    "networks": [],
+    "shares_netns_of": "keycloak-sidecar"
+   },
+   "keycloak-sidecar": {
+    "depends_on": [],
+    "image": "localhost/ir-consul-sidecar:latest",
+    "networks": [
+     "internal"
+    ],
+    "shares_netns_of": null
+   },
+   "log-shipper": {
+    "depends_on": [
+     "log-shipper-sidecar"
+    ],
+    "image": "localhost/ir-backend:latest",
+    "networks": [],
+    "shares_netns_of": "log-shipper-sidecar"
+   },
+   "log-shipper-sidecar": {
+    "depends_on": [],
+    "image": "localhost/ir-consul-sidecar:latest",
+    "networks": [
+     "internal"
     ],
     "shares_netns_of": null
    },
@@ -1787,8 +2363,16 @@
     "shares_netns_of": "minio"
    },
    "oauth2-proxy": {
-    "depends_on": [],
+    "depends_on": [
+     "oauth2-proxy-sidecar"
+    ],
     "image": "quay.io/oauth2-proxy/oauth2-proxy:v7.15.3",
+    "networks": [],
+    "shares_netns_of": "oauth2-proxy-sidecar"
+   },
+   "oauth2-proxy-sidecar": {
+    "depends_on": [],
+    "image": "localhost/ir-consul-sidecar:latest",
     "networks": [
      "internal"
     ],
@@ -1821,6 +2405,14 @@
      "internal"
     ],
     "shares_netns_of": null
+   },
+   "redis-sidecar": {
+    "depends_on": [
+     "redis"
+    ],
+    "image": "localhost/ir-consul-sidecar:latest",
+    "networks": [],
+    "shares_netns_of": "redis"
    },
    "traefik": {
     "depends_on": [
@@ -1949,7 +2541,14 @@
    "enclave/backend",
    "enclave/consul",
    "enclave/frontend",
-   "enclave/vault-agent"
+   "enclave/vault-agent",
+   "enclave/worker"
+  ],
+  "uat_corpus.sh": [
+   "dmz/receiver",
+   "enclave/backend",
+   "enclave/puller",
+   "enclave/worker"
   ],
   "uat_dns.sh": [
    "dmz/bastion",
@@ -1980,7 +2579,17 @@
    "enclave/puller",
    "enclave/traefik",
    "enclave/worker",
+   "workstation/browser",
    "workstation/probe"
+  ],
+  "uat_keycloak_db.sh": [
+   "enclave/backend",
+   "enclave/consul",
+   "enclave/db",
+   "enclave/kc-vault-agent",
+   "enclave/keycloak",
+   "enclave/vault-agent",
+   "enclave/worker"
   ],
   "uat_memory_analysis.sh": [
    "enclave/backend",
@@ -1996,6 +2605,20 @@
    "agent/remediation-agent",
    "enclave/backend",
    "enclave/consul"
+  ],
+  "uat_schema.sh": [
+   "enclave/backend"
+  ],
+  "uat_srg_webtier.sh": [
+   "dmz/bastion",
+   "enclave/backend",
+   "enclave/consul",
+   "enclave/frontend",
+   "enclave/keycloak",
+   "enclave/log-shipper",
+   "enclave/oauth2-proxy",
+   "enclave/redis",
+   "enclave/traefik"
   ],
   "uat_tailnet.sh": [
    "dmz/bastion",

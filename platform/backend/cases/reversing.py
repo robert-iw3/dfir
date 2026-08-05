@@ -192,6 +192,15 @@ class CarvedRegionViewSet(viewsets.ReadOnlyModelViewSet):
                         "file_characteristics": analysis.file_characteristics,
                         "config_extracted": analysis.config_extracted,
                         "related_hashes": analysis.related_hashes,
+                        # Recovered infrastructure and key material travel with the finding.
+                        # Held only on the RegionAnalysis row, they reached no indicator
+                        # index and no correlation — yet a C2 address a reverse engineer
+                        # pulled out of an implant is among the strongest cross-host links
+                        # the platform can hold, and it was the one thing not leaving the
+                        # table it was written in.
+                        "network_indicators": analysis.network_indicators,
+                        "crypto_material": analysis.crypto_material,
+                        "indicators": analysis.indicators,
                         "carved_by": region.carved_by,
                     },
                 )

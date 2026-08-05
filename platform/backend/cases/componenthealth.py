@@ -51,6 +51,11 @@ MEMORY_PERCENT_CRITICAL = 95.0
 PIDS_PERCENT_WARN = 80.0
 LOAD_PER_CPU_WARN = 2.0
 
+# Log record storage warns at 75% of its declared allocation (SRG-APP-000359-WSR-000065)
+# and goes critical where the disk thresholds do.
+LOG_STORAGE_PERCENT_WARN = 75.0
+LOG_STORAGE_PERCENT_CRITICAL = 95.0
+
 
 def _declarations():
     """What each collected endpoint said its next collection will need.
@@ -144,6 +149,33 @@ def _disk_alerts(component, disk_metrics, expected_capture_bytes):
                            f"host of that size"),
             })
     return alerts
+
+
+def _log_storage_alerts(component, metrics):
+    """Warnings on log record storage, measured against its declared allocation.
+
+    The figure is bucket consumption, not disk fullness: log records live in the object
+    store, whose volume also holds evidence, so a percentage of the disk says nothing
+    about the logs' share of it. The reporter declares an allocation and reports usage;
+    the warning fires at 75% of that allocation."""
+    ls = (metrics.get("extra") or {}).get("log_storage") or {}
+    used, alloc = ls.get("used_bytes") or 0, ls.get("alloc_bytes") or 0
+    if not alloc:
+        return []
+    pct = used * 100.0 / alloc
+    if pct >= LOG_STORAGE_PERCENT_CRITICAL:
+        level = "critical"
+    elif pct >= LOG_STORAGE_PERCENT_WARN:
+        level = "warning"
+    else:
+        return []
+    return [{
+        "level": level, "kind": "log-storage", "component": component,
+        "message": (f"log record storage at {pct:.0f}% of its {_gib(alloc)} allocation "
+                    f"({_gib(used)} used)"),
+        "action": ("raise IR_LOGS_ALLOC_BYTES or expire aged objects from the "
+                   "log bucket before records are refused"),
+    }]
 
 
 def _gib(n):
@@ -245,6 +277,7 @@ def overview():
             "network": metrics.get("network", {}),
             "process": metrics.get("process", {}),
             "logs": metrics.get("logs", {}),
+            "log_storage": (metrics.get("extra") or {}).get("log_storage", {}),
         }
         if stale:
             row_alerts = [{
@@ -255,7 +288,8 @@ def overview():
             }]
         else:
             row_alerts = (_disk_alerts(ch.component, metrics.get("disk"), expected)
-                          + _resource_alerts(ch.component, metrics))
+                          + _resource_alerts(ch.component, metrics)
+                          + _log_storage_alerts(ch.component, metrics))
         row["alerts"] = row_alerts
         alerts.extend(row_alerts)
         rows.append(row)

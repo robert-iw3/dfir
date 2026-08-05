@@ -43,7 +43,7 @@ export function PrefsProvider({ children }) {
 
 export const usePrefs = () => useContext(PrefsCtx) || { ...DEFAULTS, set: () => {} };
 
-/** Absolute timestamp in the analyst's chosen zone, always labelled. */
+/** Absolute timestamp in the analyst's chosen zone, always labeled. */
 export function formatTime(value, zone = "utc") {
   if (!value) return "—";
   const d = new Date(value);

@@ -150,7 +150,8 @@ def component_health():
         {"name": "postgres (correlation)", "tier": "data",
          **_tcp_probe(connections["correlation"].settings_dict["HOST"],
                       connections["correlation"].settings_dict["PORT"] or 5432)},
-        {"name": "redis (queue broker)", "tier": "data", **_tcp_probe("redis", 6379)},
+        # Via this service's own sidecar upstream — Redis binds loopback behind the mesh.
+        {"name": "redis (queue broker)", "tier": "data", **_tcp_probe("127.0.0.1", 6379)},
         {"name": "minio (object store)", "tier": "data",
          **(_http_probe(f"{endpoint}/minio/health/live") if endpoint
             else {"ok": False, "error": "no endpoint configured"})},

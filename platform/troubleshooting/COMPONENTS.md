@@ -115,8 +115,14 @@ service may reach which, default-deny ([`../test/uat_consul.sh`](../test/uat_con
   podman run --rm --network ir-edge \
     -v "$PWD/test/lib/oidc_login.py:/t.py:ro,z" localhost/ir-workstation:latest \
     python3 /t.py https://ir-platform.local:8443 https://ir-platform.local:8443/ \
-    default-admin default-admin-pw
+    default-admin '<password>'
   ```
+  The demo accounts are provisioned by the deploy with the `IR_DEMO_*_PASSWORD` values from
+  `deploy/.env`, printed in the deploy output, and **single-use** — a first login must
+  replace the password before any session exists. Against a freshly provisioned account the
+  probe reports `UPDATE_REQUIRED` (that is the enforcement working, not a failure); pass a
+  fifth argument to complete the change, or reset the account with
+  [`admin/kc-userctl.sh`](../admin/kc-userctl.sh) on the Keycloak host.
   A clean cookie jar — if this passes but the browser fails, the fault is browser state.
   Swap `oidc_login.py` for [`oidc_logout.py`](../test/lib/oidc_logout.py) to assert the reverse:
   that sign-out ends the gate **and** IdP sessions, so re-entry hits the login form.

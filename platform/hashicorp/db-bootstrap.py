@@ -32,14 +32,46 @@ PORT = os.environ.get("POSTGRES_PORT", "5432")
 DATABASES = [
     os.environ.get("POSTGRES_DB", "ir_platform"),
     os.environ.get("CORRELATION_POSTGRES_DB", "ir_correlation"),
+    # Operational request log. Created here for the same reason as the others: the app tier
+    # holds no CREATEDB attribute and must not. A database the application can bring into
+    # existence is one it can be made to create where it should not.
+    os.environ.get("OPSLOG_POSTGRES_DB", "ir_opslog"),
 ]
+
+# The identity provider's store. Deliberately a separate DATABASE rather than a schema in
+# the application's: it holds password hashes, credential material and session state, and the
+# application has no business reading any of it. A schema would leave that separation as a
+# grant list somebody has to keep complete; a database makes it a connection the server
+# refuses.
+KEYCLOAK_DB = os.environ.get("KEYCLOAK_POSTGRES_DB", "keycloak")
 
 # Cluster-wide, run once against the maintenance database.
 CLUSTER_STMTS = [
-    # Fixed owner role — no login; dynamic users act as this role.
+    # Fixed owner roles — no login; dynamic users act as these.
     "DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='ir_app') "
     "THEN CREATE ROLE ir_app NOLOGIN; END IF; END $$;",
+    "DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='kc_app') "
+    "THEN CREATE ROLE kc_app NOLOGIN; END IF; END $$;",
 ]
+
+
+def keycloak_stmts(db: str) -> list[str]:
+    """Grants that make the separation the database's rule rather than a convention.
+
+    The decisive one is REVOKE CONNECT: `ir_app` is refused the connection outright, so no
+    future table, view or extension in this database can become readable by the application
+    through an oversight. Revoking from PUBLIC first closes the default that would otherwise
+    let any role in.
+    """
+    return [
+        f'GRANT ALL PRIVILEGES ON DATABASE "{db}" TO kc_app;',
+        f'REVOKE CONNECT ON DATABASE "{db}" FROM PUBLIC;',
+        f'REVOKE ALL ON DATABASE "{db}" FROM ir_app;',
+        "GRANT ALL ON SCHEMA public TO kc_app;",
+        "ALTER SCHEMA public OWNER TO kc_app;",
+        # Neither side may plant objects in the other's schema.
+        "REVOKE CREATE ON SCHEMA public FROM PUBLIC;",
+    ]
 
 # Per-database, run inside each one.
 def db_stmts(db: str) -> list[str]:
@@ -70,11 +102,30 @@ def main():
                 if not exists:
                     conn.execute(f'CREATE DATABASE "{db}" OWNER ir_app')
                     print(f"[db-bootstrap] created database {db} (owner ir_app)")
+            exists = conn.execute(
+                "SELECT 1 FROM pg_database WHERE datname = %s", (KEYCLOAK_DB,)).fetchone()
+            if not exists:
+                conn.execute(f'CREATE DATABASE "{KEYCLOAK_DB}" OWNER kc_app')
+                print(f"[db-bootstrap] created database {KEYCLOAK_DB} (owner kc_app)")
+            # The reciprocal: the identity provider's role gets no reach into evidence.
+            #
+            # Revoking from kc_app alone is not enough — CONNECT is granted to PUBLIC by
+            # default, and every role inherits it, so kc_app still held the privilege after a
+            # direct revoke. PUBLIC loses it here and the owner role keeps its explicit grant,
+            # which is what makes "no access" true rather than merely stated.
+            for db in DATABASES:
+                conn.execute(f'REVOKE ALL ON DATABASE "{db}" FROM kc_app;')
+                conn.execute(f'REVOKE CONNECT ON DATABASE "{db}" FROM PUBLIC;')
+                conn.execute(f'GRANT CONNECT ON DATABASE "{db}" TO ir_app;')
         for db in DATABASES:
             with connect(db) as conn:
                 for s in db_stmts(db):
                     conn.execute(s)
             print(f"[db-bootstrap] ir_app ensured on {db}")
+        with connect(KEYCLOAK_DB) as conn:
+            for s in keycloak_stmts(KEYCLOAK_DB):
+                conn.execute(s)
+        print(f"[db-bootstrap] kc_app ensured on {KEYCLOAK_DB}; ir_app refused CONNECT")
     except Exception as exc:  # noqa: BLE001
         print(f"[db-bootstrap] FAILED: {exc}", file=sys.stderr)
         return 1

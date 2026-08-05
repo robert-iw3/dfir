@@ -89,7 +89,7 @@
 
   <text class="prf" x="726" y="322" fill="#00CA8E">PROVEN: test/uat_consul.sh — 49 assertions: cleartext closed · uncertified refused · untokened denied ·</text>
   <text class="prf" x="726" y="337" fill="#00CA8E">denied pairs refused ON THE WIRE · allowed pairs carry traffic · per-sidecar namespace-inode match</text>
-  <text class="rS" x="726" y="362">open item, stated in SECURITY-MODEL.md: Redis is not on the mesh yet</text>
+  <text class="rS" x="726" y="362">open item, stated in SECURITY-MODEL.md: podman-compose → pods/quadlets migration</text>
 
   <!-- ============ Vault ============ -->
   <rect class="card" x="20" y="420" width="670" height="270" stroke="#F5B841"/>

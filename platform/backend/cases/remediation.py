@@ -6,7 +6,7 @@ THE WEB TIER NEVER RUNS THESE. It records a request; the agent on the enclave ho
 allow-list, and runs its own command. No command string, argument or path crosses the
 boundary — a forged row can only name one of a fixed set of repairs.
 
-This catalogue exists so the UI can describe the choices. It is NOT what gets executed: the
+This catalog exists so the UI can describe the choices. It is NOT what gets executed: the
 agent holds that, and the two are kept deliberately separate so that compromising the web tier
 cannot change what runs.
 
@@ -67,7 +67,7 @@ CATALOG = {
 }
 
 
-def catalogue():
+def catalog():
     """The actions, shaped for the UI."""
     return [{"action": name, **meta} for name, meta in sorted(CATALOG.items())]
 

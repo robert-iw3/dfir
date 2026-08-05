@@ -2,7 +2,7 @@
 
 *What passing proves:* The analyst's hop into the enclave is an authenticated, authorized, auditable session against exactly one target; the DMZ holds no authority and has no route of its own.
 
-- Run: `uat_boundary.sh` — 2026-07-31 22:32:15Z
+- Run: `uat_boundary.sh` — 2026-08-05 16:02:25Z
 
 **Placement — authority in the enclave, a client in the DMZ**
 
@@ -38,7 +38,7 @@
 | Result | Assertion — with evidence |
 |---|---|
 | ✅ PASS | a live session exists |
-| ✅ PASS | the session is bound to principal u_rAOgVpmcyW |
+| ✅ PASS | the session is bound to principal u_xioponHmyn |
 | ✅ PASS | that principal is the provisioned analyst |
 
 **The session carries traffic**
@@ -52,8 +52,8 @@
 
 | Result | Assertion — with evidence |
 |---|---|
-| ✅ PASS | session s_MMFcIAzEDX was canceled and the broker re-established unattended — traffic flows again |
-| ✅ PASS | the recovery is a NEW authorized session (s_bWYAeeDY9l), not a lingering socket |
+| ✅ PASS | session s_wrcSmFSG9w was canceled and the broker re-established unattended — traffic flows again |
+| ✅ PASS | the recovery is a NEW authorized session (s_TKmtqeh4uJ), not a lingering socket |
 
 **The DMZ has no route of its own**
 
@@ -75,10 +75,10 @@
 | Result | Assertion — with evidence |
 |---|---|
 | ✅ PASS | the page reads live from Boundary with its own credential |
-| ✅ PASS | the record is complete: page 9 sessions, controller 9, id sets match |
+| ✅ PASS | the record is complete: page 7 sessions, controller 7, id sets match |
 | ✅ PASS | live count matches the controller (1 == 1) |
 | ✅ PASS | exactly one live session — the running broker, no ghosts of replaced brokers (1 live) |
-| ✅ PASS | the live session's client address is the running broker (10.89.0.236 == 10.89.0.236) |
+| ✅ PASS | the live session's client address is the running broker (10.89.0.14 == 10.89.0.14) |
 | ✅ PASS | the principal resolves to a name, not an id (analyst) |
 | ✅ PASS | byte counters are real — the session that carried the request shows transfer |
 | ✅ PASS | the page's auditor credential authenticates on its own |

@@ -208,15 +208,39 @@ for spec in "ir-edge:${DNS_EDGE_IP}:DMZ" "ir-enclave_internal:${ENCLAVE_DNS_IP}:
     fi
 done
 
-# ============================================================ 6. no pinned addresses
-say "Addressing — nothing is pinned except the resolvers themselves"
-# A resolver cannot be discovered by asking a resolver: resolv.conf holds literals. Those two
-# addresses are irreducible; every other pinned address is a service that breaks on a network
-# recreate, which is the defect this work removed.
-pinned="$(grep -rn "ipv4_address:" "${PLATFORM}"/deploy/*/docker-compose.yml 2>/dev/null \
-          | grep -v 'DNS_EDGE_IP\|ENCLAVE_DNS_IP' || true)"
-[[ -z "${pinned}" ]] && ok "no service pins an address (only the two resolvers, which must)" \
-                     || { bad "pinned addresses remain:"; printf '      %s\n' "${pinned}"; }
+# ============================================================ 6. addressing is configuration
+say "Addressing — every address is declared configuration, never a literal"
+# This asserted "nothing is pinned but the two resolvers", written when removing pins was the
+# goal: a pinned service breaks when a network recreate moves it.
+#
+# The mesh work reversed that for mesh participants, deliberately. A recreated container gets a
+# new address AND a new network namespace, which breaks three things at once — the Connect
+# registration goes stale, the namespace-sharing sidecar is orphaned while still running, and
+# Vault comes back sealed. Those surface tiers away, as "backend cannot reach a healthy
+# database". Static IR_IP_* addresses ended that class; see deploy/NETWORKING.md §5a and
+# `mesh_addr_check` in deploy.sh, which validates them before anything starts.
+#
+# So the invariant is no longer "unpinned". It is that an address is CONFIGURATION — a declared
+# variable an operator changes in one place. A literal written into compose is the defect:
+# nobody can move it, and it silently overlaps the next deployment's subnet.
+literal="$(grep -rn "ipv4_address:" "${PLATFORM}"/deploy/*/docker-compose.yml 2>/dev/null \
+           | grep -vE 'ipv4_address:[[:space:]]*\$\{[A-Z0-9_]+\}' || true)"
+[[ -z "${literal}" ]] \
+    && ok "every pinned address is a declared variable, none hard-coded" \
+    || { bad "addresses hard-coded in compose — not changeable per deployment:"
+         printf '      %s\n' "${literal}"; }
+
+# And the pins are the DECLARED set: the two resolvers, which cannot be discovered because
+# resolv.conf holds only literals, plus mesh participants. Anything else took an address
+# without the mesh needing it to.
+undeclared="$(grep -rhoE 'ipv4_address:[[:space:]]*\$\{[A-Z0-9_]+\}' \
+                  "${PLATFORM}"/deploy/*/docker-compose.yml 2>/dev/null \
+              | grep -oE '\{[A-Z0-9_]+\}' | tr -d '{}' \
+              | grep -vE '^(DNS_EDGE_IP|ENCLAVE_DNS_IP|IR_IP_[A-Z0-9_]+)$' || true)"
+[[ -z "${undeclared}" ]] \
+    && ok "pins are the resolvers and IR_IP_* mesh participants, nothing else" \
+    || { bad "a service pins an address outside the declared scheme:"
+         printf '      %s\n' "${undeclared}"; }
 
 # ------------------------------------------------------------------ verdict
 say "DNS"
