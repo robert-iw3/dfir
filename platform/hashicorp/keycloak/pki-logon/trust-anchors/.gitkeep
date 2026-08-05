@@ -1,0 +1,3 @@
+# Issuing CA chains, PEM, one file per issuer. This directory is the ALLOW-LIST: any CA whose
+# certificate sits here can mint a login for this platform. Empty by default, and an empty
+# directory with IR_PKI_LOGON=1 is a configuration error the deploy refuses rather than starts.

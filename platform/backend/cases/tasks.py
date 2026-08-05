@@ -166,7 +166,7 @@ def analyze_capture(self, capture_id, ruleset_version=""):
 
         # Prefer the toolkit's full Volatility pass. It needs a symbol table matching the
         # captured kernel, which the enclave cannot fetch itself — when one is absent an
-        # administrator is asked for it and this run proceeds at reduced depth, labelled
+        # administrator is asked for it and this run proceeds at reduced depth, labeled
         # as such so the UI never implies a full analysis happened.
         # Parsed defensively: a malformed value must not be the reason a capture gets a
         # shallower analysis. Misconfiguration should be loud, not silently degrading.

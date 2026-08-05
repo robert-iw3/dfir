@@ -138,8 +138,27 @@ class BulkVerdictView(APIView):
                     "from": f.verdict, "to": verdict}
                    for f in findings if f.verdict != verdict]
 
+        changed_ids = [c["id"] for c in changes]
         with transaction.atomic():
-            Finding.objects.filter(id__in=[c["id"] for c in changes]).update(verdict=verdict)
+            # A bulk action is still an analyst determination per finding, so it leaves the
+            # same history a single reclassification does. The audit entry alone was not
+            # enough: it truncates its `changes` list, so past 200 findings the per-finding
+            # record this class promises did not exist.
+            FindingReclassification.objects.bulk_create([
+                FindingReclassification(
+                    finding_id=f.id, investigation_id=f.run.investigation_id,
+                    actor=getattr(request.user, "username", "?"),
+                    role=role_of(request.user) or "",
+                    from_verdict=f.verdict, to_verdict=verdict,
+                    from_confidence=f.confidence, to_confidence=f.confidence,
+                    note=reason or f"bulk verdict applied to {len(changes)} findings",
+                )
+                for f in findings if f.id in set(changed_ids)
+            ], batch_size=500)
+            # Marked as the analyst's, so a later engine pass records disagreement rather
+            # than overwriting it — the same protection the single-finding path gives.
+            Finding.objects.filter(id__in=changed_ids).update(
+                verdict=verdict, adjudicated_by="analyst", adjudication_conflict={})
             # Compromise state is derived from verdicts, so runs whose findings changed
             # are re-evaluated rather than left stale.
             for run in {f.run for f in findings}:
@@ -199,7 +218,14 @@ class ReclassifyView(APIView):
             )
             finding.verdict = verdict
             finding.confidence = confidence
-            finding.save(update_fields=["verdict", "confidence"])
+            # The verdict is now the analyst's, and a later engine pass may not replace it.
+            # Any standing engine disagreement is cleared: the analyst has seen the finding
+            # and ruled, so leaving the flag up would send them back to a question they
+            # just answered.
+            finding.adjudicated_by = "analyst"
+            finding.adjudication_conflict = {}
+            finding.save(update_fields=["verdict", "confidence",
+                                        "adjudicated_by", "adjudication_conflict"])
 
             run = finding.run
             run.tp_count = run.findings.filter(verdict="True Positive").count()

@@ -207,7 +207,7 @@ function AnalyzeForm({ region, onDone, onCancel }) {
         <label>
           <div className="muted" style={{ fontSize: 12 }}>Notes</div>
           <textarea className="table-search" rows={4} style={{ width: "100%" }} value={notes}
-                    placeholder="How it was identified — strings, structure, behaviour."
+                    placeholder="How it was identified — strings, structure, behavior."
                     onChange={(e) => setNotes(e.target.value)} />
         </label>
 
@@ -324,7 +324,7 @@ export default function Reversing() {
             { key: "carved_by", label: "Carved by", sortable: false,
               render: (v) => v || "—" },
             // The rule is what tells a reverse engineer whether a region is worth opening.
-            // Naming it in the queue means that judgement happens before the 2 MB download.
+            // Naming it in the queue means that judgment happens before the 2 MB download.
             { key: "trigger", label: "Triggered by", sortable: false,
               render: (v) => {
                 const hits = v?.hits || [];

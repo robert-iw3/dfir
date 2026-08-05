@@ -36,7 +36,7 @@ function age(seconds) {
 
 /** Usage bar. `pct` is 0–100; anything at or above `warn` reads as a problem.
  *
- * The figure sits beside the track rather than on top of it. Centred over the fill it lands
+ * The figure sits beside the track rather than on top of it. Centered over the fill it lands
  * exactly where the fill edge crosses at mid-range values, so the character under the edge —
  * usually the decimal point — is the one that becomes unreadable. */
 function UsageBar({ pct, warn = 85 }) {
@@ -99,6 +99,7 @@ function Component({ row }) {
   const cpu = row.cpu || {};
   const proc = row.process || {};
   const logs = row.logs || {};
+  const ls = row.log_storage || {};
   const nets = Object.entries(row.network || {});
   const netTrouble = nets.filter(([, n]) =>
     (n.rx_errors || 0) + (n.tx_errors || 0) + (n.rx_dropped || 0) + (n.tx_dropped || 0) > 0);
@@ -143,6 +144,16 @@ function Component({ row }) {
                  value={<>{bytes(d.free_bytes)} free<span className="dim"> · {d.percent_used ?? "\u2014"}%</span></>} />
           ))}
         </Group>
+
+        {/* Only the log shipper reports this: bucket consumption against the declared
+            allocation, the figure its 75% warning is measured on. */}
+        {ls.alloc_bytes ? (
+          <Group title="Log storage"
+                 pct={Math.min(100, Math.round((ls.used_bytes || 0) * 100 / ls.alloc_bytes))}>
+            <Row label={ls.bucket || "bucket"}
+                 value={<>{bytes(ls.used_bytes)} of {bytes(ls.alloc_bytes)} allocated</>} />
+          </Group>
+        ) : null}
 
         <Group title="Memory" pct={memPct}>
           {mem.cgroup_limit_bytes ? (

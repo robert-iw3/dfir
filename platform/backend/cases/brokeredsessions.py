@@ -11,7 +11,7 @@ authorize a session, cancel one, or read a target — watching access must never
 obtain it. The recovery key would make all of this trivial and is exactly why it is not used.
 
 Boundary is the authority. A session recorded here and absent there is a session that was
-cancelled or expired, and showing a stale row as live is the failure that matters most on an
+canceled or expired, and showing a stale row as live is the failure that matters most on an
 audit page.
 """
 from __future__ import annotations

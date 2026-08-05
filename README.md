@@ -26,21 +26,39 @@ This file is the summary. The detailed, per-platform operating instructions live
 
 ## Executive summary
 
-The toolkit provides immediate out-of-the-box detection for novice-to-intermediate tactics — instantly flagging known signatures, volume anomalies, and common scripting tools. Because these low-level threats rely on predictable patterns, the system catches them automatically with zero additional engineering.
+**The toolkit tells you what to look at; the analyst decides whether it is a threat.**
 
-Exposing advanced tradecraft or APTs requires a different posture. Sophisticated actors intentionally mimic legitimate administrative traffic to "live off the land," leaving behind only tiny, distributed clues scattered across host, network, and identity telemetry. The toolkit captures that evidence across all layers — memory, disk, network, logs — but compiling those scattered data points into a coherent attack timeline requires extended investigation and expert human analysis. The toolkit tells you *what to look at*; the analyst determines whether it is a threat and builds the chain.
+Novice-to-intermediate tactics are caught out of the box — known signatures, volume
+anomalies, common scripting tools — because they rely on predictable patterns. Advanced
+tradecraft does not. A capable actor mimics legitimate administration to live off the land,
+leaving small clues scattered across host, network and identity telemetry. The toolkit
+gathers that evidence from every layer and narrows it to what is worth an analyst's time;
+assembling it into a chain of events is the analyst's work.
 
-This toolkit is purpose-built to **steer incident responders and forensic analysts to the right path** - not to make the call for them.
+Collection casts the widest possible net — process memory, event logs and journald, file
+entropy, network state, registry, Amcache/ShimCache, YARA — with no pre-filtering. The
+later phases narrow it:
 
-Every collection phase casts the widest possible net. Raw findings from process memory, event logs / journald, file entropy, network connections, registry keys, Amcache/ShimCache execution history, and YARA signatures are gathered without pre-filtering. The subsequent analysis phases then refine that down to the handful of findings that have real investigative value:
+1. **Collection** — snapshot everything without judgment. Nothing is excluded at collection
+   time.
+2. **Detection** — score-based alerting over everything collected (LOLBin score ≥3, entropy
+   ≥7.2, process hidden from the standard API, execution from user-writable paths). Never
+   suppressed by publisher or vendor: a Microsoft-signed binary in `AppData\Roaming` is
+   still flagged.
+3. **Adjudication** — every raw finding verified against its concrete artifact: signature
+   chain, file existence, install path, hash. The ladder is **False Positive → Likely False
+   Positive → Indeterminate → Likely True Positive → True Positive**. A validly signed
+   binary in a user-writable path earns **Indeterminate**, not clearance.
+4. **Likely True Positive is the actionable signal** — the evidence pattern is anomalous but
+   the final call needs analyst context.
+5. **Refinement loop** — detectors → adjudication → reports → eradication. TP-class findings
+   cluster into a renderable kill chain (12–15 nodes), each with an evidence bundle.
 
-1. **Collection** - snapshot everything without judgment. Processes, drivers, network state, logs, memory, execution history, files, persistence. Nothing is excluded at collection time.
-2. **Detection** - score-based alerting across all collected data (LOLBin score ≥3, entropy ≥7.2, process hidden from standard API, execution from user-writable paths). Detection logic is never suppressed by publisher or vendor name - a Microsoft-signed binary in `AppData\Roaming` is still flagged.
-3. **Adjudication** - on-host context enrichment. Every raw finding is verified against its concrete artifact: signature chain, file existence, install path, binary hash. The verdict ladder is **False Positive → Likely False Positive → Indeterminate → Likely True Positive → True Positive**. A validly signed binary in a user-writable path earns **Indeterminate**, not clearance.
-4. **"Likely True Positive" is the actionable signal.** The adjudicator surfaces findings where the evidence pattern is anomalous but a final call requires analyst context. The toolkit tells you *what to look at* - the analyst confirms whether it is a threat.
-5. **Refinement loop** - findings flow detectors → adjudication → reports → eradication. The attack graph clusters TP-class findings into a renderable kill chain (12–15 nodes max). Evidence bundles are written for every TP-class finding.
+**Filtering principle:** exclude only what is physically impossible as a threat vector.
+Everything else surfaces with context and confidence.
 
-**Design principle for filtering:** only exclude things that are physically impossible threat vectors. Everything else surfaces with context and confidence; the analyst makes the call. **No network dependency during collection** - tools, YARA rules, and dependencies are staged to USB in advance; the target host is never contacted by the toolkit.
+**No network dependency during collection** — tools, YARA rules and dependencies are staged
+to USB in advance; the toolkit never contacts the target host.
 
 ---
 
@@ -204,14 +222,25 @@ one.
   engineering; determinations flow back into the incident.
 - An append-only investigation record: analyst entries, verdict changes, RE determinations
   and evidence disposals in one chronological view.
-- Cross-investigation IOC search, multi-host correlation, campaign graph and timeline.
+- Cross-investigation IOC search and weighted multi-host correlation: hosts join a campaign
+  when their shared evidence clears a threshold, every link decomposes into the factors that
+  scored it, and campaigns carry a behavioral fingerprint so an actor is recognizable across
+  engagements after rotating infrastructure. Attribution stays advisory.
 - Hash-chained audit trail with export and independent chain verification.
 - Custody sealing on ingest, retention applied by disposition, legal hold.
+- DISA Web Server SRG hardening of the web tier, tracked item by item against the published
+  XCCDF with a STIG Viewer checklist as evidence.
 
 **Roles** — [analyst](platform/WORKFLOW-ANALYST.md),
 [reverse engineer](platform/WORKFLOW-RE.md), [admin](platform/WORKFLOW-ADMIN.md),
 [auditor](platform/WORKFLOW-AUDITOR.md).
 
-**Deployment** — [`platform/README.md`](platform/README.md).
-[`platform/troubleshooting/`](platform/troubleshooting/) holds the runbook, component map
-and memory-analysis diagnostics.
+**Deployment** — the baseline brings every tier up with Compose on a single host, staged in
+dependency order and gated on a health check at each stage; see
+[`platform/README.md`](platform/README.md). Multi-host deployment is
+**Ansible** to prepare and provision bare metal, and **HashiCorp Nomad** as the workload
+orchestrator scheduling the same tiers across it — both on the private track.
+
+**Troubleshooting** — [`platform/troubleshooting/`](platform/troubleshooting/) holds the
+runbook, the component map, memory-analysis diagnostics, and where to look when a page
+renders blank, empty or wrong.

@@ -1,4 +1,5 @@
-"""Periodic self-reporting for the components that share this codebase.
+"""
+Periodic self-reporting for the components that share this codebase.
 
 The backend and the analysis workers hold a database connection already, so they record
 their own reports directly rather than posting to an API. The DMZ receiver and the puller
@@ -14,6 +15,7 @@ from __future__ import annotations
 
 import os
 import socket
+import sys
 import threading
 
 import sysstats
@@ -42,6 +44,14 @@ def _worker_paths():
 
 
 def _collect(component, tier, paths, extra=None):
+    # A callable is evaluated per report, for figures that change between reports — the log
+    # shipper's bucket usage, for one. A static dict is passed through as-is.
+    if callable(extra):
+        try:
+            extra = extra()
+        except Exception as exc:                      # noqa: BLE001
+            LOGS.error(f"extra metrics failed: {exc}")
+            extra = None
     return sysstats.collect(component, tier=tier, disk_paths=paths,
                             log_counter=LOGS, extra=extra)
 
@@ -74,12 +84,22 @@ def report_once(component, tier, paths, extra=None):
     return metrics
 
 
-def _loop(component, tier, paths):
+def _loop(component, tier, paths, extra=None):
     from django.db import connections
 
+    # Until the first report lands, retry quickly and say why on stderr: a component that
+    # starts a beat before its mesh upstream is warm would otherwise be invisible for a full
+    # interval, an admin reads absence as "not running", and a counter nobody can read yet
+    # is no place for the reason.
+    print(f"[health] reporting as {component}", file=sys.stderr, flush=True)
+    reported = False
     while True:
         try:
-            report_once(component, tier, paths)
+            report_once(component, tier, paths, extra)
+            if not reported:
+                print(f"[health] first report recorded for {component}",
+                      file=sys.stderr, flush=True)
+            reported = True
         except Exception as exc:                      # noqa: BLE001
             # A missing table means migrations have not finished yet. The worker starts beside
             # the backend that applies them, so the first report can legitimately land before
@@ -91,6 +111,18 @@ def _loop(component, tier, paths):
                 LOGS.info("health schema not migrated yet — deferring the first report")
             else:
                 LOGS.error(f"health report failed: {exc}")
+                # To stderr on every failure, not only before the first success.
+                #
+                # LOGS is delivered BY the health report, so once a component had reported
+                # once, the counter was the only record that its reporter was failing —
+                # carried on the very write that was failing. A log shipper whose database
+                # credential had been revoked went on shipping logs perfectly while its own
+                # health row went stale, and nothing anywhere said why: the row just stopped.
+                #
+                # Not rate-limited: the interval is already 15 minutes, and a component that
+                # cannot report itself is exactly what an operator reads these logs for.
+                print(f"[health] report failed for {component}: {exc!r}",
+                      file=sys.stderr, flush=True)
         finally:
             # A long-lived thread that reports every 15 minutes would otherwise hold an idle
             # connection open between writes, and a database restart would leave it broken.
@@ -98,10 +130,10 @@ def _loop(component, tier, paths):
                 connections.close_all()
             except Exception:                         # noqa: BLE001
                 pass
-        threading.Event().wait(REPORT_INTERVAL)
+        threading.Event().wait(REPORT_INTERVAL if reported else 30)
 
 
-def start(component=None, tier="application", paths=None):
+def start(component=None, tier="application", paths=None, extra=None):
     """Begin reporting in the background. Safe to call more than once."""
     global _started
     with _lock:
@@ -110,7 +142,7 @@ def start(component=None, tier="application", paths=None):
         _started = True
     name = component or f"worker ({socket.gethostname()})"
     thread = threading.Thread(
-        target=_loop, args=(name, tier, tuple(paths) if paths else _worker_paths()),
+        target=_loop, args=(name, tier, tuple(paths) if paths else _worker_paths(), extra),
         name="component-health", daemon=True)
     thread.start()
     return thread

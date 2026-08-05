@@ -1,7 +1,7 @@
 /* Dark theme — single source of truth for the platform's look.
  *
  * Near-black with a teal cast. Severity keeps warm hues (amber, red) so it never competes
- * with the accent for meaning: teal marks where you are and what is interactive, and colour
+ * with the accent for meaning: teal marks where you are and what is interactive, and color
  * on a verdict always means severity.
  */
 :root {
@@ -22,13 +22,13 @@
   --accent-wash: rgba(45, 212, 191, 0.10);
 
   /* Violet is secondary: derived and computed views — correlation, campaign, timeline —
-     so a conclusion the platform inferred never wears the same colour as a fact it
+     so a conclusion the platform inferred never wears the same color as a fact it
      collected. */
   --accent-2: #8b5cf6;
   --accent-2-strong: #a78bfa;
   --accent-2-wash: rgba(139, 92, 246, 0.12);
 
-  /* Severity stays warm and is never used for navigation or state. Colour on a verdict
+  /* Severity stays warm and is never used for navigation or state. Color on a verdict
      always means severity, so it cannot be mistaken for emphasis. */
   --good: #34d399;
   --warn: #e0a83a;
@@ -88,7 +88,7 @@ a:hover { text-decoration: underline; }
   font-weight: 500;
   border: 1px solid transparent;
 }
-/* Icons are line art on currentColor, so they take the link's state colour without a
+/* Icons are line art on currentColor, so they take the link's state color without a
    second rule per state. */
 .nav a svg { width: 17px; height: 17px; flex: none; stroke: currentColor; }
 .nav a:hover { background: var(--bg-elev-2); color: var(--text); text-decoration: none; }
@@ -367,7 +367,7 @@ td.wrap { white-space: pre-wrap; max-width: 46ch; font-size: 12px; line-height: 
 .panel { overflow-x: auto; }
 
 /* --- Component Health -------------------------------------------------------
-   Capacity and resource reporting. Colour carries severity, but never alone: every
+   Capacity and resource reporting. Color carries severity, but never alone: every
    state is also stated in words, so the page reads the same to an operator who
    cannot distinguish the hues. */
 .ch-page .ch-summary { border-radius: 8px; padding: 1rem 1.25rem; margin: 1rem 0 1.5rem; }
@@ -417,7 +417,7 @@ td.wrap { white-space: pre-wrap; max-width: 46ch; font-size: 12px; line-height: 
 .ch-metric-value { margin-left: auto; font-size: .82rem; white-space: nowrap; flex: 0 0 auto; }
 .ch-warning-text { color: #e0b062; }
 
-/* Track and figure sit side by side. A percentage centred over the fill is illegible at
+/* Track and figure sit side by side. A percentage centered over the fill is illegible at
    exactly the values that matter, because the fill edge crosses the text mid-range. */
 .ch-bar-wrap { display: flex; align-items: center; gap: .5rem; flex: 1 1 auto;
                margin-left: auto; max-width: 11rem; }
@@ -441,7 +441,7 @@ td.wrap { white-space: pre-wrap; max-width: 46ch; font-size: 12px; line-height: 
 /* ---------------------------------------------------------------------------
    Service mesh authorization matrix.
 
-   Colour carries the same meaning as everywhere else in the platform (good /
+   Color carries the same meaning as everywhere else in the platform (good /
    warn / bad), and the glyph carries it again — a matrix read by someone who
    cannot distinguish red from green must still be readable, and this one states
    who can reach the evidence.

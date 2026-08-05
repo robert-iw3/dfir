@@ -105,7 +105,39 @@ export const api = {
   correlation: (investigationId) => get(`/correlation/investigations/${investigationId}/`),
   campaignGraph: (id) => get(`/correlation/campaigns/${id}/graph/`),
   campaignTimeline: (id) => get(`/correlation/campaigns/${id}/timeline/`),
+  campaignTradecraft: (id) => get(`/correlation/campaigns/${id}/tradecraft/`),
+  correlationLinks: (runId) => get(`/correlation/runs/${runId}/links/`),
   sharedIndicators: () => get("/correlation/indicators/"),
   recorrelate: (investigationId) =>
     post("/correlation/recompute/", investigationId ? { investigation_id: investigationId } : {}),
+
+  // Server-side aggregates. A chart that sums a page of rows draws that page, not the case.
+  investigationStats: (id) => get(`/investigations/${id}/stats/`),
+  investigationCoverage: (id) => get(`/investigations/${id}/coverage/`),
+  stalledInvestigations: (days) => get(`/investigations/stalled/?days=${days ?? 30}`),
+  transitionInvestigation: (id, status) =>
+    post(`/investigations/${id}/transition/`, { status }),
+  runTimeline: (id) => get(`/runs/${id}/timeline/`),
+  runCustody: (id) => get(`/runs/${id}/custody/`),
+  iocSpread: (type, value) =>
+    get(`/iocs/${encodeURIComponent(type)}/${encodeURIComponent(value)}/spread/`),
+  queueDepth: () => get("/admin/queue-depth/"),
+
+  // Operational telemetry. `reportClientError` deliberately uses fetch directly and swallows
+  // everything: it runs from an error boundary, and a reporter that can throw would replace
+  // one broken view with two.
+  reportClientError: (body) => {
+    try {
+      return fetch(`${BASE}/opslog/client-errors/`, {
+        method: "POST",
+        headers: headers(),
+        body: JSON.stringify(body || {}),
+      }).catch(() => {});
+    } catch {
+      return Promise.resolve();
+    }
+  },
+  requestLog: (params) =>
+    get(`/opslog/requests/?${new URLSearchParams(params || {}).toString()}`),
+  clientErrors: (limit) => get(`/opslog/client-errors/list/?limit=${limit ?? 50}`),
 };

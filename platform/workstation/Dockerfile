@@ -51,6 +51,9 @@ print('firefox STIG policy OK')"
 # Add the GL/GTK bits Firefox looks for so the X session starts cleanly.
 RUN apk add --no-cache mesa-gl mesa-egl libpciaccess 2>/dev/null || true
 ENV HOME=/home/analyst
-RUN mkdir -p /home/analyst/profile
+# The profile, and the ONE directory downloads may land in. It must exist in the image: the
+# policies name it as the fixed download location, and a missing directory sends Firefox
+# back to asking — a native file dialog this container cannot open without aborting.
+RUN mkdir -p /home/analyst/profile /home/analyst/downloads
 
 ENTRYPOINT ["/usr/local/bin/launch.sh"]

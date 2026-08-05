@@ -51,16 +51,42 @@ Adjudicated findings across all investigations. Search, filters, ordering and pa
 applied by the database, so the view stays responsive when a run carries thousands of
 findings rather than the seeded scenario's ninety-eight.
 
-![Findings with host attribution, sortable columns and export controls](img/findings.png)
+![Findings with host attribution, sortable columns and export controls](img/findings0.png)
 
 Each finding carries its host, so a row read outside its run still says where it came from.
 Columns sort on click; the verdict, source and ATT&CK filters narrow server-side; and the
 current filter set is preserved in the URL, so a view can be bookmarked or handed to
 another analyst.
 
+**Recovered evidence, in the row.** A finding whose analysis recovered identifying material
+carries a disclosure arrow in the DETAIL column. Expanding it shows what was actually pulled
+out of memory — never a re-statement of the columns already on screen.
+
+Above, a C2 beacon on DC-02 yields the family, the implant's user-agent, its mutex and named
+pipe, the JA3 and certificate it presented, the registry key it persisted under, the YARA
+rule that matched, and the C2 configuration a parser extracted: address, port, sleep interval
+and campaign id. That is the material an analyst pivots on, and before this panel existed it
+was reachable only by reading the raw JSON.
+
+The panel is shaped by what the finding is, not by a fixed template:
+
+![Reverse-engineering finding: recovered wallet and network infrastructure](img/findings1.png)
+
+A reverse-engineering finding on a carved region adds the crypto material and network
+infrastructure recovered from the binary itself. A cryptominer process adds its pool domain,
+address, onion endpoint and wallets:
+
+![Cryptominer finding: pool infrastructure and wallet addresses](img/findings2.png)
+
+**The arrow discriminates.** Rows carrying nothing recoverable — structural memory findings,
+a phishing attachment, a backup deletion — offer no expander at all, so its presence is a
+signal rather than decoration.
+
 **Bulk adjudication.** Select findings, apply one verdict, and record the reason. Each
-finding's prior verdict is written to the audit ledger individually, so a bulk action stays
-as reconstructable afterwards as a single one.
+finding's prior verdict is written to the audit ledger *and* to its own reclassification
+history, so a bulk action stays as reconstructable afterwards as a single one. A verdict set
+this way belongs to the analyst: a later automated pass records where it disagrees rather
+than overwriting it.
 
 ![Bulk verdict applied to selected findings, with a reason recorded](img/findings3.png)
 
@@ -139,6 +165,22 @@ technique, confidence, source, and the collector record itself.
 
 ![Run detail: findings, ATT&CK mapping and custody state](img/investigation_3.png)
 
+**The host's IOC index.** Everything identifying that the run recovered, rolled up per host
+and typed, below the findings and the carved regions.
+
+![Per-host IOC index: every indicator kind recovered from one host](img/investigation_ioc.png)
+
+This is the rollup of what the evidence panels show row by row. It matters because the pivot
+an analyst actually performs is "where else in the estate does this appear" — and that
+question is asked against a typed index, not against prose inside a finding. Attribution
+(`malware_family`), the matched rule (`yara_rule`), the campaign id, the implant's mutex,
+pipe, JA3, user-agent and registry key all land here beside the addresses and hashes, so a
+pivot on tradecraft works even after every address has rotated.
+
+Values recovered more than once are deduplicated within a run, and anything that identifies
+nothing is deliberately absent — a beacon's sleep interval is configuration, not an
+indicator, and indexing it would return every host running that family.
+
 **Memory capture and retention.** The capture is held in object storage and referenced from
 PostgreSQL — never stored in the database. Its size, format, tool, SHA-256 and retention
 disposition are shown together, and the disposition states its reason ("host assessed
@@ -156,21 +198,72 @@ The multi-host picture, derived from collected evidence and held in a separate s
 the evidence itself. The header states when it was computed and by which algorithm version:
 a correlated conclusion is never presented as if it were collected fact.
 
-![Attack graph, entry point, blast radius and timeline](img/correlation_1.png)
+An investigation can hold more than one intrusion, so the campaign is selected separately
+from the case. Each is named from its own evidence — the attributed family and its patient
+zero — rather than from the case it sits in.
 
-- **Entry point and initial vector** — the host the intrusion entered through, and the
+![Attack graph: entry point, movement edges and per-host membership band](img/correlation0.png)
+
+- **Entry point and initial vector** — the host the intrusion entered through and the
   technique it entered by, identified from evidence rather than from timing alone.
-- **Attack graph** — hosts laid out by how many moves they sit from the entry point, with
-  each edge carrying the protocol and the account used. Selecting a host shows what reached
-  it and what it went on to reach.
-- **Timeline** — host compromise, movement and notable findings in one ordered
-  reconstruction.
-- **Shared indicators** — indicators and accounts seen on more than one host, which is what
-  links hosts into a campaign. Hosts that share no evidence are not linked, so two unrelated
-  compromises in one engagement stay two campaigns.
+- **Attack graph** — hosts laid out by how many moves they sit from the entry point, each
+  edge carrying the protocol and the account used. Roles are named: entry point, pivot,
+  affected.
+- **Membership band** — the border weight on every node. `confirmed`, `probable`, `possible`
+  or `indeterminate`, and each one decomposes into the link, the evidence kinds and the
+  timing that produced it. `indeterminate` means the question was not answerable, not that
+  the evidence was weak.
+- **Declined candidates** — pairs the engine considered and refused, with the reason. A link
+  that was declined is as informative as one that was accepted, and an analyst asking "why
+  aren't these two the same intrusion?" gets an answer rather than an absence.
+- **Link threshold** — stated on the page, because a merge nobody can see the bar for is not
+  a merge anybody can defend.
+
+### Tradecraft
+
+What an actor carries between engagements, computed from behavior rather than indicators.
+Infrastructure is what they rotate; habits are what they keep.
+
+![Technique sequence, naming conventions with the value each was read from, and cross-campaign similarity](img/correlation2.png)
+
+- **Technique sequence** — ordered by when each technique was first observed, from the
+  finding that carried it. Ordinary fleet activity cannot set that order.
+- **Naming conventions** — the *shape* of a name, not the name. Highlighted text is what the
+  operator chose and reuses; `<name>` and `<number>` are the parts that change between
+  engagements, so a match survives a rename. Every shape is shown beside the collected value
+  it was read from and the number of hosts carrying it — an abstraction a reader cannot
+  trace back to evidence is indistinguishable from a placeholder.
+- **Seen before** — other campaigns scoring above the similarity floor, with the shared
+  components named and the strongest marked. Advisory: nothing here is written onto the case.
+
+Only evidence confined to the campaign and adjudicated as compromise can become tradecraft.
+Software present across the fleet describes the environment, not an operator, however
+distinctive its name looks.
+
+### When there is not enough to say
+
+![A second campaign in the same case, declined for comparison rather than scored](img/correlation1.png)
+
+The same investigation's second intrusion — a commodity cryptominer on two hosts. It has
+three techniques, no naming conventions and no observed movement, so the platform states
+plainly that there is *too little tradecraft to compare against anything* and declines to
+score it.
+
+That refusal is the point. A similarity computed from three common techniques is a
+coincidence with a number on it, and ranking it beside a real match is how a heuristic turns
+into a false accusation.
+
+### Shared indicators
+
+![Every indicator and account seen on more than one host, with the hosts carrying it](img/correlation3.png)
+
+Indicators and accounts seen on more than one host, each listed with every host carrying it.
+Sharing alone does not merge anything: a service account present on the whole fleet is
+weighted as the environment it is, which is why two unrelated compromises in one engagement
+stay two campaigns.
 
 Correlation is recomputed on demand and supersedes rather than overwrites, so an earlier
-conclusion remains explainable.
+conclusion remains readable and explainable.
 
 ---
 
@@ -327,7 +420,7 @@ audit hash chain still verifies.
 ![Analysis queue, audit integrity and recent analyses](img/health_check3.png)
 
 Probes run inside the enclave against live services. Host-level diagnostics
-(`troubleshooting/diagnose.sh`) stay an operator tool run on the host — reaching them from
+(`platform/troubleshooting/diagnose.sh`) stay an operator tool run on the host — reaching them from
 the web tier would require the container runtime socket, which the segmentation model does
 not permit.
 
@@ -413,7 +506,7 @@ only what is currently open answers the least interesting version of the questio
 
 The page authenticates to Boundary with its own credential, which can list and read sessions
 and nothing else: watching access is not a route to obtaining it, and
-[`test/uat_boundary.sh`](test/uat_boundary.sh) proves both halves — that this page matches
+[`platform/test/uat_boundary.sh`](platform/test/uat_boundary.sh) proves both halves — that this page matches
 the controller's own records, and that its credential is refused when it attempts a cancel.
 When the broker does not answer, the page says so rather than rendering an empty table:
 "nobody is connected" is the most dangerous wrong answer this screen can give.
@@ -489,7 +582,7 @@ its analysis results and custody record remain.
 ![Object browser showing a capture stored under incident and host](img/minio_object.png)
 
 The object store is not published; it is reachable only while an administrator has opened
-a management forwarder (see [`admin/`](admin)).
+a management forwarder (see [`platform/admin/`](admin)).
 
 ---
 

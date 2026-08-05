@@ -130,12 +130,37 @@ python3 -c "import sys; print('  python', sys.version.split()[0])"
 
 # --- 2. Run the proven toolkit collection (degrades gracefully) ---------------
 echo "[collector] running ir_toolkit Linux collection ..."
+# --deep runs the full forensics collector (playbooks/linux/00_collect_forensics.sh).
+#
+# Without it the platform collected the inline snapshot only, and the endpoint lab measured
+# exactly what that costs: of nine artifacts planted for a LOW-sophistication intrusion, four
+# came back. The SSH backdoor key, the SUID escalation binary, the world-writable executable,
+# the `.bashrc` persistence and the hash of every running binary did not — the most obvious
+# evidence of the least sophisticated attack there is.
+#
+# It is not free: --deep walks the filesystem for SUID files and entropy-scans executables.
+# That cost is accepted because a collection that misses an authorized_keys backdoor has not
+# answered the question it was sent to answer. If the walk proves too heavy on a production
+# endpoint, the split is a collection profile, not a return to the inline snapshot —
+# planning/DECISIONS.md O-012.
 bash "${TOOLKIT}/Invoke-IRCollection-Linux.sh" \
     --output-root "${EVIDENCE}/reports" \
     --incident-id "${INCIDENT_ID}" \
+    --deep \
     --no-egress-monitor \
     --skip-reports 2>&1 | sed 's/^/  [toolkit] /'
 echo "[collector] collection exit handled (toolkit degrades on missing privilege)"
+
+# --- 2b. Corpus scenario (test corpora only) ----------------------------------
+# Merges declared-synthetic findings/indicators into the collection BEFORE the seal, and
+# feeds the scenario's memory artifacts to the synthetic sample so the server-side analyzer
+# derives them from the image itself. Absent the variable, nothing here runs.
+if [ -n "${IR_SCENARIO_FILE:-}" ] && [ -r "${IR_SCENARIO_FILE}" ]; then
+    echo "[collector] corpus scenario: $(basename "${IR_SCENARIO_FILE}")"
+    python3 "$(dirname "$0")/scenario_inject.py" "${IR_SCENARIO_FILE}" "${OUT_DIR}" \
+        || echo "[collector]   WARN: scenario injection failed — bundle ships without it" >&2
+    export IR_SAMPLE_ARTIFACTS_FILE="${IR_SCENARIO_FILE}"
+fi
 
 # --- 3. Capture volatile memory (real avml -> synthetic fallback) -------------
 MEM_IMG="${OUT_DIR}/memory_${HOST_S}.lime"

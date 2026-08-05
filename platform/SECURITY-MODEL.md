@@ -34,8 +34,8 @@ inside.
 originated in the DMZ except the Boundary controller's API and the egress worker's proxy port,
 both authenticated (P4).
 
-**Proven by:** `test/uat_dns.sh` — the enclave can resolve exactly one cross-tier name
-(`receiver`) and nothing else; `test/uat_boundary.sh` — the bastion cannot reach the enclave
+**Proven by:** `platform/test/uat_dns.sh` — the enclave can resolve exactly one cross-tier name
+(`receiver`) and nothing else; `platform/test/uat_boundary.sh` — the bastion cannot reach the enclave
 ingress except through a session.
 
 > A second inbound path is the failure mode to watch for. It never arrives labelled as one: it
@@ -55,16 +55,16 @@ this split exists to deny.
 
 Application secrets live in **Vault**, in the enclave: the application tier's database users are
 **dynamic**, minted by Vault against a stable owning role and rotated on demand
-(`hashicorp/vault/rotate-app-creds.sh`); the custody HMAC key and app secrets come from KV via
+(`platform/hashicorp/vault/rotate-app-creds.sh`); the custody HMAC key and app secrets come from KV via
 Vault Agent. The unseal key is the operator's, not a container's.
 
-**Enforced by:** placement in `deploy/enclave/docker-compose.yml`; the DMZ broker's environment
+**Enforced by:** placement in `platform/deploy/enclave/docker-compose.yml`; the DMZ broker's environment
 carries only the analyst credential and the controller's public certificate; the application
 tier reads credentials from the agent-rendered file, never from a static compose value.
 
-**Proven by:** `test/uat_boundary.sh` — asserts no recovery key, root key, worker-auth key or
+**Proven by:** `platform/test/uat_boundary.sh` — asserts no recovery key, root key, worker-auth key or
 database URL in the DMZ, no Boundary server there, and no readable private key;
-`test/uat_vault.sh` — asserts credentials are dynamic, minted live, and revocation works.
+`platform/test/uat_vault.sh` — asserts credentials are dynamic, minted live, and revocation works.
 
 ## P3 — Deny by default, and the allow-list is a thing that exists
 
@@ -75,7 +75,7 @@ a forwarding rule someone might add.
 **Enforced by:** one Boundary target (`sso-gate`), one grant
 (`ids=<target>;actions=authorize-session`), scoped to one project.
 
-**Proven by:** `test/uat_boundary.sh` — asserts exactly one target exists and it is the SSO gate.
+**Proven by:** `platform/test/uat_boundary.sh` — asserts exactly one target exists and it is the SSO gate.
 
 ## P4 — Nothing crosses a tier boundary in the clear
 
@@ -100,8 +100,8 @@ certificate, and giving it one would mean every health check carried trust mater
 without a certificate; `boundary_session.sh` refuses a non-`https` controller address with no
 override; Consul's cleartext HTTP and gRPC ports are disabled outright (`http = -1`).
 
-**Proven by:** `test/uat_boundary.sh` — client address is `https`, certificate pinned, the
-controller API does not answer plaintext; `test/uat_consul.sh` — cleartext ports closed, TLS
+**Proven by:** `platform/test/uat_boundary.sh` — client address is `https`, certificate pinned, the
+controller API does not answer plaintext; `platform/test/uat_consul.sh` — cleartext ports closed, TLS
 served with the enclave CA, an uncertified client refused, gossip keyring encrypted.
 
 ## P5 — Every access is attributable, and the record is truthful
@@ -128,7 +128,7 @@ Attribution only matters if the record is honest, so the platform holds itself t
 session-auditor principal holds `list,read` on sessions (project scope) and users (org scope)
 and no other grant.
 
-**Proven by:** `test/uat_boundary.sh` — the live session belongs to the provisioned analyst;
+**Proven by:** `platform/test/uat_boundary.sh` — the live session belongs to the provisioned analyst;
 the page's record matches the controller's own (read via a different authority), exactly one
 session is live, its client address is the running broker, and the auditor credential is
 refused when it attempts a cancel; a canceled session is replaced by a new authorized one,
@@ -143,7 +143,7 @@ exfiltration channel and the enclave is where the evidence is.
 CoreDNS is an egress **backstop**, not the primary resolver: while a network is internal there
 is nothing to forward, and it arms the moment a network gains a route out.
 
-**Proven by:** `test/uat_dns.sh` — no service resolves an outside name; both resolvers refuse
+**Proven by:** `platform/test/uat_dns.sh` — no service resolves an outside name; both resolvers refuse
 when queried directly; no service pins an address except the two resolvers, which must.
 
 ## P7 — Analysis is contained, and reverse engineering more so
@@ -155,7 +155,7 @@ compromised host's memory in a full disassembler.
 dropped, and the regions mounted read-only. Both supported tools (Binary Ninja Free, Ghidra)
 need no license server, activation or call-home, so containment costs nothing.
 
-**Proven by:** `test/uat_re_workstation.sh`; `test/uat_e2e.sh` re-asserts the same properties
+**Proven by:** `platform/test/uat_re_workstation.sh`; `platform/test/uat_e2e.sh` re-asserts the same properties
 from kernel state (`CapEff`, the mount table) on the sessions it launches.
 
 ## P8 — Custody is sealed, so transport can be untrusted
@@ -172,19 +172,19 @@ the enclave, so there is one ingress path with one set of checks.
 The tier boundary is not the only boundary. A compromised container inside the enclave must not
 be able to open a connection to the evidence stores just because it shares a network with them.
 
-Postgres and MinIO bind **loopback only**; the sole route to them is their Consul Connect
+Postgres, MinIO and Redis bind **loopback only**; the sole route to them is their Consul Connect
 sidecar, which terminates mutual TLS and enforces **intentions** — an explicit allow-list of
 which service may reach which, default-deny. The policy lives in
-`hashicorp/consul/config-entries/` and is written to Consul **on every deploy**, so the file and
+`platform/hashicorp/consul/config-entries/` and is written to Consul **on every deploy**, so the file and
 the enforced state converge. The control plane itself is hardened: ACLs default-deny with
 per-service tokens that cannot alter the intentions governing them, TLS on every port, gossip
 encrypted.
 
-**Enforced by:** loopback binds (`IR_DB_LISTEN`, `IR_MINIO_LISTEN`) with sidecars sharing each
+**Enforced by:** loopback binds (`IR_DB_LISTEN`, `IR_MINIO_LISTEN`, `IR_REDIS_LISTEN`) with sidecars sharing each
 service's network namespace; Consul intentions; ACL tokens issued per service identity by
 `consul-acl-bootstrap.sh`.
 
-**Proven by:** `test/uat_consul.sh` — denied pairs are refused on the wire, allowed pairs carry
+**Proven by:** `platform/test/uat_consul.sh` — denied pairs are refused on the wire, allowed pairs carry
 traffic, a service token cannot delete the intention governing it, and Vault mints a live
 credential through the mesh. The **Service Mesh** page renders the catalog and the enforced
 authorization matrix live from Consul, and calls out any service registered without a sidecar.
@@ -201,11 +201,11 @@ or path crosses the boundary. Outcomes are written back under a service credenti
 does not hold, transitions are guarded server-side, and a finished outcome cannot be rewritten
 — the history is an audit record, not a note.
 
-**Enforced by:** `troubleshooting/remediation-agent.sh` (the allow-list),
-`deploy/agent/docker-compose.yml` (network none, socket-only), transition guards in the API,
+**Enforced by:** `platform/troubleshooting/remediation-agent.sh` (the allow-list),
+`platform/deploy/agent/docker-compose.yml` (network none, socket-only), transition guards in the API,
 and the audit ledger entry written at request time.
 
-**Proven by:** `test/uat_repairs.sh` — the catalogue and allow-list match, the executor's
+**Proven by:** `platform/test/uat_repairs.sh` — the catalogue and allow-list match, the executor's
 posture is asserted from the running container, unknown actions and non-admin principals are
 refused, the deployed agent closes the loop, the repair verifiably repairs, and a recorded
 outcome cannot be re-claimed or overwritten.
@@ -234,9 +234,6 @@ with the reason. An undocumented exception is indistinguishable from a mistake s
 
 Stated plainly rather than implied by omission.
 
-- **Redis is not on the mesh.** It binds its network address without authentication and without
-  a sidecar, so P9 does not yet hold for the task queue. Its exposure is one internal network,
-  but the standard for the data tier is loopback-plus-sidecar and Redis does not meet it.
 - **The enclave tier runs on podman-compose, not pods/quadlets.** Namespace-sharing sidecars
   are re-attached by deploy-time convergence checks (`mesh_orphan_check`) rather than being
   structurally inseparable from their services. The checks are proven, but a pod would make the

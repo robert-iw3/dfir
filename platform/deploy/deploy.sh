@@ -22,7 +22,10 @@ COMPOSE="${IR_COMPOSE:-podman-compose}"
 RUNTIME="${IR_RUNTIME:-podman}"
 TIER="${1:-}"
 [[ -f "${HERE}/.env" ]] || cp "${HERE}/.env.example" "${HERE}/.env"
-set -a; . "${HERE}/.env"; set +a
+[[ -f "${HERE}/.env.db" ]] || cp "${HERE}/.env.db.example" "${HERE}/.env.db"
+# .env.db separately: the static admin credential is data-tier-only, and compose interpolation
+# for the db service still needs it in this process's environment.
+set -a; . "${HERE}/.env"; . "${HERE}/.env.db"; set +a
 # Bare hostname for DNS lookups: IR_PLATFORM_URL carries a scheme, port and path.
 PLATFORM_HOST="${IR_PLATFORM_URL#*://}"; PLATFORM_HOST="${PLATFORM_HOST%%[:/]*}"
 
@@ -38,6 +41,94 @@ COMPOSE_TIMEOUT="${IR_COMPOSE_TIMEOUT:-240}"
 # committed. Exported into the environment rather than passed as a second --env-file, because
 # podman-compose does not reliably merge two of them — a silently-absent key looks like a
 # tunnel that will not come up.
+# Smartcard (CAC/PIV) logon — rendered from templates, and OFF unless a PKI exists to serve it.
+#
+# Two things are switched: the ingress requests a client certificate, and the realm gains the
+# x509 authentication flow. Both stay inert at IR_PKI_LOGON=0, which is the default, because a
+# certificate flow with no trust anchors fails closed — it would lock every analyst out of the
+# platform, including whoever needs to log in and turn it off again.
+pki_logon_render() {
+    local dyn="${HERE}/../traefik/dynamic-sso/dynamic.yml"
+    local pki="${HERE}/../hashicorp/keycloak/pki-logon"
+    local anchors=0
+    [[ -d "${pki}/trust-anchors" ]] && anchors="$(find "${pki}/trust-anchors" -name '*.pem' -o -name '*.crt' 2>/dev/null | grep -c . || echo 0)"
+
+    if [[ "${IR_PKI_LOGON:-0}" != "1" ]]; then
+        # Rendered explicitly to the disabled form rather than left as found: a deployment that
+        # once had it on must not keep asking for certificates after it is turned off.
+        sed -i 's|^      clientAuth:.*|      # __CLIENT_AUTH__|; /^        caFiles:/d; /^          - \/certs\/pki\//d; /^        clientAuthType:/d' "${dyn}"
+        grep -q "__CLIENT_AUTH__" "${dyn}" || warn "the ingress client-auth block could not be reset"
+        return 0
+    fi
+
+    # Enabled. Without anchors this is a lockout, not a hardening step, so it is refused here
+    # rather than discovered at the login page.
+    [[ "${anchors}" -gt 0 ]] \
+        || die "IR_PKI_LOGON=1 but ${pki}/trust-anchors holds no CA — see its README; enabling smartcard logon without a trust anchor locks every analyst out"
+
+    local cafiles=""
+    while read -r f; do
+        [[ -n "${f}" ]] && cafiles+="\n          - /certs/pki/$(basename "${f}")"
+    done < <(find "${pki}/trust-anchors" \( -name '*.pem' -o -name '*.crt' \) 2>/dev/null)
+
+    sed -i "s|^      # __CLIENT_AUTH__|      clientAuth:\n        caFiles:${cafiles}\n        clientAuthType: RequestClientCert|" "${dyn}"
+    ok "smartcard logon enabled — the ingress requests a client certificate against ${anchors} trust anchor(s)"
+}
+
+# The Vault image's config tree (generate_certs.py + vault-server.hcl). It lives in the
+# `containers` checkout, whose position relative to this tree is a property of the host, not of
+# the platform — so it is LOCATED, and a miss fails loudly rather than mounting nothing and
+# leaving Vault waiting on certificates that never arrive.
+resolve_vault_config() {
+    [[ -n "${IR_VAULT_CONFIG:-}" && -f "${IR_VAULT_CONFIG}/generate_certs.py" ]] && return 0
+    local base hit
+    for base in "${HERE}/../.." "${HERE}/../../.." "${HOME}/Documents" "${HOME}"; do
+        [[ -d "${base}" ]] || continue
+        hit="$(find "${base}" -maxdepth 5 -type f -path '*/vault/config/generate_certs.py' \
+               -not -path '*/node_modules/*' 2>/dev/null | head -1)"
+        if [[ -n "${hit}" ]]; then
+            IR_VAULT_CONFIG="$(cd "$(dirname "${hit}")" && pwd)"; export IR_VAULT_CONFIG
+            return 0
+        fi
+    done
+    die "cannot locate the Vault config tree (vault/config/generate_certs.py) — set IR_VAULT_CONFIG"
+}
+
+# The Vault image, built from the same checkout as its config. The platform does not vendor it,
+# so it was previously a prerequisite nothing declared: absent, compose tries to PULL
+# localhost/vault and the failure reads as a registry error while the real cause is a missing
+# build. Built here so the deployment carries its own prerequisite.
+ensure_vault_image() {
+    local tag; tag="$(sed -n 's/^[[:space:]]*image:[[:space:]]*\(localhost\/vault:[^[:space:]]*\).*/\1/p' \
+        "$(compose_of enclave)" | head -1)"
+    tag="${tag:-localhost/vault:2.0.3}"
+    ${RUNTIME} image exists "${tag}" && return 0
+    local ctx; ctx="$(dirname "${IR_VAULT_CONFIG}")"
+    [[ -f "${ctx}/Dockerfile" ]] || die "no Dockerfile at ${ctx} — cannot build ${tag}"
+    say "  building ${tag} (absent, from ${ctx})"
+    ${RUNTIME} build -t "${tag}" "${ctx}" >/dev/null 2>&1 \
+        || die "failed to build ${tag} from ${ctx}"
+    ok "${tag} built"
+}
+
+# The tier's compose file, located dynamically. The expected location wins; when the tree has
+# been rearranged the platform root is searched, and zero or multiple matches fail LOUDLY —
+# deploying a silently mis-resolved compose file is worse than refusing.
+compose_of() { # tier -> absolute path
+    # Two statements, necessarily: bash expands every assignment word of a `local` line
+    # BEFORE binding any of them, so ${tier} in the second assignment reads the CALLER's
+    # scope — unbound under set -u unless the caller happens to have one.
+    local tier="$1" hits
+    local expected="${HERE}/${tier}/docker-compose.yml"
+    if [[ -f "${expected}" ]]; then printf '%s' "${expected}"; return 0; fi
+    hits="$(find "${HERE}/.." -name docker-compose.yml -path "*/${tier}/*" \
+            -not -path "*/archive/*" -not -path "*/node_modules/*" 2>/dev/null)"
+    if [[ "$(grep -c . <<<"${hits}")" != "1" ]]; then
+        die "cannot resolve the ${tier} compose file: expected ${expected}, found: ${hits:-none}"
+    fi
+    printf '%s' "${hits}"
+}
+
 dc() {
     local tier="$1"; shift
     local extra
@@ -64,8 +155,9 @@ dc() {
         IR_PLATFORM_DIR="${IR_PLATFORM_DIR:-$(cd "${HERE}/.." && pwd)}"; export IR_PLATFORM_DIR
         IR_AGENT_HOST="${IR_AGENT_HOST:-$(hostname)}"; export IR_AGENT_HOST
     fi
-    timeout "${COMPOSE_TIMEOUT}" env -C "${HERE}/${tier}" \
-        ${COMPOSE} -p "$(proj "$tier")" --env-file ../.env -f docker-compose.yml "${overlay[@]}" "$@"
+    local cf; cf="$(compose_of "${tier}")"
+    timeout "${COMPOSE_TIMEOUT}" env -C "$(dirname "${cf}")" \
+        ${COMPOSE} -p "$(proj "$tier")" --env-file "${HERE}/.env" -f "${cf}" "${overlay[@]}" "$@"
     local rc=$?
     # 124 = timeout killed it. The stage's own health gate decides whether that is fatal.
     [[ $rc -eq 124 ]] && warn "compose call timed out after ${COMPOSE_TIMEOUT}s (tier: ${tier})"
@@ -148,6 +240,15 @@ recreate_if_stale() { # tier  service...
     done
 
     (( ${#stale[@]} )) || return 0
+    replace_containers "${proj}" "running a superseded image" "${stale[@]}"
+}
+
+# Remove containers so the staged bring-up recreates them, refusing while it would destroy
+# a running analysis. Shared by the image and credential checks so both refuse alike.
+replace_containers() { # proj  reason  name...
+    local proj="$1" reason="$2"; shift 2
+    local stale=("$@")
+    (( ${#stale[@]} )) || return 0
 
     # Removing a container takes everything that depends on it. The worker depends on the
     # backend, so replacing the backend silently kills whatever the worker is analyzing —
@@ -176,18 +277,53 @@ recreate_if_stale() { # tier  service...
         return 0
     fi
 
-    if (( ${#stale[@]} )); then
-        warn "replacing container(s) running a superseded image: ${stale[*]}"
-        # --depend is required, not optional: compose turns depends_on into podman
-        # container dependencies, and podman refuses to remove a container that has
-        # dependents. Without it the removal fails, the old container keeps running, and
-        # the deploy reports success having changed nothing.
-        #
-        # The cascade is safe here because the stages that own those dependents run after
-        # this one and bring them back in dependency order — which is the whole reason the
-        # bring-up is staged.
-        ${RUNTIME} rm -f --depend "${stale[@]}" >/dev/null 2>&1 || true
-    fi
+    warn "replacing container(s) ${reason}: ${stale[*]}"
+    # --depend is required, not optional: compose turns depends_on into podman
+    # container dependencies, and podman refuses to remove a container that has
+    # dependents. Without it the removal fails, the old container keeps running, and
+    # the deploy reports success having changed nothing.
+    #
+    # The cascade is safe here because the stages that own those dependents run after
+    # this one and bring them back in dependency order — which is the whole reason the
+    # bring-up is staged.
+    ${RUNTIME} rm -f --depend "${stale[@]}" >/dev/null 2>&1 || true
+}
+
+# Replace containers still holding a database credential Vault has superseded.
+#
+# The application tier reads `/vault/secrets/app.env` once, at entrypoint, and pools
+# connections from it. Vault mints a fresh dynamic user whenever the agent re-authenticates
+# and revokes the previous one, so a container left running across that boundary
+# authenticates as a role the database has dropped. Keycloak already had this guard; the
+# app tier did not.
+#
+# The log shipper is why this exists. Its own work — tailing web-tier logs into the object
+# store — needs no database at all, so it went on shipping perfectly while every self-report
+# failed, and the only symptom was a health row that stopped moving. The image check could
+# not see it: the image had not changed, only the credential inside the container.
+recreate_on_stale_credential() { # tier  service...
+    local tier="$1"; shift
+    local proj; proj="$(proj "$tier")"
+    local rendered svc name running stale=()
+
+    rendered="$(${RUNTIME} exec "${proj}_vault-agent_1" \
+        sh -c "sed -n 's/^export POSTGRES_USER=//p' /vault/secrets/app.env" 2>/dev/null)"
+    [[ -n "${rendered}" ]] || return 0
+
+    for svc in "$@"; do
+        name="${proj}_${svc}_1"
+        # Read from the process, not from `inspect`: the entrypoint sources the file into the
+        # environment it execs with, so the container's own definition never carries it.
+        running="$(${RUNTIME} exec "${name}" sh -c \
+            "tr '\0' '\n' < /proc/1/environ | sed -n 's/^POSTGRES_USER=//p'" 2>/dev/null)"
+        # Absent means this service does not hold one — the puller reaches the platform over
+        # HTTP — and absence is not staleness.
+        [[ -n "${running}" ]] || continue
+        [[ "${running}" == "${rendered}" ]] || stale+=("${name}")
+    done
+
+    (( ${#stale[@]} )) || return 0
+    replace_containers "${proj}" "holding a superseded database credential" "${stale[@]}"
 }
 
 # Assert each container is running an image built since the source last changed.
@@ -239,6 +375,7 @@ verify_image() { # tier  service...
         case "${svc}" in
             frontend) src="${HERE}/../frontend" ;;
             backend|worker) src="${HERE}/../backend ${HERE}/../shared" ;;
+            keycloak) src="${HERE}/../keycloak" ;;
             *) continue ;;
         esac
 
@@ -261,6 +398,21 @@ verify_image() { # tier  service...
 
 # Wait until a container both exists and passes a probe. Fails loudly rather than
 # letting a later stage start against a service that never came up.
+# Does the credential the agent rendered actually work?
+#
+# Tested from inside the database container against 127.0.0.1 rather than the local socket:
+# the loopback route goes through a host-based rule, so the password is really checked. Over
+# the socket the connection passes on trust and proves nothing.
+app_cred_authenticates() {
+    local env_out u p
+    env_out="$(${RUNTIME} exec ir-enclave_vault-agent_1 cat /vault/secrets/app.env 2>/dev/null)" || return 1
+    u="$(sed -n 's/^export POSTGRES_USER=//p' <<<"${env_out}" | tr -d '"'"'"'"')"
+    p="$(sed -n 's/^export POSTGRES_PASSWORD=//p' <<<"${env_out}" | tr -d '"'"'"'"')"
+    [[ -n "${u}" && -n "${p}" ]] || return 1
+    ${RUNTIME} exec -e "PGPASSWORD=${p}" ir-enclave_db_1 \
+        psql -h 127.0.0.1 -U "${u}" -d "${POSTGRES_DB:-ir_platform}" -tAc 'select 1' >/dev/null 2>&1
+}
+
 wait_for() { # name  timeout_s  probe-command...
     local name="$1" timeout="$2"; shift 2
     local waited=0
@@ -309,8 +461,20 @@ logmatch() { [[ "$(${RUNTIME} logs "$1" 2>&1 | grep -c "$2")" -gt 0 ]]; }
 #                   outside the compose context, so compose cannot build it at all.
 #
 # Building both here makes a clean deployment work the same as a repeat one.
+# The code graph is generated from source and describes what is deployed — services, the
+# script graph, the API surface, and which UAT proves which service. Warned about here rather
+# than enforced: a stale manifest is a documentation defect, not a reason to refuse a
+# deployment. uat_baseline.sh asserts it and fails.
+check_code_graph() {
+    local gen="${HERE}/../../gen_code_graph.py"
+    [[ -f "${gen}" ]] || return 0
+    python3 "${gen}" --check >/dev/null 2>&1 \
+        || warn "the code graph is stale — run gen_code_graph.py (a service, script, route or UAT changed)"
+}
+
 ensure_build_images() {
     say "Images · prerequisites for the staged gates"
+    check_code_graph
 
     if ! ${RUNTIME} image exists localhost/ir-workstation:latest 2>/dev/null; then
         ${RUNTIME} build -t localhost/ir-workstation:latest \
@@ -322,14 +486,35 @@ ensure_build_images() {
         ok "probe/tools image present"
     fi
 
-    if ! ${RUNTIME} image exists localhost/ir-worker:latest 2>/dev/null; then
+    if worker_image_stale; then
         say "  building the analysis worker (Volatility + toolkit analysis stack)"
         bash "${HERE}/../backend/build_worker.sh" >/dev/null 2>&1 \
-            && ok "analysis worker image built" \
+            && ok "analysis worker image rebuilt from current backend source" \
             || die "could not build the analysis worker — see backend/build_worker.sh"
     else
-        ok "analysis worker image present"
+        ok "analysis worker image current with backend/ and shared/"
     fi
+}
+
+# The worker embeds the WHOLE backend application — it runs the same Django code as the API —
+# so any change under backend/ or shared/ makes a built image stale.
+#
+# Built only when absent, the worker went on running pre-migration models against a migrated
+# database. Every finding INSERT failed a NOT NULL constraint on a column its code did not
+# know about; `adjudicate()` never raises, so it recorded the reason and returned, no capture
+# was adjudicated, no run was marked compromised, and the symptom surfaced three layers away
+# as a correlation pass with nothing to link. Nothing in the deploy said a word.
+#
+# IR_REBUILD_WORKER=1 forces it, for a toolkit change this cannot see.
+worker_image_stale() {
+    ${RUNTIME} image exists localhost/ir-worker:latest 2>/dev/null || return 0
+    [[ "${IR_REBUILD_WORKER:-0}" == "1" ]] && return 0
+    local built
+    built="$(${RUNTIME} image inspect localhost/ir-worker:latest --format '{{.Created}}' 2>/dev/null)"
+    built="$(date -d "${built}" +%s 2>/dev/null)" || return 0
+    # One source file newer than the image settles it; no reason to walk the rest.
+    [[ -n "$(find "${HERE}/../backend" "${HERE}/../shared" -type f \
+             -not -path '*/__pycache__/*' -newermt "@${built}" -print -quit 2>/dev/null)" ]]
 }
 
 # Remove containers belonging to a tier whose service no longer exists in its compose file.
@@ -541,7 +726,7 @@ import ipaddress, os, sys
 subnet = ipaddress.ip_network(os.environ["ENCLAVE_SUBNET"])
 claimed = {"ENCLAVE_DNS_IP": os.environ["ENCLAVE_DNS_IP"]}
 rc = 0
-for svc in ("DB", "MINIO", "VAULT", "BACKEND", "WORKER", "FRONTEND", "PULLER"):
+for svc in ("DB", "MINIO", "REDIS", "VAULT", "BACKEND", "WORKER", "FRONTEND", "PULLER", "OAUTH2_PROXY", "LOG_SHIPPER"):
     var = f"IR_IP_{svc}"; val = os.environ.get(var, "")
     if not val:
         print(f"    {var} is unset — the mesh cannot register {svc.lower()}"); rc = 1; continue
@@ -562,6 +747,8 @@ PY
 # --- staged tier bring-ups -------------------------------------------------
 
 up_enclave() {
+    resolve_vault_config
+    ensure_vault_image
     reap_orphans enclave
     mesh_addr_check
     # The resolver comes up before anything that depends on it: every service below is given
@@ -745,7 +932,7 @@ up_enclave() {
     if [[ "${IR_MESH:-1}" == "1" ]]; then
         say "Enclave · stage 1b/4 — service mesh (destinations)"
         dc enclave build db-sidecar >/dev/null 2>&1
-        mesh_attach db minio
+        mesh_attach db minio redis
         ok "data-tier sidecars up — Postgres and MinIO are reachable only through them"
     fi
 
@@ -755,11 +942,13 @@ up_enclave() {
     # once a rendered secrets file exists, since with IR_VAULT=1 it has no other source for
     # its database password.
     if [[ "${IR_VAULT:-1}" != "1" ]]; then
-        warn "IR_VAULT=0 — the app tier will use static secrets from .env"
+        # No static fallback exists: the admin credential lives in .env.db, which only the
+        # data tier loads. An app tier without Vault has no database password at all.
+        die "IR_VAULT=0 has no credential path — the app tier holds no static secret; deploy with Vault"
     else
         # The one-shots are removed first or they never run again: `compose up` will not restart
         # a container that exited 0, so a corrected bootstrap script sits bind-mounted in a dead
-        # container while every deploy reports success with the old behaviour. Both converge —
+        # container while every deploy reports success with the old behavior. Both converge —
         # db-bootstrap reconciles grants, vault-setup exits early once provisioned — so running
         # them every deploy is the point, not a cost.
         # --depend, and NOT silenced. podman refuses to remove a container that has dependents,
@@ -846,7 +1035,7 @@ up_enclave() {
         # success and creates nothing, and the platform then runs on already-issued leases while
         # every stage reports healthy. Verified by container id: the flag does not prevent the
         # recreation it was reached for, it just drops the service.
-        if ! vup="$(dc enclave up -d db-bootstrap vault-setup vault-agent 2>&1)"; then
+        if ! vup="$(dc enclave up -d db-bootstrap vault-setup vault-agent kc-vault-agent 2>&1)"; then
             warn "the Vault one-shots did not start — credentials will not reconcile:"
             printf '%s\n' "${vup}" | tail -5 | sed 's/^/        /'
         fi
@@ -861,21 +1050,160 @@ up_enclave() {
                 && ok "Vault reaches Postgres through the mesh" \
                 || warn "Vault's database upstream never opened — it cannot mint or revoke credentials"
         fi
-        # The rendered file IS the gate. The agent starting proves nothing: it retries auth in
-        # the background and a template that never renders leaves the app with no password.
+        # Restarted, not merely started: an agent already running holds the secret_id it read
+        # at boot and backs off for minutes between auth attempts. vault-setup has just
+        # reissued that credential, and the restart is what makes the agent pick it up now
+        # rather than after a backoff nothing here is waiting for.
+        ${RUNTIME} restart ir-enclave_vault-agent_1 ir-enclave_kc-vault-agent_1 >/dev/null 2>&1 || true
+
+        # The rendered file is necessary and not sufficient. The agent starting proves
+        # nothing: it retries auth in the background, and a file left by an EARLIER deploy
+        # satisfies a grep while its Postgres role has long since been revoked. So the gate is
+        # the credential working, tested against Postgres.
         wait_for ir-enclave_vault-agent_1 150 \
             ${RUNTIME} exec ir-enclave_vault-agent_1 \
             sh -c 'grep -q POSTGRES_PASSWORD /vault/secrets/app.env' \
             || die "Vault Agent never rendered the app secrets — the app tier cannot start"
         vuser="$(${RUNTIME} exec ir-enclave_vault-agent_1 \
                  sh -c 'grep "^export POSTGRES_USER=" /vault/secrets/app.env | cut -d= -f2' 2>/dev/null)"
-        ok "Vault issued the app tier a dynamic database user (${vuser:-unknown})"
+        cred_ok=0
+        for _ in $(seq 1 20); do
+            app_cred_authenticates && { cred_ok=1; break; }
+            sleep 3
+        done
+        if (( cred_ok )); then
+            ok "Vault issued the app tier a dynamic database user, and it authenticates (${vuser:-unknown})"
+        else
+            die "the app tier's Vault credential does not authenticate to Postgres (${vuser:-unknown}) — the
+        rendered secret is stale. Check: ${RUNTIME} logs ir-enclave_vault-agent_1"
+        fi
+        # Keycloak's credential, from ITS agent: identity cannot start without it, and a
+        # gate here names the real failure instead of a login page two stages later.
+        wait_for ir-enclave_kc-vault-agent_1 150 \
+            ${RUNTIME} exec ir-enclave_kc-vault-agent_1 \
+            sh -c 'grep -q KC_DB_PASSWORD /vault/secrets/kc-db.env' \
+            || die "Keycloak's credential never rendered — identity cannot reach its store"
+        kcuser="$(${RUNTIME} exec ir-enclave_kc-vault-agent_1 \
+                 sh -c 'grep "^export KC_DB_USERNAME=" /vault/secrets/kc-db.env | cut -d= -f2' 2>/dev/null)"
+        ok "Vault issued Keycloak a dynamic database user (${kcuser:-unknown})"
     fi
 
+    pki_logon_render
+
     say "Enclave · stage 2/4 — identity (Keycloak takes ~60s)"
+    # The identity store lives on Postgres: accounts and analyst-set passwords survive a
+    # recreate, so recreating Keycloak is routine rather than destructive. Realm changes land
+    # through realm-converge.sh below — the import applies only to a fresh database, so
+    # recreating on a changed realm file stopped doing anything.
+    dc enclave build keycloak >/dev/null 2>&1
+
+    # ONE decision about whether the running Keycloak is still valid, taken BEFORE its proxy
+    # is touched. Four independent things invalidate it, and each was found the hard way:
+    #
+    #   own namespace     it predates the inverted layout and cannot be adopted into the
+    #                     proxy's namespace by compose.
+    #   stale image       the login theme — including the error page's recovery link — is
+    #                     BAKED in. `compose up` leaves a running container alone, so a
+    #                     rebuilt image sits unused while the deploy reports success.
+    #   superseded creds  Keycloak reads its database credential once and pools connections.
+    #                     The agent mints a fresh dynamic user whenever it re-authenticates
+    #                     and Vault revokes the old one, so a Keycloak left running across
+    #                     that boundary authenticates as a role the database has dropped.
+    #   unreadable        the credential cannot be read from a container that is
+    #                     crash-looping — which is exactly what the stale-credential fault
+    #                     looks like, so "cannot tell" must mean recreate, not skip.
+    kc_stale=""
+    kc_mode="$(${RUNTIME} inspect -f '{{.HostConfig.NetworkMode}}' ir-enclave_keycloak_1 2>/dev/null || true)"
+    kc_img_run="$(${RUNTIME} inspect ir-enclave_keycloak_1 --format '{{.Image}}' 2>/dev/null || true)"
+    kc_img_new="$(${RUNTIME} image inspect localhost/ir-keycloak:latest --format '{{.Id}}' 2>/dev/null || true)"
+    kc_rendered="$(${RUNTIME} exec ir-enclave_kc-vault-agent_1 \
+        sh -c 'sed -n "s/^export KC_DB_USERNAME=//p" /vault/secrets/kc-db.env' 2>/dev/null || true)"
+    kc_running="$(${RUNTIME} exec ir-enclave_keycloak_1 sh -c \
+        "tr '\0' '\n' < /proc/1/environ | sed -n 's/^KC_DB_USERNAME=//p'" 2>/dev/null || true)"
+    if [[ -n "${kc_img_run}" ]]; then
+        [[ "${kc_mode}" == container:* ]] || kc_stale="it is not in its proxy's namespace"
+        [[ -z "${kc_stale}" && -n "${kc_img_new}" && "${kc_img_run}" != "${kc_img_new}" ]] \
+            && kc_stale="it runs an older image than the one just built"
+        [[ -z "${kc_stale}" && -n "${kc_rendered}" && "${kc_running}" != "${kc_rendered}" ]] \
+            && kc_stale="its database credential has been superseded"
+    fi
+    if [[ -n "${kc_stale}" ]]; then
+        warn "recreating Keycloak — ${kc_stale}"
+        # DEPENDENCY ORDER, resolved by the runtime rather than guessed.
+        #
+        # podman refuses to remove a container others depend on. Those dependencies come from
+        # compose `depends_on` and are tracked in `.Dependencies` — the backend depends on
+        # Keycloak, so removing Keycloak alone fails however carefully the sidecars are
+        # handled first. An earlier attempt here removed namespace SHARERS, which is a
+        # different relationship and left the removal failing exactly as before: the deploy
+        # then carried on against the container it believed it had replaced, and Keycloak
+        # kept serving on a credential Vault had already superseded until its pool died.
+        #
+        # `--depend` removes the container and whatever depends on it; stages 3 and 4 bring
+        # those back. This is the same idiom the Vault recreate above uses.
+        if ! kcrm="$(${RUNTIME} rm -f --depend ir-enclave_keycloak_1 2>&1)"; then
+            case "${kcrm}" in
+                *"no such container"*) : ;;
+                *) warn "could not remove Keycloak — it will keep running as it is:"
+                   printf '%s\n' "${kcrm}" | tail -3 | sed 's/^/        /' ;;
+            esac
+        fi
+    fi
+
+    # The proxy owns the namespace and starts FIRST, exactly as for the SSO gate: Keycloak
+    # exits while its database upstream is closed, and each exit of a namespace owner would
+    # strand the proxy carrying the upstream it is waiting for. Registration precedes the
+    # proxy; a second pass follows the service so the registration reflects what runs.
+    if [[ "${IR_MESH:-1}" == "1" ]]; then
+        bash "${HERE}/../hashicorp/consul/register-mesh.sh" >/dev/null 2>&1 || true
+        dc enclave up -d keycloak-sidecar >/dev/null 2>&1
+    fi
     dc enclave up -d keycloak >/dev/null 2>&1
+    if [[ "${IR_MESH:-1}" == "1" ]]; then
+        bash "${HERE}/../hashicorp/consul/register-mesh.sh" >/dev/null 2>&1 || true
+        # The up above walks compose dependencies; repair anything it recreated out from
+        # under an attached proxy BEFORE gating on the path those proxies serve.
+        mesh_orphan_check db minio redis vault
+        mesh_ready keycloak 5432 90 \
+            && ok "Keycloak's database upstream is open" \
+            || warn "Keycloak's database upstream never opened — identity cannot reach its store"
+    fi
     wait_for ir-enclave_keycloak_1 300 logmatch ir-enclave_keycloak_1 "Listening on" \
         || die "Keycloak never started — the SSO gate cannot come up without it"
+
+    # The realm FILE is enforced on every deploy. With the store persistent, --import-realm
+    # applies only on first start; without this converge a changed password policy or
+    # brute-force threshold deploys cleanly and changes nothing.
+    bash "${HERE}/../hashicorp/keycloak/realm-converge.sh" | sed 's/^/    /' \
+        || warn "realm converge reported a problem — the file and the running realm may differ"
+
+    # Demo accounts are provisioned HERE, not by the realm import (an import never updates an
+    # existing realm). Idempotent: existing users are untouched; a created one is announced
+    # with its single-use initial credential, and Keycloak forces its replacement at first
+    # login. Recovery (lockout, forgotten password): admin/kc-userctl.sh, on this host.
+    #
+    # Still verified even with the store persistent: a warning here once left all four
+    # accounts absent, and the failure only surfaced as "invalid username or password" at
+    # the kiosk with no way to tell that the user simply did not exist.
+    bash "${HERE}/../hashicorp/keycloak/provision-demo-users.sh" | sed 's/^/    /' \
+        || warn "demo-account provisioning reported a problem — verifying regardless"
+    local present
+    present="$(${RUNTIME} exec -i ir-enclave_keycloak_1 sh -c '
+        /opt/keycloak/bin/kcadm.sh config credentials --server http://127.0.0.1:8080 \
+            --realm master --user "${KC_BOOTSTRAP_ADMIN_USERNAME:-admin}" \
+            --password "${KC_BOOTSTRAP_ADMIN_PASSWORD:-admin}" >/dev/null 2>&1 &&
+        /opt/keycloak/bin/kcadm.sh get users -r irplatform --fields username 2>/dev/null' \
+        | grep -c '"username"' | tail -1)"
+    # `grep -c` already prints 0 when nothing matches, so a `|| echo 0` fallback appends a
+    # SECOND line and the comparison below dies on "0\n0" — a syntax error standing in for
+    # what is really "Keycloak never came up". `tail -1` keeps one line and masks grep's
+    # exit status, which is the pipeline's only failure mode here.
+    if [[ "${present:-0}" -ge 4 ]]; then
+        ok "demo accounts present (${present}) — initial credentials above, if any were created"
+    else
+        die "only ${present:-0} demo account(s) exist after provisioning — nobody could sign in; \
+re-run deploy, or provision manually with hashicorp/keycloak/provision-demo-users.sh"
+    fi
 
     say "Enclave · stage 3/4 — application"
     # Compose cannot be trusted to leave a container on the image it just built: it walks
@@ -898,6 +1226,9 @@ up_enclave() {
         recreate_if_stale enclave backend frontend worker
         dc enclave up -d --build backend frontend worker >/dev/null 2>&1
         recreate_if_stale enclave backend frontend worker
+        # A revoked credential is invisible to the image check — same image, dropped role.
+        # These usually get replaced for image drift anyway, which is luck, not a guarantee.
+        recreate_on_stale_credential enclave backend worker
         dc enclave up -d backend frontend worker >/dev/null 2>&1
     fi
     # Their sidecars, IMMEDIATELY — before the health gate below, not after.
@@ -917,22 +1248,43 @@ up_enclave() {
         mesh_attach backend worker frontend
         ok "application sidecars up — every data-tier connection now passes an intention check"
     fi
-    verify_image enclave backend frontend worker
+    verify_image enclave backend frontend worker keycloak
     # AFTER verify_image, which recreates a service left on a stale image — and a recreated
     # service has a new network namespace, stranding the proxy attached a moment ago. Sweeping
     # here makes namespace reconciliation the LAST thing the stage does, so nothing that runs
     # after it can undo the attach.
     if [[ "${IR_MESH:-1}" == "1" ]]; then
-        mesh_orphan_check db minio vault backend worker frontend puller
+        mesh_orphan_check db minio redis vault backend worker frontend puller oauth2-proxy log-shipper keycloak
     fi
     wait_for ir-enclave_backend_1 180 pyprobe ir-enclave_backend_1 http://127.0.0.1:8000/api/health/ \
         || die "API never became healthy"
 
     say "Enclave · stage 4/4 — SSO gate + ingress + puller"
+    # The gate holds its sessions in Redis, which is loopback-bound behind a sidecar, so its
+    # proxy must exist FIRST — and here the proxy owns the network namespace, so it is started
+    # before the service rather than attached after it. Registration precedes both: a sidecar
+    # with no registered service has nothing to front.
+    if [[ "${IR_MESH:-1}" == "1" ]]; then
+        bash "${HERE}/../hashicorp/consul/register-mesh.sh" >/dev/null 2>&1 || true
+        dc enclave up -d oauth2-proxy-sidecar >/dev/null 2>&1
+        wait_for ir-enclave_oauth2-proxy-sidecar_1 60 true \
+            || warn "the SSO gate's proxy did not start — its session store will be unreachable"
+    fi
     dc enclave up -d oauth2-proxy >/dev/null 2>&1
     wait_for ir-enclave_oauth2-proxy_1 120 logmatch ir-enclave_oauth2-proxy_1 "OAuthProxy configured" \
-        || warn "SSO gate did not report ready — check its OIDC settings"
+        || warn "SSO gate did not report ready — check its OIDC settings and its session store"
     dc enclave up -d --build traefik puller >/dev/null 2>&1
+    # Before the shipper is brought up, not after: a container already running on a revoked
+    # credential is not fixed by `up -d`, which leaves a running container alone.
+    recreate_on_stale_credential enclave log-shipper
+    # The shipper follows the ingress: its sidecar owns the namespace, so it starts first.
+    if [[ "${IR_MESH:-1}" == "1" ]]; then
+        bash "${HERE}/../hashicorp/consul/register-mesh.sh" >/dev/null 2>&1 || true
+        dc enclave up -d log-shipper-sidecar >/dev/null 2>&1
+    fi
+    dc enclave up -d log-shipper >/dev/null 2>&1
+    wait_for ir-enclave_log-shipper_1 90 logmatch ir-enclave_log-shipper_1 "following" \
+        || warn "the log shipper did not start — web-tier records stay in container filesystems"
     if [[ "${IR_MESH:-1}" == "1" ]]; then
         mesh_attach puller
     fi
@@ -1094,8 +1446,54 @@ u.urlopen('https://localhost:8090/healthz',timeout=4,context=c)" \
     ok "DMZ up"
 }
 
+# Where an analyst's exports land on the HOST, resolved per platform.
+#
+# Portable by construction rather than by assuming Linux: the compose file names one plain
+# variable and this decides its value, so Windows and macOS need no separate compose file.
+# The directory is CREATED here — a bind mount whose source does not exist is created by the
+# runtime as a root-owned directory the browser then cannot write to, which surfaces as
+# downloads silently failing rather than as a permission error anyone can see.
+#
+#   IR_EXPORT_DIR   set it to override everything below (any platform).
+#   Linux           the XDG download directory when the session defines one, else ~/Downloads
+#   macOS           ~/Downloads
+#   WSL             the WINDOWS user's Downloads, so exports appear in Explorer rather than
+#                   inside the distro where an analyst on Windows would never look for them
+#   Git Bash/MSYS   %USERPROFILE%\Downloads, via the POSIX path the runtime accepts
+resolve_export_dir() {
+    if [[ -n "${IR_EXPORT_DIR:-}" ]]; then
+        export IR_EXPORT_DIR; return 0
+    fi
+    local base=""
+    case "$(uname -s)" in
+        Linux)
+            if grep -qi microsoft /proc/version 2>/dev/null && command -v wslpath >/dev/null 2>&1; then
+                local winhome
+                winhome="$(wslpath -u "$(cmd.exe /c 'echo %USERPROFILE%' 2>/dev/null | tr -d '\r')" 2>/dev/null || true)"
+                [[ -d "${winhome}" ]] && base="${winhome}/Downloads"
+            fi
+            [[ -z "${base}" ]] && base="$(xdg-user-dir DOWNLOAD 2>/dev/null || true)"
+            [[ -z "${base}" || ! -d "${base}" ]] && base="${HOME}/Downloads"
+            ;;
+        Darwin)  base="${HOME}/Downloads" ;;
+        MINGW*|MSYS*|CYGWIN*)
+            base="${USERPROFILE:-${HOME}}/Downloads"
+            base="${base//\\//}"          # backslashes are not path separators to the runtime
+            ;;
+        *)       base="${HOME}/Downloads" ;;
+    esac
+    IR_EXPORT_DIR="${base}/ir-platform"
+    export IR_EXPORT_DIR
+    mkdir -p "${IR_EXPORT_DIR}" 2>/dev/null \
+        || die "cannot create the export directory ${IR_EXPORT_DIR} — set IR_EXPORT_DIR to a writable path"
+}
+
 up_workstation() {
     say "Workstation · analyst browser"
+    resolve_export_dir
+    [[ -w "${IR_EXPORT_DIR}" ]] \
+        && ok "exports land on this host at ${IR_EXPORT_DIR}" \
+        || die "the export directory is not writable: ${IR_EXPORT_DIR}"
     local waited=0 answer=""
     while (( waited < 90 )); do
         answer=$(${RUNTIME} run --rm --network ir-edge --dns "${DNS_EDGE_IP}" \
@@ -1116,6 +1514,18 @@ up_workstation() {
     # compose cannot create the browser until the node exists — and if the node is up but has
     # not joined, the browser starts into a namespace with no route to the platform and fails
     # in a way that looks like a broken kiosk rather than an unenrolled tunnel.
+    #
+    # A node left over from a failed join still holds the key it failed with: the daemon
+    # retries on a backoff that outlives the check below, so the node reads as unenrolled long
+    # after a fresh key is staged. Recreate the pair instead — browser first, since it shares
+    # the node's namespace and removing the owner before the sharer wedges the runtime.
+    if ${RUNTIME} inspect ir-workstation_tailnet_1 >/dev/null 2>&1 && \
+       ! { ts_out="$(${RUNTIME} exec ir-workstation_tailnet_1 tailscale ip -4 2>/dev/null || true)"
+            case "${ts_out}" in 100.*) true ;; *) false ;; esac; }; then
+        warn "tailnet node is up but unenrolled — recreating it to read the current pre-auth key"
+        ${RUNTIME} rm -f ir-workstation_browser_1 >/dev/null 2>&1
+        ${RUNTIME} rm -f ir-workstation_tailnet_1 >/dev/null 2>&1
+    fi
     dc workstation up -d --build tailnet >/dev/null 2>&1
     wait_for ir-workstation_tailnet_1 60 true || warn "tailnet node did not start"
     local ts_ip="" waited_ts=0

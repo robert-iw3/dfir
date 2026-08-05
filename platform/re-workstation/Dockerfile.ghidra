@@ -72,8 +72,18 @@ RUN mkdir -p /regions \
 # itself: the session mounts a tmpfs over the home directory so no analysis state from live
 # malware survives the container, and that would erase a path saved at build time.
 ENV JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64
-RUN test -x "${JAVA_HOME}/bin/java" \
-    && printf 'JAVA_HOME_OVERRIDE=%s\n' "${JAVA_HOME}" >> /ghidra/support/launch.properties
+# The shipped file already carries an EMPTY `JAVA_HOME_OVERRIDE=` line, so appending a second
+# one leaves two directives and the effective value depends on which the launcher reads. The
+# existing line is REPLACED and the result asserted — a build-time smoke test cannot catch the
+# ambiguity, because /root is writable during the build and the JDK search succeeds anyway.
+RUN set -eu; \
+    test -x "${JAVA_HOME}/bin/java"; \
+    sed -i "s|^JAVA_HOME_OVERRIDE=.*|JAVA_HOME_OVERRIDE=${JAVA_HOME}|" \
+        /ghidra/support/launch.properties; \
+    grep -q "^JAVA_HOME_OVERRIDE=${JAVA_HOME}$" /ghidra/support/launch.properties \
+      || { echo "JAVA_HOME_OVERRIDE was not set" >&2; exit 1; }; \
+    test "$(grep -c '^JAVA_HOME_OVERRIDE=' /ghidra/support/launch.properties)" -eq 1 \
+      || { echo "more than one JAVA_HOME_OVERRIDE directive — the effective value is ambiguous" >&2; exit 1; }
 
 # Prove the launcher works, not just that its files exist.
 #

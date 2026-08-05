@@ -3,12 +3,12 @@
  *
  * Inline SVG rather than an icon package: the enclave has no internet, so every dependency
  * has to be vendored and carried, and a handful of line glyphs is not worth that. They draw
- * on `currentColor`, so a link's hover and active states colour the icon without a second
+ * on `currentColor`, so a link's hover and active states color the icon without a second
  * rule for each.
  *
  * Each glyph says what its screen is about — a shield for findings, a chip for reverse
  * engineering, a scroll for the audit trail — because in a sidebar the icon is what gets
- * recognised before the label is read.
+ * recognized before the label is read.
  */
 const base = {
   viewBox: "0 0 24 24",

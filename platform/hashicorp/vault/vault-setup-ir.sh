@@ -93,6 +93,7 @@ unseal_if_sealed || { echo "FAIL: could not unseal"; exit 1; }
 # loopback with the mesh on, the service name without it — so it is a reconciled value, not a
 # provisioned one.
 DB_CONN="postgresql://{{username}}:{{password}}@${IR_VAULT_DB_HOST:-${POSTGRES_HOST:-db}}:${POSTGRES_PORT:-5432}/${POSTGRES_DB:-ir_platform}?sslmode=disable"
+KC_CONN="postgresql://{{username}}:{{password}}@${IR_VAULT_DB_HOST:-${POSTGRES_HOST:-db}}:${POSTGRES_PORT:-5432}/${KEYCLOAK_POSTGRES_DB:-keycloak}?sslmode=disable"
 
 # Reconciled on EVERY run, before the early exit below. Written once, a stale connection URL
 # leaves the platform running on already-issued leases and looking healthy, then failing the
@@ -110,6 +111,13 @@ if [ -f "$PROVISIONED" ] && [ ! -f "$STATE/provisioner_role_id" ]; then
     vault policy write ir-provisioner - <<'EOF'
 path "database/config/ir-platform" { capabilities = ["create", "update", "read"] }
 path "database/roles/ir-platform"  { capabilities = ["create", "update", "read"] }
+path "database/config/keycloak"    { capabilities = ["create", "update", "read"] }
+path "database/roles/keycloak"     { capabilities = ["create", "update", "read"] }
+# Minting an agent a fresh secret_id. The agents' secret_ids EXPIRE by design, so a deploy
+# that cannot mint them leaves both agents unable to authenticate once the TTL passes —
+# the whole app tier down, with no path back short of break-glass.
+path "auth/approle/role/ir-platform/secret-id" { capabilities = ["update"] }
+path "auth/approle/role/ir-keycloak/secret-id" { capabilities = ["update"] }
 EOF
     vault auth enable approle 2>/dev/null || true
     vault write auth/approle/role/ir-provisioner \
@@ -153,6 +161,167 @@ if [ -f "$PROVISIONED" ] && [ -f "$STATE/provisioner_role_id" ]; then
     # credentials and one that only appears to.
     echo "    WARNING: could not reconcile the database connection URL:" >&2
     printf '      %s\n' "$ERR" | tail -4 >&2
+  fi
+
+  # The identity store's engine, reconciled the same way — and CREATED here on a deployment
+  # provisioned before it existed. The role's TTLs ride along so a lease change in this
+  # file actually lands.
+  echo "==> reconciling the keycloak database connection"
+  ERR=""; OK=0; KC_DENIED=0
+  for _ in $(seq 1 20); do
+    unseal_if_sealed || true
+    PTOK=$(vault write -field=token auth/approle/login \
+        role_id="$(cat "$STATE/provisioner_role_id")" \
+        secret_id="$(cat "$STATE/provisioner_secret_id")" 2>&1) || { ERR="$PTOK"; sleep 3; continue; }
+    if ERR=$(VAULT_TOKEN="$PTOK" vault write database/config/keycloak \
+          plugin_name=postgresql-database-plugin \
+          allowed_roles=keycloak \
+          connection_url="$KC_CONN" \
+          username="${POSTGRES_USER:-ir_platform}" \
+          password="${POSTGRES_PASSWORD:-ir_platform}" 2>&1); then
+      ERR=$(VAULT_TOKEN="$PTOK" vault write database/roles/keycloak \
+          db_name=keycloak \
+          creation_statements="CREATE ROLE \"{{name}}\" WITH LOGIN PASSWORD '{{password}}' VALID UNTIL '{{expiration}}' IN ROLE kc_app; ALTER ROLE \"{{name}}\" SET role = 'kc_app';" \
+          revocation_statements="REASSIGN OWNED BY \"{{name}}\" TO kc_app; DROP OWNED BY \"{{name}}\"; DROP ROLE IF EXISTS \"{{name}}\";" \
+          default_ttl="${IR_VAULT_KC_TTL:-24h}" max_ttl="${IR_VAULT_KC_MAX_TTL:-768h}" 2>&1) \
+        && { OK=1; break; }
+    fi
+    # A refusal is not transient: the STORED provisioner policy predates these paths — a
+    # policy is written at provision time and nothing rewrites it, the same never-updates
+    # trap as every other bootstrap. Retrying a 403 nineteen more times only hides it.
+    case "$ERR" in *"permission denied"*) KC_DENIED=1; break ;; esac
+    sleep 3
+  done
+  if [ "$OK" = 1 ]; then
+    echo "    keycloak connection + role -> ${IR_VAULT_DB_HOST:-${POSTGRES_HOST:-db}}:${POSTGRES_PORT:-5432}"
+  elif [ "$KC_DENIED" = 1 ]; then
+    echo "    provisioner policy predates the keycloak paths — converging through break-glass"
+  else
+    echo "    WARNING: could not reconcile the keycloak engine — identity has no credential path:" >&2
+    printf '      %s\n' "$ERR" | tail -4 >&2
+  fi
+
+  # The agents' secret_ids, reissued every deploy.
+  #
+  # They carry a TTL (72h by default), so the credential on the state volume is perishable
+  # while the file holding it is not. Once it expires the agent authenticates forever against
+  # a secret_id Vault no longer knows, stops rendering, and the leased Postgres role it last
+  # wrote is revoked out from under the app tier — which then cannot start, with nothing in
+  # the deploy saying why. Minting a fresh one every run is what makes the TTL survivable.
+  echo "==> reissuing the agent credentials"
+  SID_DENIED=0
+  for role in ir-platform ir-keycloak; do
+    case "$role" in
+      ir-platform) id_file="$STATE/secret_id" ;;
+      ir-keycloak) id_file="$STATE/kc_secret_id" ;;
+    esac
+    ERR=""; OK=0
+    for _ in $(seq 1 10); do
+      unseal_if_sealed || true
+      PTOK=$(vault write -field=token auth/approle/login \
+          role_id="$(cat "$STATE/provisioner_role_id")" \
+          secret_id="$(cat "$STATE/provisioner_secret_id")" 2>&1) || { ERR="$PTOK"; sleep 3; continue; }
+      # Written to a temporary file first: truncating the live one and then failing leaves the
+      # agent with an empty credential, which is worse than the stale one it had.
+      if ERR=$(VAULT_TOKEN="$PTOK" vault write -f -field=secret_id \
+            "auth/approle/role/${role}/secret-id" 2>&1 > "${id_file}.new"); then
+        mv "${id_file}.new" "$id_file"; chmod 644 "$id_file"; OK=1; break
+      fi
+      rm -f "${id_file}.new"
+      # Not transient: the STORED policy predates these paths. Converged below, through
+      # break-glass, rather than retried into the same refusal.
+      case "$ERR" in *"permission denied"*) SID_DENIED=1; break ;; esac
+      sleep 3
+    done
+    if [ "$OK" = 1 ]; then
+      echo "    ${role}: fresh secret_id issued"
+    elif [ "$SID_DENIED" = 1 ]; then
+      echo "    provisioner policy predates the secret-id paths — converging through break-glass"
+      break
+    else
+      echo "    WARNING: ${role} was not reissued a secret_id — its agent stops at the TTL:" >&2
+      printf '      %s\n' "$ERR" | tail -4 >&2
+    fi
+  done
+fi
+
+# A deployment provisioned before Keycloak existed in Vault: policies and AppRoles are
+# deliberately outside the provisioner's reach, so they are converged once through
+# break-glass — the AppRole when its credential file is absent, the stored policies (and
+# the writes the stale policy refused) when a reconcile above was denied.
+if [ -f "$PROVISIONED" ] && { [ ! -f "$STATE/kc_role_id" ] \
+     || [ "${KC_DENIED:-0}" = 1 ] || [ "${SID_DENIED:-0}" = 1 ]; }; then
+  echo "==> converging Keycloak's Vault identity (break-glass, one time)"
+  BGT=$(python3 /opt/vault/breakglass-root.py 2>/dev/null || true)
+  if [ -z "$BGT" ]; then
+    echo "    WARNING: break-glass failed — Keycloak has no credential path" >&2
+  else
+    export VAULT_TOKEN="$BGT"
+    # The stored policies converge to the file's shape — both of them, so the next deploy's
+    # reconcile succeeds as the provisioner instead of landing back here.
+    vault policy write ir-provisioner - <<'EOF'
+path "database/config/ir-platform" { capabilities = ["create", "update", "read"] }
+path "database/roles/ir-platform"  { capabilities = ["create", "update", "read"] }
+path "database/config/keycloak"    { capabilities = ["create", "update", "read"] }
+path "database/roles/keycloak"     { capabilities = ["create", "update", "read"] }
+# Minting an agent a fresh secret_id. The agents' secret_ids EXPIRE by design, so a deploy
+# that cannot mint them leaves both agents unable to authenticate once the TTL passes —
+# the whole app tier down, with no path back short of break-glass.
+path "auth/approle/role/ir-platform/secret-id" { capabilities = ["update"] }
+path "auth/approle/role/ir-keycloak/secret-id" { capabilities = ["update"] }
+EOF
+    vault policy write kc-db - <<'EOF'
+path "database/creds/keycloak" { capabilities = ["read"] }
+path "sys/leases/renew"        { capabilities = ["update"] }
+path "auth/token/renew-self"   { capabilities = ["update"] }
+EOF
+    vault auth enable approle 2>/dev/null || true
+    vault write auth/approle/role/ir-keycloak \
+      token_policies=kc-db token_ttl=1h token_max_ttl=24h \
+      bind_secret_id=true \
+      secret_id_ttl="${IR_VAULT_SECRET_ID_TTL:-72h}" \
+      secret_id_num_uses="${IR_VAULT_SECRET_ID_USES:-0}" >/dev/null
+    vault read -field=role_id auth/approle/role/ir-keycloak/role-id > "$STATE/kc_role_id"
+    vault write -f -field=secret_id auth/approle/role/ir-keycloak/secret-id > "$STATE/kc_secret_id"
+    chmod 644 "$STATE/kc_role_id" "$STATE/kc_secret_id"
+    if [ "${KC_DENIED:-0}" = 1 ]; then
+      # The writes the stale policy refused, done now with the token in hand rather than
+      # leaving identity without a credential path until the next deploy.
+      vault write database/config/keycloak \
+        plugin_name=postgresql-database-plugin \
+        allowed_roles=keycloak \
+        connection_url="$KC_CONN" \
+        username="${POSTGRES_USER:-ir_platform}" \
+        password="${POSTGRES_PASSWORD:-ir_platform}" >/dev/null \
+        && vault write database/roles/keycloak \
+          db_name=keycloak \
+          creation_statements="CREATE ROLE \"{{name}}\" WITH LOGIN PASSWORD '{{password}}' VALID UNTIL '{{expiration}}' IN ROLE kc_app; ALTER ROLE \"{{name}}\" SET role = 'kc_app';" \
+          revocation_statements="REASSIGN OWNED BY \"{{name}}\" TO kc_app; DROP OWNED BY \"{{name}}\"; DROP ROLE IF EXISTS \"{{name}}\";" \
+          default_ttl="${IR_VAULT_KC_TTL:-24h}" max_ttl="${IR_VAULT_KC_MAX_TTL:-768h}" >/dev/null \
+        && echo "    keycloak engine written" \
+        || echo "    WARNING: keycloak engine write failed even with root — is the database up?" >&2
+    fi
+    if [ "${SID_DENIED:-0}" = 1 ]; then
+      # The reissue the stale policy refused. Both agents, with the token in hand: leaving
+      # either on an expired secret_id is the outage this whole path exists to end.
+      for role in ir-platform ir-keycloak; do
+        case "$role" in
+          ir-platform) id_file="$STATE/secret_id" ;;
+          ir-keycloak) id_file="$STATE/kc_secret_id" ;;
+        esac
+        if vault write -f -field=secret_id \
+             "auth/approle/role/${role}/secret-id" > "${id_file}.new" 2>/dev/null; then
+          mv "${id_file}.new" "$id_file"; chmod 644 "$id_file"
+          echo "    ${role}: fresh secret_id issued"
+        else
+          rm -f "${id_file}.new"
+          echo "    WARNING: ${role} secret_id reissue failed even with root" >&2
+        fi
+      done
+    fi
+    vault token revoke -self >/dev/null 2>&1 || true
+    unset VAULT_TOKEN
+    echo "    converged; temporary root revoked"
   fi
 fi
 
@@ -206,6 +375,37 @@ vault write database/roles/ir-platform \
   revocation_statements="REASSIGN OWNED BY \"{{name}}\" TO ir_app; DROP OWNED BY \"{{name}}\"; DROP ROLE IF EXISTS \"{{name}}\";" \
   default_ttl=1h max_ttl=24h
 
+echo "==> database secrets engine: keycloak"
+# A SEPARATE database config, so the two engines cannot issue each other's credentials:
+# `allowed_roles` names only this role, and the connection URL reaches only this database.
+# Keycloak stores password hashes and session state; a credential minted here that could also
+# open the evidence store would make the separation enforced in db-bootstrap.py decorative.
+for i in $(seq 1 20); do
+  OUT=$(vault write database/config/keycloak \
+    plugin_name=postgresql-database-plugin \
+    allowed_roles=keycloak \
+    connection_url="$KC_CONN" \
+    username="${POSTGRES_USER:-ir_platform}" \
+    password="${POSTGRES_PASSWORD:-ir_platform}" 2>&1) && break
+  [ "$i" = 20 ] && { echo "FAIL: Vault cannot reach the keycloak database:"; printf '%s\n' "$OUT" | tail -4; exit 1; }
+  sleep 3
+done
+
+# Same shape as the application's: each dynamic user is a member of the stable owner role and
+# acts as it, so objects survive rotation. Keycloak runs its own schema migrations at start-up,
+# so stable ownership matters here for the same reason it does for Django's.
+#
+# Longer TTLs than the application's, deliberately: Keycloak pools connections and reads its
+# credential once at start — it cannot pick up a re-rendered file without a restart. At
+# max_ttl the user is dropped and every pooled connection dies mid-session. So the lease is
+# sized to outlive any deploy cadence (every deploy recreates the Vault group and mints a
+# fresh lease); the agent renews within max_ttl as usual.
+vault write database/roles/keycloak \
+  db_name=keycloak \
+  creation_statements="CREATE ROLE \"{{name}}\" WITH LOGIN PASSWORD '{{password}}' VALID UNTIL '{{expiration}}' IN ROLE kc_app; ALTER ROLE \"{{name}}\" SET role = 'kc_app';" \
+  revocation_statements="REASSIGN OWNED BY \"{{name}}\" TO kc_app; DROP OWNED BY \"{{name}}\"; DROP ROLE IF EXISTS \"{{name}}\";" \
+  default_ttl="${IR_VAULT_KC_TTL:-24h}" max_ttl="${IR_VAULT_KC_MAX_TTL:-768h}"
+
 echo "==> KV v2: ir/config (non-DB app secrets)"
 vault secrets enable -path=ir kv-v2 2>/dev/null || echo "    kv already enabled"
 vault kv put ir/config \
@@ -238,6 +438,25 @@ vault write -f -field=secret_id auth/approle/role/ir-platform/secret-id > "$STAT
 cp "$VAULT_CACERT" "$STATE/vault-ca.crt.pem"
 chmod 644 "$STATE/role_id" "$STATE/secret_id" "$STATE/vault-ca.crt.pem"
 
+echo "==> policy + AppRole for Keycloak's agent"
+# Its own identity, not a second path on ir-app: neither agent can read the other's
+# credential, so a compromised app tier cannot ask Vault for the identity store's password.
+vault policy write kc-db - <<'EOF'
+path "database/creds/keycloak" { capabilities = ["read"] }
+path "sys/leases/renew"        { capabilities = ["update"] }
+path "auth/token/renew-self"   { capabilities = ["update"] }
+EOF
+
+vault write auth/approle/role/ir-keycloak \
+  token_policies=kc-db token_ttl=1h token_max_ttl=24h \
+  bind_secret_id=true \
+  secret_id_ttl="${IR_VAULT_SECRET_ID_TTL:-72h}" \
+  secret_id_num_uses="${IR_VAULT_SECRET_ID_USES:-0}"
+
+vault read -field=role_id auth/approle/role/ir-keycloak/role-id > "$STATE/kc_role_id"
+vault write -f -field=secret_id auth/approle/role/ir-keycloak/secret-id > "$STATE/kc_secret_id"
+chmod 644 "$STATE/kc_role_id" "$STATE/kc_secret_id"
+
 echo "==> policy + AppRole for redeployment-time reconciliation"
 # Narrower than root by design: it can point the database engine at a different Postgres and
 # nothing else. That is the one thing a redeployment legitimately changes, and it means a
@@ -245,6 +464,13 @@ echo "==> policy + AppRole for redeployment-time reconciliation"
 vault policy write ir-provisioner - <<'EOF'
 path "database/config/ir-platform" { capabilities = ["create", "update", "read"] }
 path "database/roles/ir-platform"  { capabilities = ["create", "update", "read"] }
+path "database/config/keycloak"    { capabilities = ["create", "update", "read"] }
+path "database/roles/keycloak"     { capabilities = ["create", "update", "read"] }
+# Minting an agent a fresh secret_id. The agents' secret_ids EXPIRE by design, so a deploy
+# that cannot mint them leaves both agents unable to authenticate once the TTL passes —
+# the whole app tier down, with no path back short of break-glass.
+path "auth/approle/role/ir-platform/secret-id" { capabilities = ["update"] }
+path "auth/approle/role/ir-keycloak/secret-id" { capabilities = ["update"] }
 EOF
 
 # No secret_id TTL: this must still work at a deployment months from now. It sits on the same

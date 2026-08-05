@@ -2,13 +2,13 @@
 
 *What passing proves:* A repair is requested in the web tier and executed only by the isolated agent's own allow-list; the outcome is recorded once and cannot be forged or replayed.
 
-- Run: `uat_repairs.sh` — 2026-07-31 22:45:55Z
+- Run: `uat_repairs.sh` — 2026-08-05 21:44:53Z
 
-**The catalogue and the allow-list**
+**The catalog and the allow-list**
 
 | Result | Assertion — with evidence |
 |---|---|
-| ✅ PASS | the UI catalogue and the agent allow-list name the same 6 repairs |
+| ✅ PASS | the UI catalog and the agent allow-list name the same 6 repairs |
 
 **The deployed agent and its posture**
 
@@ -27,21 +27,21 @@
 | ✅ PASS | a principal without the admin role cannot request a repair (403) |
 | ✅ PASS | an unknown action is refused at the API (400) |
 | ✅ PASS | the queue endpoint answers the service credential with a requests list |
-| ✅ PASS | admin queued consul-converge-policy (request 7) |
+| ✅ PASS | admin queued consul-converge-policy (request 2) |
 
 **The deployed agent claims and executes**
 
 | Result | Assertion — with evidence |
 |---|---|
-| ✅ PASS | request 7 landed succeeded — claimed and executed by the deployed agent |
+| ✅ PASS | request 2 landed succeeded — claimed and executed by the deployed agent |
 | ✅ PASS | the agent's own log records the claim |
-| ✅ PASS | the record carries the executing host (ubuntu-main.local), the output, and exit 0 |
+| ✅ PASS | the record carries the executing host, the output, and exit 0 |
 
 **The repair restored the policy**
 
 | Result | Assertion — with evidence |
 |---|---|
-| ✅ PASS | Consul holds 6 intention set(s) for 6 declared — the policy converged |
+| ✅ PASS | Consul holds 8 intention set(s) for 8 declared — the policy converged |
 
 **The outcome cannot be rewritten**
 

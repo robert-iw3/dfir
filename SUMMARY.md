@@ -122,8 +122,13 @@
   * [Reverse-engineer workflow](platform/WORKFLOW-RE.md)
   * [Admin workflow](platform/WORKFLOW-ADMIN.md)
   * [Auditor workflow](platform/WORKFLOW-AUDITOR.md)
+* Design and compliance
+  * [Correlation engine v2 — gap analysis and end state](planning/CORRELATION-ENGINE-V2.md)
+  * [Web Server SRG — implementation plan and state](planning/WEB-SERVER-SRG.md)
+  * [Web Server SRG — implementation tracker](platform/artifacts/WEB-SERVER-SRG-TRACKER.md)
 * Troubleshooting
   * [Troubleshooting runbook — symptom → cause → where to fix](platform/troubleshooting/RUNBOOK.md)
+  * [A page is blank, empty, or wrong — where to look](platform/troubleshooting/UI-AND-API-FAULTS.md)
   * [Component schematic — configs, network path, and how to probe each hop](platform/troubleshooting/COMPONENTS.md)
   * [Memory analysis — diagnosing a run](platform/troubleshooting/MEMORY-ANALYSIS.md)
 

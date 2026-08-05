@@ -7,7 +7,7 @@
 # runs its own command through the runtime socket, and reports back with a service credential
 # an admin does not hold.
 #
-#   1. THE TWO LISTS AGREE. The UI's catalogue and the agent's case-statement are deliberately
+#   1. THE TWO LISTS AGREE. The UI's catalog and the agent's case-statement are deliberately
 #      separate; drift between them is a request that sits queued forever, or a privileged
 #      command nothing can invoke.
 #   2. THE EXECUTOR IS ISOLATED. No network, no published ports, host pids for the namespace
@@ -36,16 +36,16 @@ AGENT=ir-agent_remediation-agent_1
 set -a; . "${PLATFORM}/deploy/.env" 2>/dev/null || true; set +a
 
 # ============================================================ 1. the two lists agree
-say "The catalogue and the allow-list"
+say "The catalog and the allow-list"
 catalog="$(${RUNTIME} exec "${BE}" python -c \
     'from cases.remediation import CATALOG; print("\n".join(sorted(CATALOG)))' 2>/dev/null)"
 allowlist="$(grep -oE '^        [a-z-]+\)' "${PLATFORM}/troubleshooting/remediation-agent.sh" \
     | tr -d ' )' | sort)"
 if [[ -n "${catalog}" && "${catalog}" == "${allowlist}" ]]; then
-    ok "the UI catalogue and the agent allow-list name the same $(wc -l <<<"${catalog}") repairs"
+    ok "the UI catalog and the agent allow-list name the same $(wc -l <<<"${catalog}") repairs"
 else
-    bad "catalogue and allow-list have drifted"
-    info "catalogue:  $(tr '\n' ' ' <<<"${catalog}")"
+    bad "catalog and allow-list have drifted"
+    info "catalog:  $(tr '\n' ' ' <<<"${catalog}")"
     info "allow-list: $(tr '\n' ' ' <<<"${allowlist}")"
 fi
 
@@ -166,7 +166,7 @@ assert r.get('agent_host') == '$(hostname)', r.get('agent_host')
 assert (r.get('output') or '').strip(), 'no output'
 assert r.get('exit_code') == 0, r.get('exit_code')
 " <<<"${detail}" 2>/dev/null \
-    && ok "the record carries the executing host ($(hostname)), the output, and exit 0" \
+    && ok "the record carries the executing host, the output, and exit 0" \
     || bad "the finished request is missing host, output or a zero exit"
 
 # ============================================================ 5. the repair repairs

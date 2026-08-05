@@ -140,7 +140,7 @@ c="$(code --cacert /ca.pem -X DELETE -H "X-Consul-Token: ${FTOK}" \
 # ============================================================ 5. intentions loaded
 say "Bootstrapped intentions are loaded"
 INT="$(ccli config list -kind service-intentions)"
-for svc in ir-postgres ir-minio ir-backend; do
+for svc in ir-postgres ir-minio ir-redis ir-backend; do
     grep -qx "${svc}" <<<"${INT}" \
         && ok "intentions present for ${svc}" \
         || bad "no intentions for ${svc} — it would fall through to whatever the default is"
@@ -157,7 +157,8 @@ say "The pairs the platform needs are allowed"
 for pair in "ir-backend ir-postgres" "ir-worker ir-postgres" \
             "ir-backend ir-minio" "ir-worker ir-minio" \
             "ir-frontend ir-backend" "ir-puller ir-postgres" \
-            "ir-puller ir-minio" "ir-puller ir-backend" "ir-vault ir-postgres"; do
+            "ir-puller ir-minio" "ir-puller ir-backend" "ir-vault ir-postgres" \
+            "ir-backend ir-redis" "ir-worker ir-redis"; do
     set -- ${pair}
     r="$(authz "$1" "$2")"
     [[ "${r}" == *Allowed* ]] && ok "$1 → $2: ALLOWED" \
@@ -169,7 +170,8 @@ say "Everything else is denied — lateral movement is refused by rule"
 # reach to both stores; the receiver is in the DMZ and must never touch enclave state; an
 # unknown service is what a dropped binary registers as.
 for pair in "ir-frontend ir-postgres" "ir-frontend ir-minio" \
-            "ir-receiver ir-postgres" "unknown-svc ir-minio"; do
+            "ir-receiver ir-postgres" "unknown-svc ir-minio" \
+            "ir-frontend ir-redis" "ir-puller ir-redis"; do
     set -- ${pair}
     r="$(authz "$1" "$2")"
     [[ "${r}" == *Denied* ]] && ok "$1 → $2: DENIED" \
@@ -187,7 +189,8 @@ n_svcs="$(ccli catalog services | grep -c .)"
     || bad "only Consul itself is registered — no service is in the mesh, so no intention applies"
 
 for pair in "ir-enclave_frontend_1 db 5432 ir-frontend ir-postgres" \
-            "ir-enclave_frontend_1 minio 9000 ir-frontend ir-minio"; do
+            "ir-enclave_frontend_1 minio 9000 ir-frontend ir-minio" \
+            "ir-enclave_frontend_1 redis 6379 ir-frontend ir-redis"; do
     set -- ${pair}
     c="$1" host="$2" port="$3" src="$4" dst="$5"
     if ${RUNTIME} exec "${c}" sh -c "nc -z -w3 ${host} ${port}" >/dev/null 2>&1; then
@@ -207,6 +210,41 @@ else
     bad "ir-backend cannot reach Postgres through its own sidecar — the mesh is blocking, not authorizing"
 fi
 
+if ${RUNTIME} exec ir-enclave_backend_1 sh -c \
+    'python3 -c "import socket;socket.create_connection((\"127.0.0.1\",6379),timeout=4)"' \
+    >/dev/null 2>&1; then
+    ok "ir-backend → ir-redis: the queue upstream carries traffic through its sidecar"
+else
+    bad "ir-backend cannot reach Redis through its own sidecar — task dispatch is broken"
+fi
+
+# The worker's leg, proven by the queue answering — celery only responds to `inspect ping` if
+# the worker process holds a live broker connection, so this is dispatch through the mesh.
+#
+# The output is CAPTURED and then matched, never piped into `grep -q`.
+#
+# `grep -q` exits the moment it matches, which closes the pipe and sends SIGPIPE to
+# `podman exec`. Under `set -o pipefail` that failure becomes the pipeline's status, so a
+# SUCCESSFUL ping reports as "the broker connection is broken" — the assertion fails hardest
+# exactly when the thing it tests is working.
+#
+# Retried as well, because a worker recreated moments ago has genuinely not connected yet:
+# the deploy replaces it whenever its database credential is superseded, so running this
+# suite straight after a deploy lands in that window. Bounded, so a broker that is really
+# down still fails rather than hanging.
+WORKER_PONG=0
+for _ in $(seq 1 10); do
+    ping_out="$(${RUNTIME} exec ir-enclave_worker_1 \
+                sh -c 'celery -A ir_platform inspect ping -t 5' 2>/dev/null || true)"
+    case "${ping_out}" in *pong*) WORKER_PONG=1; break ;; esac
+    sleep 3
+done
+if [[ "${WORKER_PONG}" == "1" ]]; then
+    ok "ir-worker → ir-redis: the celery worker answers over the queue through the mesh"
+else
+    bad "the celery worker does not answer over the queue after 30s — its broker connection is broken"
+fi
+
 # Vault's leg, proven by MINTING a credential — not by the platform being up, which only shows
 # an already-issued lease still works. Minting forces Vault to dial Postgres through the mesh
 # right now, so a denied ir-vault → ir-postgres fails here and nowhere else.
@@ -222,7 +260,7 @@ minted="$(${RUNTIME} exec ir-enclave_vault-agent_1 sh -c '
 # Every sidecar authenticated. A proxy that cannot get a token exits and restarts forever, which
 # looks like an intention failure from every other angle.
 say "Every sidecar authenticated to the hardened control plane"
-for s in db minio vault backend worker frontend puller; do
+for s in db minio redis vault backend worker frontend puller; do
     cn="ir-enclave_${s}-sidecar_1"
     rs="$(${RUNTIME} inspect -f '{{.RestartCount}}' "${cn}" 2>/dev/null)"
     if running "${cn}" && [[ "${rs:-0}" -lt 3 ]]; then

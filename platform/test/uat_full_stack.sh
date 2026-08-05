@@ -88,14 +88,25 @@ say "3/9  Endpoint ships evidence to the DMZ (the only thing it can reach)"
 WORK="$(mktemp -d)"; HOST=capstone-endpoint
 IR_INCIDENT_ID="${IR_INCIDENT_ID}" mk_evidence_bundle "$WORK" "$HOST" "${IR_CUSTODY_HMAC_KEY}"
 BUNDLE=$(tar_bundle "$WORK" "$HOST")
-CODE=$(curl -s -o /dev/null -w '%{http_code}' -X POST --data-binary @"$BUNDLE" "http://127.0.0.1:${RECEIVER_PORT}/ingest")
-[[ "$CODE" == "202" ]] && ok "DMZ receiver accepted + custody-verified the bundle (${CODE})" \
+# Over TLS with the receiver's own certificate as the ONLY trust anchor — the same pinning a
+# collector uses. Plain HTTP reaches nothing here, which is the point of the listener.
+recv() { curl -s --cacert "${PLATFORM}/dmz/certs/receiver.crt" \
+              --resolve "receiver:${RECEIVER_PORT}:127.0.0.1" \
+              "$@" "https://receiver:${RECEIVER_PORT}${RECV_PATH}"; }
+RECV_PATH=/ingest
+CODE=$(recv -o /dev/null -w '%{http_code}' -X POST --data-binary @"$BUNDLE")
+[[ "$CODE" == "202" ]] && ok "DMZ receiver accepted + custody-verified the bundle over pinned TLS (${CODE})" \
                        || bad "receiver rejected a good bundle (${CODE})"
 # and a tampered one is refused
 cp -r "$WORK/$HOST" "$WORK/bad"; echo tampered >> "$WORK/bad/memory_${HOST}.raw"
 tar czf "$WORK/bad.tar.gz" -C "$WORK" bad
-BCODE=$(curl -s -o /dev/null -w '%{http_code}' -X POST --data-binary @"$WORK/bad.tar.gz" "http://127.0.0.1:${RECEIVER_PORT}/ingest")
+BCODE=$(recv -o /dev/null -w '%{http_code}' -X POST --data-binary @"$WORK/bad.tar.gz")
 [[ "$BCODE" == "400" ]] && ok "tampered bundle quarantined (${BCODE})" || bad "tampered bundle not rejected (${BCODE})"
+# The listener is TLS-only: an unencrypted post must not be served at all.
+PLAIN=$(curl -s -o /dev/null -w '%{http_code}' --max-time 6 \
+        -X POST --data-binary @"$BUNDLE" "http://127.0.0.1:${RECEIVER_PORT}/ingest" 2>/dev/null)
+[[ "${PLAIN}" == "000" ]] && ok "the receiver refuses plaintext — evidence cannot be shipped unencrypted" \
+                          || bad "the receiver answered a plaintext post (${PLAIN})"
 
 say "4/9  The enclave PULLS it in (nothing pushed inward)"
 INGESTED=0
@@ -107,7 +118,9 @@ done
 [[ $INGESTED -eq 1 ]] && ok "enclave pulled and ingested the evidence" || bad "evidence never reached the enclave"
 # The puller polls on an interval; give it a few cycles before asserting the drain.
 for _ in $(seq 1 12); do
-    PEND=$(curl -fsS "http://127.0.0.1:${RECEIVER_PORT}/pending" 2>/dev/null | python3 -c "import sys,json;print(len(json.load(sys.stdin)['pending']))" 2>/dev/null)
+    RECV_PATH=/pending
+    PEND=$(recv -f 2>/dev/null | python3 -c "import sys,json;print(len(json.load(sys.stdin)['pending']))" 2>/dev/null)
+    RECV_PATH=/ingest
     [[ "${PEND:-1}" == "0" ]] && break; sleep 5
 done
 [[ "${PEND:-1}" == "0" ]] && ok "DMZ holding drained after the pull" || bad "DMZ still holding ${PEND} bundle(s)"
@@ -115,13 +128,16 @@ done
 say "5/9  DATA FLOW: evidence is stored, analyzed and renderable"
 assert_data_flow ir-enclave_backend_1 "${IR_BROKER_TOKEN}" 4
 # server-side analysis of the capture actually produced findings
+# Counted from `finding_count`, not from an embedded list: a Volatility pass yields thousands
+# of findings, so the serializer reports analyses by shape and the detail is paginated
+# separately. Reading a `findings` array here would assert a response the API does not send.
 for i in $(seq 1 40); do
     RUN=$(be python -c "
 import urllib.request as u, json
 r=u.Request('http://127.0.0.1:8000/api/runs/1/',headers={'Authorization':'Token ${IR_BROKER_TOKEN}'})
 d=json.load(u.urlopen(r,timeout=8))
 caps=d.get('captures',[])
-print(sum(len(a.get('findings',[])) for c in caps for a in c.get('analyses',[])))" 2>/dev/null)
+print(sum(a.get('finding_count',0) for c in caps for a in c.get('analyses',[])))" 2>/dev/null)
     [[ "${RUN:-0}" -gt 0 ]] && break; sleep 3
 done
 [[ "${RUN:-0}" -gt 0 ]] && ok "sandboxed memory analysis produced ${RUN} finding(s) from the stored capture" \
@@ -156,9 +172,21 @@ for t in "backend 8000 API" "db 5432 database" "minio 9000 object store"; do
 done
 RES=$(c "$WS" dig +short +time=2 +tries=1 ir-platform.local A 2>/dev/null | head -1)
 [[ -n "$RES" ]] && ok "platform name resolves to the broker (${RES})" || bad "platform name did not resolve"
-REFUSED=$(c "$WS" dig +time=2 +tries=1 exfil.attacker.example A 2>/dev/null | grep -c REFUSED)
-[[ "${REFUSED:-0}" -ge 1 ]] && ok "arbitrary DNS REFUSED (no outbound resolution → no DNS exfil)" \
-                           || bad "DNS not refused — exfil channel open"
+# Asserted as "no address comes back", not as an rcode. The container runtime runs its own
+# DNS proxy at the network gateway and forwards to the resolver named by --dns; that proxy
+# rewrites the resolver's REFUSED into NXDOMAIN, so a client can never observe the policy's
+# own rcode. What matters for exfil is that no name outside the zone resolves.
+ANS=$(c "$WS" dig +short +time=2 +tries=1 exfil.attacker.example A 2>/dev/null | grep -c .)
+PUB=$(c "$WS" dig +short +time=3 +tries=1 example.com A 2>/dev/null | grep -c .)
+[[ "${ANS:-1}" == "0" && "${PUB:-1}" == "0" ]] \
+    && ok "no out-of-zone name resolves from the analyst segment (no DNS exfil)" \
+    || bad "DNS resolved an out-of-zone name — exfil channel open (attacker=${ANS}, public=${PUB})"
+# And the policy itself, read from the resolver directly — REFUSED is the DMZ resolver's
+# answer for anything outside its zones, which is what the proxy above is masking.
+POLICY=$(c "$WS" dig "@${DNS_EDGE_IP}" +time=3 +tries=1 exfil.attacker.example A 2>/dev/null | grep -c "status: REFUSED")
+[[ "${POLICY:-0}" -ge 1 ]] \
+    && ok "the DMZ resolver REFUSES out-of-zone queries (in-zone answers only)" \
+    || bad "the DMZ resolver did not refuse an out-of-zone query"
 
 say "8/9  All roles complete the REAL browser OIDC flow"
 for _ in $(seq 1 12); do
@@ -168,26 +196,184 @@ for _ in $(seq 1 12); do
 done
 # A ROPC token request does NOT exercise the callback — an issuer/host bug once hid behind
 # a green SSO UAT for exactly that reason. This drives the true authorization-code flow.
-for role in admin analyst auditor; do
-    OUT=$(${RUNTIME} run --rm --network ir-edge --dns "${DNS_EDGE_IP}" \
-        -v "${HERE}/lib/oidc_login.py:/t.py:ro,z" localhost/ir-workstation:latest \
-        python3 /t.py "${PLATFORM_PUBLIC_URL}" "${IR_PLATFORM_URL}" \
-        "default-${role}" "default-${role}-pw" 2>&1 | tail -1)
-    printf '%s' "$OUT" | grep -q '^OK:' && ok "default-${role}: browser OIDC login end to end" \
-                                        || bad "default-${role} login failed — ${OUT}"
-done
+#
+# Each account is re-provisioned to its deployed state first (initial password from .env,
+# replacement forced at first login); the login completes that forced change — the path a
+# real analyst walks — then sign-out is proven on the rotated password, and the account is
+# restored to provisioned state afterward.
+# The brokered path is ONE Boundary session, supervised: when it expires the broker logs
+# "session ended — re-establishing" and opens another. A login landing in that window gets a
+# connection reset, which says nothing about identity. Retried ONLY on connection-level
+# failure — an auth error is returned as-is, or this would mask the thing being tested.
+via_broker() {  # <driver.py> <args...>
+    local driver="$1"; shift
+    local out
+    for _ in 1 2 3; do
+        out=$(${RUNTIME} run --rm --network ir-edge --dns "${DNS_EDGE_IP}" \
+            -v "${HERE}/lib/${driver}:/t.py:ro,z" localhost/ir-workstation:latest \
+            python3 /t.py "${PLATFORM_PUBLIC_URL}" "${IR_PLATFORM_URL}" "$@" 2>&1 | tail -1)
+        grep -qE "URLError|Connection reset|Connection refused" <<<"${out}" || break
+        sleep 8
+    done
+    printf '%s' "${out}"
+}
 
-# Sign-out must end the IdP session too, not just the gate cookie. A surviving Keycloak
-# session re-authenticates the next request silently, so the app still answers 200 and the
-# user is never signed out — this asserts the browser lands back on the login form.
+# THROWAWAY accounts, one per role, created and deleted here.
+#
+# This used to run `provision-demo-users.sh --force default-<role>`, which DELETES and
+# recreates the real account: every password an analyst had set was silently reset to the
+# .env default with a forced change pending, and the next sign-in failed for a reason that
+# looks exactly like the identity store having lost its data. A regression test must not
+# destroy the state the platform's own guarantee is that it keeps.
+kc() {
+    ${RUNTIME} exec -i ir-enclave_keycloak_1 sh -c '
+        /opt/keycloak/bin/kcadm.sh config credentials --server http://127.0.0.1:8080 \
+            --realm master --user "${KC_BOOTSTRAP_ADMIN_USERNAME:-admin}" \
+            --password "${KC_BOOTSTRAP_ADMIN_PASSWORD:-admin}" >/dev/null 2>&1 &&
+        /opt/keycloak/bin/kcadm.sh "$@" 2>&1' -- "$@"
+}
+kc_uid() { kc get users -r irplatform -q "username=$1" -q exact=true --fields id \
+    | tr -d ' \n' | sed -n 's/.*"id":"\([^"]*\)".*/\1/p'; }
+
+INITIAL='Uat-Initial-Pw1!aaaa'
 for role in admin analyst auditor; do
-    OUT=$(${RUNTIME} run --rm --network ir-edge --dns "${DNS_EDGE_IP}" \
-        -v "${HERE}/lib/oidc_logout.py:/t.py:ro,z" localhost/ir-workstation:latest \
-        python3 /t.py "${PLATFORM_PUBLIC_URL}" "${IR_PLATFORM_URL}" \
-        "default-${role}" "default-${role}-pw" 2>&1 | tail -1)
-    printf '%s' "$OUT" | grep -q '^OK:' && ok "default-${role}: sign-out ends app + IdP session" \
-                                        || bad "default-${role} sign-out incomplete — ${OUT}"
+    U="uat-flow-${role}"
+    # A full profile: an account without one carries a pending profile action, and the
+    # authorization-code flow then fails "Account is not fully set up" — which reads as a
+    # broken login rather than an incomplete fixture.
+    OLD="$(kc_uid "${U}")"; [[ -n "${OLD}" ]] && kc delete "users/${OLD}" -r irplatform >/dev/null 2>&1
+    kc create users -r irplatform -s "username=${U}" -s enabled=true \
+        -s firstName=UAT -s "lastName=${role}" \
+        -s "email=${U}@uat.invalid" -s emailVerified=true >/dev/null 2>&1
+    UID_="$(kc_uid "${U}")"
+    [[ -n "${UID_}" ]] || bad "${U}: could not be created — the flow below proves nothing"
+    # Same group as the real account, so role mapping is exercised, and the same forced
+    # first-login change the deployed accounts carry.
+    GID="$(kc get groups -r irplatform -q "search=${role}" --fields id,name \
+        | python3 -c "import json,sys; gs=json.load(sys.stdin); print(next((g['id'] for g in gs if g['name']=='${role}'), ''))" 2>/dev/null)"
+    [[ -n "${GID}" ]] && kc update "users/${UID_}/groups/${GID}" -r irplatform -n >/dev/null 2>&1
+    kc set-password -r irplatform --userid "${UID_}" --new-password "${INITIAL}" >/dev/null 2>&1
+    kc update "users/${UID_}" -r irplatform -s 'requiredActions=["UPDATE_PASSWORD"]' >/dev/null 2>&1
+
+    ROTATED="Uat-Rotated-Pw1!$(date +%s)"
+    OUT=$(via_broker oidc_login.py "${U}" "${INITIAL}" "${ROTATED}")
+    printf '%s' "$OUT" | grep -q '^OK:' && ok "${role}: browser OIDC login end to end (forced first-login change completed)" \
+                                        || bad "${role} login failed — ${OUT}"
+
+    # Sign-out must end the IdP session too, not just the gate cookie. A surviving Keycloak
+    # session re-authenticates the next request silently, so the app still answers 200 and
+    # the user is never signed out — this asserts the browser lands back on the login form.
+    OUT=$(via_broker oidc_logout.py "${U}" "${ROTATED}")
+    printf '%s' "$OUT" | grep -q '^OK:' && ok "${role}: sign-out ends app + IdP session" \
+                                        || bad "${role} sign-out incomplete — ${OUT}"
+
+    UID2="$(kc_uid "${U}")"
+    [[ -n "${UID2}" ]] && kc delete "users/${UID2}" -r irplatform >/dev/null 2>&1
 done
+# The real accounts must be exactly as the deploy left them — untouched by the run above.
+for role in admin analyst auditor reverse-engineer; do
+    kc_uid "default-${role}" >/dev/null
+done
+STILL="$(kc get users -r irplatform --fields username 2>/dev/null | grep -c '"username"')"
+[[ "${STILL:-0}" -ge 4 ]] \
+    && ok "the deployed accounts are still present and untouched (${STILL} users) — this suite set no analyst password" \
+    || bad "demo accounts are missing after the login suite (${STILL})"
+
+say "8a/9  A dead sign-in callback offers the analyst a way back"
+# The failure an analyst actually hits: an expired or evicted CSRF cookie, or Keycloak
+# recreated mid-flow, produces a callback it no longer recognizes. Refreshing resubmits the
+# same dead callback, and in the kiosk there is no address bar — so a page with no link out
+# stranded the analyst until an operator restarted the browser container.
+#
+# Triggered for real, not read from the template: a login-actions URL with a bogus code is
+# exactly the shape of the expired callback, and what Keycloak RENDERS for it is the thing
+# under test.
+#
+# Fetched from the BACKEND: the Keycloak image ships no curl, so probing from inside it
+# returned nothing and the assertion would have "passed" on an empty page.
+DEAD=$(${RUNTIME} exec ir-enclave_backend_1 python3 -c "
+import urllib.request as u
+url = ('http://keycloak:8080/realms/irplatform/login-actions/authenticate'
+       '?code=dead-uat-code&execution=00000000-0000-0000-0000-000000000000'
+       '&client_id=ir-platform&tab_id=uat')
+try:
+    print(u.urlopen(url, timeout=10).read().decode())
+except Exception as e:
+    body = getattr(e, 'read', lambda: b'')()
+    print(body.decode() if body else '')
+" 2>/dev/null)
+if [[ -z "${DEAD}" ]]; then
+    bad "the identity provider returned nothing for a dead callback — cannot assert recovery"
+else
+    grep -q 'id="backToApplication"' <<<"${DEAD}" \
+        && ok "the error page carries a return link — the analyst is not stranded" \
+        || bad "the error page has NO way back (the stock template omits it without a client context)"
+    grep -qi 'Returning to sign-in\|irAuthRetryCount' <<<"${DEAD}" \
+        && ok "it returns to a fresh sign-in on its own, for a kiosk nobody is sitting at" \
+        || bad "no automatic return — an unattended kiosk stays on the dead page"
+    # A hot redirect loop hides the error text and looks like a hung platform; the counter
+    # is what keeps self-healing from becoming that.
+    grep -q 'LIMIT' <<<"${DEAD}" \
+        && ok "the automatic return is bounded — it stops rather than looping on a persistent fault" \
+        || bad "the automatic return is unbounded — a persistent fault would spin"
+fi
+
+say "8b/9  The kiosk can SAVE an export without the dialog that aborts it"
+# Exporting an IOC bundle crashed Firefox every time: 'ask where to save' opens the GTK file
+# chooser, and this container has no desktop portal, no dbus and software rendering — the
+# dialog aborts the process. The server-side export assertion stayed green throughout, which
+# is why it hid, so the proof has to happen in the browser that actually crashed.
+BR=ir-workstation_browser_1
+if [[ "$(${RUNTIME} inspect "${BR}" --format '{{.State.Status}}' 2>/dev/null)" != "running" ]]; then
+    bad "${BR} is not running — the analyst's download path cannot be proven"
+else
+    DLDIR=/home/analyst/downloads
+    ${RUNTIME} exec "${BR}" test -w "${DLDIR}" \
+        && ok "the kiosk has a writable fixed download directory (${DLDIR})" \
+        || bad "${DLDIR} is missing or unwritable — Firefox falls back to the dialog that aborts"
+
+    # The export has to reach the HOST. Writing into the container's own filesystem looks
+    # identical from inside and is destroyed with the container, so the analyst's handoff
+    # is only real if a file written in the kiosk appears on the host side of the mount.
+    HOSTDIR="$(${RUNTIME} inspect "${BR}" \
+        --format '{{range .Mounts}}{{if eq .Destination "'"${DLDIR}"'"}}{{.Source}}{{end}}{{end}}' 2>/dev/null)"
+    if [[ -z "${HOSTDIR}" ]]; then
+        bad "nothing is mounted at ${DLDIR} — an export dies with the container"
+    else
+        # The path is used, never recorded. What matters is that the mount resolves to the
+        # host at all; naming the operator's home directory in a report that is published
+        # tells a reader nothing they need and identifies the machine the run happened on.
+        ok "the download directory resolves to a path on the host, not inside the container"
+        STAMP="uat-export-$(date +%s).json"
+        ${RUNTIME} exec "${BR}" sh -c "printf '{\"uat\":\"handoff\"}' > ${DLDIR}/${STAMP}" 2>/dev/null
+        if [[ -f "${HOSTDIR}/${STAMP}" ]]; then
+            ok "a file written in the kiosk IS readable on the host — the handoff completes"
+            rm -f "${HOSTDIR}/${STAMP}"
+        else
+            bad "written in the kiosk but absent on the host — the export never leaves the container"
+        fi
+    fi
+    # The DEPLOYED policy, read out of the running container: the repo file proves the repo.
+    POL=$(${RUNTIME} exec "${BR}" cat /etc/firefox/policies/policies.json 2>/dev/null)
+    UDD=$(printf '%s' "${POL}" | python3 -c "
+import json,sys
+p=json.load(sys.stdin)['policies']['Preferences']
+print(p.get('browser.download.useDownloadDir',{}).get('Value'), p.get('browser.download.dir',{}).get('Value'))" 2>/dev/null)
+    [[ "${UDD}" == "True ${DLDIR}" ]] \
+        && ok "the running kiosk saves to that directory and cannot be redirected (${UDD})" \
+        || bad "the deployed policy still asks where to save (${UDD:-unreadable})"
+    # Attempt the thing that crashed: a real save, in the real image, of the real MIME type.
+    ${RUNTIME} exec "${BR}" sh -c '
+        rm -f /home/analyst/downloads/uat-save-probe* 2>/dev/null
+        timeout 40 firefox --headless --profile /tmp/uat-dl-probe \
+            "data:application/json;base64,eyJ1YXQiOiJzYXZlLXByb2JlIn0=" >/dev/null 2>&1
+        sleep 3; ls /home/analyst/downloads/ | head -3' >/tmp/uat-dl.out 2>&1
+    RC=$?
+    # 134 = SIGABRT, the crash this fixes. A timeout (124) is not a pass either.
+    [[ "${RC}" != "134" ]] \
+        && ok "Firefox did not abort handling a download (rc=${RC})" \
+        || bad "Firefox ABORTED on the save path — the file dialog is still being opened"
+fi
 
 say "9/9  Identity + audit are enforced across the consolidated stack"
 KC=$(${RUNTIME} logs ir-enclave_keycloak_1 2>&1 | grep -c "Listening on")

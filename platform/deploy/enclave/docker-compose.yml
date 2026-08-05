@@ -205,7 +205,7 @@ services:
       - vault-certs:/certs
       # The audit device is written by THIS process, not by the provisioning one-shot, so the
       # path has to exist and be writable here. Vault refuses to start if an enabled audit
-      # device cannot be written — which is the intended behaviour: unaudited operation is
+      # device cannot be written — which is the intended behavior: unaudited operation is
       # not a degraded mode it should fall back into.
       - vault-logs:/vault/logs
       - ../../hashicorp/vault/vault-server.hcl:/vault/config/vault-server.hcl:ro,z
@@ -247,7 +247,8 @@ services:
     # not the mesh is enforcing, and db's own attachment still reaches the rest of the enclave.
     network_mode: "service:db"
     depends_on: [db]
-    env_file: ../.env
+    # A legitimate holder of the static admin credential: it creates databases and owner roles.
+    env_file: [../.env, ../.env.db]
     environment:
       POSTGRES_HOST: 127.0.0.1
     entrypoint: ["python", "/opt/db-bootstrap.py"]
@@ -272,7 +273,9 @@ services:
     # bought a loopback readiness probe and cost the ability to resolve `vault`, because a
     # container keeps its own /etc/resolv.conf and dns: cannot be set with network_mode: service:.
     networks: [internal]
-    env_file: ../.env
+    # A legitimate holder of the static admin credential: it hands it to Vault's database
+    # engine, which issues the short-lived users everything else authenticates with.
+    env_file: [../.env, ../.env.db]
     environment:
       VAULT_ADDR: "https://vault:8200"
       VAULT_CACERT: "/certs/vault-ca.crt.pem"
@@ -311,7 +314,8 @@ services:
     dns: ["${ENCLAVE_DNS_IP}"]        # the enclave resolver is the ONLY resolver
     dns_search: ["${RUNTIME_DNS_ZONE}"]
     image: docker.io/library/postgres:18
-    env_file: ../.env
+    # .env.db carries the static admin credential; only the data tier loads it.
+    env_file: [../.env, ../.env.db]
     environment:
       POSTGRES_DB: ${POSTGRES_DB}
       POSTGRES_USER: ${POSTGRES_USER}
@@ -395,12 +399,36 @@ services:
     dns: ["${ENCLAVE_DNS_IP}"]        # the enclave resolver is the ONLY resolver
     dns_search: ["${RUNTIME_DNS_ZONE}"]
     image: docker.io/library/redis:8-alpine
-    networks: [internal]
+    # --bind is the ENFORCEMENT POINT, exactly as for Postgres and MinIO: with
+    # IR_REDIS_LISTEN=127.0.0.1 the only process that can open a connection is one sharing
+    # this namespace — the Connect sidecar, and nothing else. 0.0.0.0 runs without the mesh.
+    command: ["redis-server", "--bind", "${IR_REDIS_LISTEN}"]
+    networks:
+      internal:
+        ipv4_address: ${IR_IP_REDIS}
+
+  # Connect sidecar for Redis. Shares its namespace, so it is the sole listener the enclave
+  # network can see; task dispatch passes an intention check like every data-tier connection.
+  redis-sidecar:
+    mem_limit: ${IR_SIDECAR_MEM:-128m}
+    build:
+      context: ../../hashicorp/consul
+      dockerfile: Dockerfile.sidecar
+    image: localhost/ir-consul-sidecar:latest
+    network_mode: "service:redis"
+    depends_on: [redis]
+    command: ["consul", "connect", "envoy", "-sidecar-for", "ir-redis",
+              "-http-addr", "https://consul:8501", "-grpc-addr", "https://consul:8503",
+              "-ca-file", "/consul/tls/consul-ca.pem", "-token-file", "/consul/tls/token",
+              "-admin-bind", "127.0.0.1:19000",
+              "--", "--concurrency", "${IR_ENVOY_CONCURRENCY:-1}"]
+    volumes:
+      - ../../hashicorp/consul/secrets/consul-ca.pem:/consul/tls/consul-ca.pem:ro,z
+      - ../../hashicorp/consul/secrets/tokens/ir-redis.token:/consul/tls/token:ro,z
+    restart: on-failure
 
   # ---------- identity + secrets ---------------------------------------
   keycloak:
-    dns: ["${ENCLAVE_DNS_IP}"]        # the enclave resolver is the ONLY resolver
-    dns_search: ["${RUNTIME_DNS_ZONE}"]
     # Built so the login theme is part of the artifact. Bind-mounting it detached silently
     # whenever the theme tree was rewritten, leaving the stock login page with no error.
     build:
@@ -418,9 +446,78 @@ services:
       KC_HOSTNAME_STRICT: "false"
       KC_HOSTNAME_STRICT_BACKCHANNEL: "false"
       KC_PROXY_HEADERS: xforwarded
+      # Identity store on the platform Postgres, so accounts and analyst-set passwords
+      # survive a recreate. Same host indirection as the backend: 127.0.0.1 through this
+      # service's own sidecar with the mesh enforcing, the service name without it. The
+      # username/password are a Vault lease rendered to /vault/secrets/kc-db.env — the
+      # entrypoint sources it before start; no credential sits in this file or in .env.
+      KC_DB: postgres
+      KC_DB_URL: "jdbc:postgresql://${IR_DB_HOST_APP:-db}:5432/keycloak"
+      IR_VAULT: "${IR_VAULT:-1}"
     volumes:
+      - kc-secrets:/vault/secrets:ro
       - ../../hashicorp/keycloak/realm-irplatform.json:/opt/keycloak/data/import/realm.json:ro,z
-    networks: [internal, dmzlink]   # dmzlink: browser-facing OIDC redirects via the broker
+      # Trust anchors and revocation lists for smartcard logon. Mounted always, consulted
+      # only when IR_PKI_LOGON=1 — an inert mount is cheaper than a conditional one.
+      - ../../hashicorp/keycloak/pki-logon/trust-anchors:/opt/keycloak/pki/trust-anchors:ro,z
+      - ../../hashicorp/keycloak/pki-logon/crl:/opt/keycloak/pki/crl:ro,z
+    # In its SIDECAR's namespace, like the gate and the shipper: Keycloak exits when the
+    # database is unreachable, and each exit of a namespace OWNER would strand the proxy
+    # carrying the upstream it is waiting for. With the proxy owning the namespace, Keycloak
+    # can restart until the upstream opens without breaking the thing it needs.
+    network_mode: "service:keycloak-sidecar"
+    # ONLY the namespace owner. Naming db or the agent here hands compose a reason to walk
+    # into the data tier: `up -d keycloak` recreated the database under its attached proxy,
+    # and identity then dialed a listener serving a dead namespace. Start ordering against
+    # db and the rendered credential is deploy.sh's staging and the entrypoint's wait.
+    depends_on: [keycloak-sidecar]
+    restart: on-failure
+
+  # Connect sidecar for Keycloak — a mesh CONSUMER: it carries the ir-postgres upstream on
+  # loopback. Only the database connection rides the mesh; OIDC traffic still reaches
+  # `keycloak` by name, which is why this container holds the alias on both networks.
+  keycloak-sidecar:
+    mem_limit: ${IR_SIDECAR_MEM:-128m}
+    image: localhost/ir-consul-sidecar:latest
+    # The namespace owner carries the resolver settings and the DNS name.
+    dns: ["${ENCLAVE_DNS_IP}"]
+    dns_search: ["${RUNTIME_DNS_ZONE}"]
+    networks:
+      internal:
+        ipv4_address: ${IR_IP_KEYCLOAK}
+        aliases: [keycloak]
+      dmzlink:   # browser-facing OIDC redirects via the broker
+        aliases: [keycloak]
+    command: ["consul", "connect", "envoy", "-sidecar-for", "ir-keycloak",
+              "-http-addr", "https://consul:8501", "-grpc-addr", "https://consul:8503",
+              "-ca-file", "/consul/tls/consul-ca.pem", "-token-file", "/consul/tls/token",
+              "-admin-bind", "127.0.0.1:19000",
+              "--", "--concurrency", "${IR_ENVOY_CONCURRENCY:-1}"]
+    volumes:
+      - ../../hashicorp/consul/secrets/consul-ca.pem:/consul/tls/consul-ca.pem:ro,z
+      - ../../hashicorp/consul/secrets/tokens/ir-keycloak.token:/consul/tls/token:ro,z
+    restart: on-failure
+
+  # Keycloak's own agent identity, separate from the application's: its AppRole policy reads
+  # only the keycloak credential path, and it renders into a volume only Keycloak mounts. The
+  # app tier cannot read the identity store's credential, and the reverse — the same boundary
+  # the databases enforce, carried through to how the credentials travel.
+  kc-vault-agent:
+    dns: ["${ENCLAVE_DNS_IP}"]
+    dns_search: ["${RUNTIME_DNS_ZONE}"]
+    image: localhost/vault:2.0.3
+    user: root
+    entrypoint: ["vault"]
+    depends_on: [vault]
+    command: ["agent", "-config=/vault/agent/kc-vault-agent.hcl"]
+    volumes:
+      - vault-state:/vault/state:ro
+      - kc-secrets:/vault/secrets
+      - kc-vault-agent:/vault/agent
+      - ../../hashicorp/agent/kc-vault-agent.hcl:/vault/agent/kc-vault-agent.hcl:ro,z
+      - ../../hashicorp/agent/kc-db-env.tmpl:/vault/agent/kc-db-env.tmpl:ro,z
+    restart: on-failure
+    networks: [internal]
 
   consul:
     dns: ["${ENCLAVE_DNS_IP}"]        # the enclave resolver is the ONLY resolver
@@ -442,8 +539,9 @@ services:
   # users are redirected to /oauth2/start, which drives the Keycloak login and returns to
   # /oauth2/callback. All same-origin with the app.
   oauth2-proxy:
-    dns: ["${ENCLAVE_DNS_IP}"]        # the enclave resolver is the ONLY resolver
-    dns_search: ["${RUNTIME_DNS_ZONE}"]
+    # No dns settings here: this container shares its sidecar's network namespace, and podman
+    # refuses dns options on a shared namespace — compose then reports success having created
+    # nothing at all. The resolver is set on the namespace's owner, the sidecar below.
     image: quay.io/oauth2-proxy/oauth2-proxy:v7.15.3
     command:
       - --provider=keycloak-oidc
@@ -467,6 +565,10 @@ services:
       - --redirect-url=${PLATFORM_PUBLIC_URL}/oauth2/callback
       - --http-address=0.0.0.0:4180
       - --reverse-proxy=true
+      # Which addresses may assert X-Forwarded-*. Without this every connecting IP is trusted to
+      # supply them, so anything that reaches the gate can claim any client address — and this
+      # platform derives attribution from those records. Only the ingress ever connects here.
+      - --trusted-proxy-ip=${ENCLAVE_SUBNET}
       - --email-domain=*
       - --scope=openid email profile
       - --upstream=http://frontend:8080
@@ -487,13 +589,132 @@ services:
       # Per-request cookies scope each attempt to its own state value, so a stale flow cannot
       # invalidate a fresh one.
       - --cookie-csrf-per-request=true
+      # Per-request cookies without a ceiling ACCUMULATE: every abandoned or interrupted login
+      # leaves one for its expiry window, they all travel in a single Cookie header, and that
+      # header eventually exceeds what the application server accepts. The analyst then gets
+      # "400 Request Header Or Cookie Too Large" and cannot retry past it, because every retry
+      # sends the same oversized header.
+      #
+      # Capped at the source rather than absorbed by a larger header buffer downstream. A
+      # buffer sized to fit unbounded growth is not a bound, and header buffers are
+      # per-connection memory: every analyst reaches the ingress through the broker from one
+      # source address, so the connection limit bounds them collectively rather than
+      # individually. Enlarging that memory to accommodate a fixable defect would trade a
+      # resource control (SRG-APP-000001-WSR-000001) for a workaround.
+      #
+      # Three is beyond what any real flow needs; the oldest is discarded, so a fresh attempt
+      # always has room and a stale one cannot displace the flow in progress — which is the
+      # property --cookie-csrf-per-request was set for in the first place.
+      - --cookie-csrf-per-request-limit=3
       # Long enough that a login interrupted by a password manager or an MFA prompt still
       # completes; short enough that an abandoned flow does not leave a usable cookie behind.
       - --cookie-csrf-expire=15m
       - --cookie-secret=${OAUTH2_COOKIE_SECRET}
+      # HttpOnly stated rather than inherited (SRG-APP-000223-WSR-000011,
+      # SRG-APP-000439-WSR-000155): a flag that rests on an image default is not a control.
+      - --cookie-httponly=true
+      # Absolute session lifetime, eight hours (SRG-APP-000295-WSR-000012), and re-validation
+      # against the identity provider every fifteen minutes, which is what makes an idle session
+      # expire and a revoked account stop working mid-session (SRG-APP-000295-WSR-000134).
+      # Keycloak carries the matching pair; the shorter of the two wins, and stating it in only
+      # one place leaves the other's default in force.
+      - --cookie-expire=8h
+      - --cookie-refresh=15m
+      # SERVER-SIDE session management (SRG-APP-000001-WSR-000002). The default cookie store
+      # puts the session itself in the client's cookie, which is the opposite of the control:
+      # nothing server-side can then invalidate it before it expires. With the Redis store the
+      # cookie is a reference and the session lives here, so signing out or cancelling a
+      # session ends it for real.
+      #
+      # Reached at 127.0.0.1 through this container's OWN mesh sidecar — Redis binds loopback
+      # only, so the gate is a mesh service like every other consumer, and its access to the
+      # queue is an intention rather than network reachability. Database 1 keeps analyst
+      # sessions out of the task broker's keyspace.
+      - --session-store-type=redis
+      - --redis-connection-url=redis://127.0.0.1:6379/1
       - --ssl-insecure-skip-verify=true
       - --whitelist-domain=ir-platform.local:8443
-    networks: [internal]
+    # No network of its own: it lives in its sidecar's namespace (see below).
+    network_mode: "service:oauth2-proxy-sidecar"
+    depends_on: [oauth2-proxy-sidecar]
+    restart: on-failure
+
+  # Connect sidecar for the SSO gate. It exists so the gate can hold its sessions in Redis
+  # without Redis leaving loopback: the upstream is a local port, and the intention decides
+  # whether it carries anything.
+  oauth2-proxy-sidecar:
+    mem_limit: ${IR_SIDECAR_MEM:-128m}
+    build:
+      context: ../../hashicorp/consul
+      dockerfile: Dockerfile.sidecar
+    image: localhost/ir-consul-sidecar:latest
+    # This proxy OWNS the namespace the gate runs in, so the gate's restarts cannot strand it —
+    # which also makes it the container that carries the namespace's resolver settings.
+    dns: ["${ENCLAVE_DNS_IP}"]        # the enclave resolver is the ONLY resolver
+    dns_search: ["${RUNTIME_DNS_ZONE}"]
+    networks:
+      internal:
+        ipv4_address: ${IR_IP_OAUTH2_PROXY}
+        # The gate answers on this name. It has no network of its own — it lives in this
+        # namespace — so the runtime registers THIS container in DNS, and without the alias
+        # `oauth2-proxy` stops resolving and the ingress returns 502 for every request.
+        aliases: [oauth2-proxy]
+    command: ["consul", "connect", "envoy", "-sidecar-for", "ir-oauth2-proxy",
+              "-http-addr", "https://consul:8501", "-grpc-addr", "https://consul:8503",
+              "-ca-file", "/consul/tls/consul-ca.pem", "-token-file", "/consul/tls/token",
+              "-admin-bind", "127.0.0.1:19000",
+              "--", "--concurrency", "${IR_ENVOY_CONCURRENCY:-1}"]
+    volumes:
+      - ../../hashicorp/consul/secrets/consul-ca.pem:/consul/tls/consul-ca.pem:ro,z
+      - ../../hashicorp/consul/secrets/tokens/ir-oauth2-proxy.token:/consul/tls/token:ro,z
+    restart: on-failure
+
+  # Web-tier logs into private object storage. The backend image, because it already carries
+  # the object-store client and configuration; a separate service because it must not restart
+  # when the API does, and must hold its own mesh identity rather than borrow the backend's.
+  log-shipper:
+    image: localhost/ir-backend:latest
+    command: ["python", "manage.py", "ship_logs", "--follow"]
+    env_file: ../.env
+    environment:
+      # Reached at 127.0.0.1 through this container's own sidecar, like every other consumer.
+      S3_ENDPOINT_URL: ${IR_MINIO_ENDPOINT_APP:-http://127.0.0.1:9000}
+      POSTGRES_HOST: ${IR_DB_HOST_APP:-127.0.0.1}
+      # No IR_LOGS_BUCKET here: podman-compose does not expand a self-referencing
+      # ${KEY:-default} and passes the literal string, which arrives as a bucket name.
+      # The default lives in ship_logs.py; set the variable in .env to override it.
+    volumes:
+      - vault-secrets:/vault/secrets:ro
+      # READ-ONLY: shipping a record must never be able to alter it.
+      - traefik-logs:/logs/traefik:ro
+      - frontend-logs:/logs/frontend:ro
+    network_mode: "service:log-shipper-sidecar"
+    depends_on: [log-shipper-sidecar]
+    restart: on-failure
+
+  # Owns the namespace, as the SSO gate's sidecar does: the shipper needs MinIO at 127.0.0.1
+  # from its first pass and would otherwise strand its proxy on every retry.
+  log-shipper-sidecar:
+    mem_limit: ${IR_SIDECAR_MEM:-128m}
+    build:
+      context: ../../hashicorp/consul
+      dockerfile: Dockerfile.sidecar
+    image: localhost/ir-consul-sidecar:latest
+    dns: ["${ENCLAVE_DNS_IP}"]
+    dns_search: ["${RUNTIME_DNS_ZONE}"]
+    networks:
+      internal:
+        ipv4_address: ${IR_IP_LOG_SHIPPER}
+        aliases: [log-shipper]
+    command: ["consul", "connect", "envoy", "-sidecar-for", "ir-log-shipper",
+              "-http-addr", "https://consul:8501", "-grpc-addr", "https://consul:8503",
+              "-ca-file", "/consul/tls/consul-ca.pem", "-token-file", "/consul/tls/token",
+              "-admin-bind", "127.0.0.1:19000",
+              "--", "--concurrency", "${IR_ENVOY_CONCURRENCY:-1}"]
+    volumes:
+      - ../../hashicorp/consul/secrets/consul-ca.pem:/consul/tls/consul-ca.pem:ro,z
+      - ../../hashicorp/consul/secrets/tokens/ir-log-shipper.token:/consul/tls/token:ro,z
+    restart: on-failure
 
   traefik:
     dns: ["${ENCLAVE_DNS_IP}"]        # the enclave resolver is the ONLY resolver
@@ -503,6 +724,7 @@ services:
     volumes:
       - ../../traefik/traefik.yml:/etc/traefik/traefik.yml:ro,z
       - ../../traefik/dynamic-sso:/etc/traefik/dynamic:ro,z
+      - traefik-logs:/var/log/traefik
       - ../../traefik/certs:/certs:ro,z
     depends_on: [frontend, oauth2-proxy]
     # INTERNAL ONLY. The ingress is reachable from the enclave and from nowhere else — the
@@ -525,6 +747,8 @@ services:
     image: localhost/ir-frontend:latest
     env_file: ../.env
     depends_on: [backend]
+    volumes:
+      - frontend-logs:/var/log/nginx
     networks:
       internal:
         ipv4_address: ${IR_IP_FRONTEND}
@@ -562,8 +786,8 @@ services:
     env_file: ../.env
     environment:
       POSTGRES_HOST: ${IR_DB_HOST_APP:-db}
-      CELERY_BROKER_URL: redis://redis:6379/0
-      CELERY_RESULT_BACKEND: redis://redis:6379/0
+      # Celery URLs come from settings defaults: redis://127.0.0.1:6379/0 — the ir-redis
+      # upstream bound by this service's own sidecar.
       S3_ENDPOINT_URL: ${IR_MINIO_ENDPOINT_APP:-http://minio:9000}
       IR_CONSUL_ADDR: "https://consul:8501"
       IR_CONSUL_CACERT: "/consul/tls/consul-ca.pem"
@@ -633,8 +857,8 @@ services:
     env_file: ../.env
     environment:
       POSTGRES_HOST: ${IR_DB_HOST_APP:-db}
-      CELERY_BROKER_URL: redis://redis:6379/0
-      CELERY_RESULT_BACKEND: redis://redis:6379/0
+      # Celery URLs come from settings defaults: redis://127.0.0.1:6379/0 — the ir-redis
+      # upstream bound by this service's own sidecar.
       S3_ENDPOINT_URL: ${IR_MINIO_ENDPOINT_APP:-http://minio:9000}
       IR_TOOLKIT_DIR: /opt/toolkit
       IR_SYMBOLS_DIR: /symbols
@@ -740,6 +964,10 @@ services:
     restart: on-failure
 
 volumes:
+  # Web-tier access records, written as files so the shipper can read them without any
+  # container being granted the ability to inspect another.
+  traefik-logs:
+  frontend-logs:
   boundary-db-data:
   boundary-state:
   # Vault's raft store — the secrets themselves.
@@ -752,6 +980,10 @@ volumes:
   # Where the agent renders the app's secrets. Mounted read-only into backend and worker.
   vault-secrets:
   vault-agent:
+  # Keycloak's rendered credential — its own volume, mounted ONLY into keycloak. The app
+  # tier's containers never see it; that mount boundary is part of the separation.
+  kc-secrets:
+  kc-vault-agent:
   # Vault's own audit log. Every privileged operation against the secrets store, including the
   # issuing of the custody key — evidence about the evidence handling.
   vault-logs:

@@ -47,3 +47,22 @@ Thumbs.db
 archive/
 # Private development — continues beyond the public baseline, never committed.
 /private/
+
+/change_logs/
+/platform/change_logs/
+
+# -- Secrets -------------------------------------------------------------------
+*.key
+*.pem
+*.token
+*.p12
+*.pfx
+*.jks
+.env
+.env.*
+!.env.example
+secrets/
+**/secrets/
+*_rsa
+*_ed25519
+id_*

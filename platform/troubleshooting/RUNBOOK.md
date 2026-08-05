@@ -111,6 +111,40 @@ new file handoffs, use `shutil.move`.
 **Fix.** Check `S3_ENDPOINT_URL` / credentials / bucket in [`deploy/.env`](../deploy/.env.example)
 and that MinIO is reachable *from the enclave* (`diagnose.sh --flow` asserts this).
 
+### Nothing is adjudicated, no host reads compromised, and correlation links nothing
+**Symptom.** Captures analyze and go terminal, but every run reads clean and the corpus UAT's
+linkage section fails with `0 pairs` / `0 at or above threshold`. It presents as a correlation
+defect, several layers from its cause.
+
+**Cause.** The analysis worker embeds the **whole backend application** — it runs the same
+Django code as the API. The worker image used to be built only when *absent*, so a migration
+that added a column left the worker inserting rows without it:
+
+```
+MemoryAnalysisRun.status = 'failed'
+error = IntegrityError: null value in column "<new column>" of relation
+        "cases_finding" violates not-null constraint
+```
+
+`recreate_if_stale` cannot catch this. It compares the running container against
+`localhost/ir-worker:latest`, and that image was never rebuilt — so nothing looked stale.
+
+**Why it stayed hidden.** `adjudicate()` never raises, because losing a completed memory pass
+over a failed verdict step is the worse outcome. It recorded the reason in
+`MemoryAnalysisRun.summary["adjudication"]["reason"]` and returned. The corpus settle gate then
+counted `status in ('completed','failed')` as terminal, so 25 failed analyses satisfied it.
+
+**Fix.** `ensure_build_images` rebuilds the worker whenever anything under `backend/` or
+`shared/` is newer than the image; `IR_REBUILD_WORKER=1` forces it for a toolkit change it
+cannot see. `uat_corpus.sh` asserts every analysis completed *and* was adjudicated, printing
+the recorded error — which names the real cause.
+
+**Ask the store directly:**
+
+```bash
+podman exec -i ir-enclave_backend_1 python3 -c "import os,django;os.environ.setdefault('DJANGO_SETTINGS_MODULE','ir_platform.settings');django.setup();from cases.models import MemoryAnalysisRun as M;print([(r.status, (r.error or '')[:120]) for r in M.objects.order_by('-id')[:3]])"
+```
+
 ---
 
 ## 3. Database / secrets (Vault)
@@ -134,6 +168,31 @@ is unsealed.
 **Fix.** Request the **Unseal Vault** repair from the Enclave Repairs page, or run
 `deploy.sh enclave`, which unseals as part of its sequence.
 **Verify.** `podman exec ir-enclave_vault_1 vault status | grep Sealed` → `false`.
+
+### Backend loops on `still waiting for postgres`, and the role in `app.env` does not exist
+**Symptom.** `deploy.sh` reports the app tier was issued a credential, then the API never
+becomes healthy. The backend logs only `still waiting for postgres — is this service's sidecar
+up?`, but the sidecar is up and a TCP connect to `127.0.0.1:5432` succeeds.
+**Cause.** The AppRole `secret_id` the Vault Agent authenticates with carries a TTL (72h by
+default) while the file holding it does not expire. Past that, the agent fails auth
+(`invalid role or secret ID`), stops rendering, and the leased Postgres role it last wrote is
+revoked — leaving a stale `app.env` naming a role Postgres has dropped. The entrypoint's probe
+discards the exception, so an authentication failure is reported as a connectivity problem.
+**Fix.** `vault-setup` reissues both agents' secret_ids on every run and restarts them, and the
+deploy gate now proves the credential authenticates instead of grepping the file. Run
+`deploy.sh enclave`. On a deployment whose stored `ir-provisioner` policy predates the
+secret-id paths the run converges it through break-glass once and says so.
+**Verify.** `podman logs ir-enclave_vault-setup_1 | grep 'fresh secret_id issued'` → both roles;
+the deploy prints `…and it authenticates`.
+**Diagnose it directly** — the probe's own error, which the entrypoint hides:
+```
+podman exec ir-enclave_backend_1 sh -c '. /vault/secrets/app.env; python -c "
+import os,psycopg; psycopg.connect(host=os.environ[\"POSTGRES_HOST\"],
+  dbname=os.environ[\"POSTGRES_DB\"], user=os.environ[\"POSTGRES_USER\"],
+  password=os.environ[\"POSTGRES_PASSWORD\"])"'
+```
+`podman exec` gets the compose environment, not PID 1's — without sourcing `app.env` you read a
+different user than the running app.
 
 ### A service reports Postgres or MinIO unreachable while both are healthy
 **Cause.** The service's Connect sidecar is no longer in its network namespace — a recreated
@@ -331,6 +390,7 @@ compose project.
 | `short-name "x" did not resolve` | podman won't resolve an unqualified compose-generated image name | give the service an explicit `image: localhost/<name>:latest` |
 | `HEALTHCHECK is not supported for OCI` warning | podman's default image format | harmless; build-time smoke tests cover it |
 | code change deploys cleanly but the old behavior persists | compose will not recreate a container that is already running, so `up -d --build` builds a new image and leaves the old one serving | `deploy.sh` now compares each app container's image against `:latest` and replaces the drifted ones; confirm with the check below |
+| the worker runs old code and the container/image comparison says nothing is stale | the worker image is built outside compose, and was built only when absent — the container matched `:latest` because `:latest` itself was never rebuilt | `deploy.sh` rebuilds it when `backend/` or `shared/` is newer; `IR_REBUILD_WORKER=1` forces it. See §2, "Nothing is adjudicated" |
 | `container has dependent containers which must be removed before it` | compose turns `depends_on` into podman container dependencies, and `podman rm` refuses while dependents exist | remove with `--depend`; the staged bring-up restores the dependents in order |
 
 Confirming a container is running the image you just built — worth doing after any change
@@ -345,6 +405,28 @@ done
 ```
 
 The two columns must match. When they do not, the deploy built an image nothing is running.
+
+### A background thread that never does its job, with nothing in the logs
+
+Seen as: a Component Health row that never appears while the process looks healthy. Diagnosis
+order that works when the thread's own errors are invisible:
+
+1. **Count the threads** — `ls /proc/1/task` and `cat /proc/1/task/*/comm` inside the
+   container. A missing thread means start-up raised; a present one means it runs and fails.
+2. **Check what identity it runs under.** `backend/entrypoint.sh` derives
+   `IR_HEALTH_REPORT_ROLE` from `$1`; only `web`/`worker` may export it. A compose `command:`
+   starting with anything else (e.g. `python`) must NOT set a role, or `apps.py` claims the
+   reporter under the wrong component name and later `start()` calls are no-ops behind the
+   `_started` guard — the work happens under a name nobody is watching, and can overwrite
+   another component's row.
+3. **boto3 in threads**: never `boto3.client(...)` — the lazily-built default session is not
+   thread-safe and two threads first-using it deadlock inside botocore (`futex_do_wait`
+   forever, zero log output). `cases/storage.py` builds `boto3.session.Session().client(...)`
+   per call for this reason.
+4. **Make first failures visible.** `healthreporter` prints `[health] reporting as <name>` at
+   thread start and each failure to stderr until the first success, then retries every 30s
+   until one lands. `[health] first report recorded` in the container log is the all-clear;
+   its absence plus repeated failure lines names the actual exception.
 
 ---
 

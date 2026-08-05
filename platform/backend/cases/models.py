@@ -6,7 +6,9 @@ here; the raw memory image lives in object storage (MinIO/S3) and is referenced 
 ``MemoryCapture``. The canonical verdict ladder is owned by the toolkit's
 finding_schema.py, not redefined here — VERDICTS mirrors it for DB-level indexing.
 """
+from django.contrib.postgres.indexes import GinIndex
 from django.db import models
+from django.utils import timezone
 
 # Mirror of finding_schema.VERDICTS (kept in lockstep; do not diverge the ordering).
 VERDICTS = (
@@ -27,14 +29,48 @@ class TimeStamped(models.Model):
         abstract = True
 
 
+class InvalidTransition(Exception):
+    """A lifecycle move the model refuses. Carries both states so the caller can report it."""
+
+    def __init__(self, current, target):
+        self.current, self.target = current, target
+        super().__init__(f"{current} -> {target} is not a legal transition")
+
+
 class Investigation(TimeStamped):
-    """One incident engagement; groups hosts and their collection runs."""
+    """One incident engagement; groups hosts and their collection runs.
+
+    `status` was free text, which made every downstream question a guess: whether a case is
+    finished, whether it may be archived, how long it has been stalled. Archival in
+    particular cannot rest on a string somebody typed — the states below are the contract
+    T4/T5 will archive against.
+    """
+
+    OPEN = "open"
+    CONTAINED = "contained"
+    CONCLUDED = "concluded"
+    ARCHIVED = "archived"
+    STATUS = [(s, s) for s in (OPEN, CONTAINED, CONCLUDED, ARCHIVED)]
+
+    # Forward through the engagement, with two ways back. Reopening a concluded case is
+    # ordinary — evidence arrives late — so `concluded -> open` is legal and clears
+    # `concluded_at`. `archived` is terminal: its evidence has been moved out, and a
+    # transition out of it would assert data that is no longer there.
+    TRANSITIONS = {
+        OPEN: {CONTAINED, CONCLUDED},
+        CONTAINED: {CONCLUDED, OPEN},
+        CONCLUDED: {ARCHIVED, OPEN},
+        ARCHIVED: set(),
+    }
 
     name = models.CharField(max_length=255)
     incident_id = models.CharField(max_length=128, blank=True, db_index=True)
     operator = models.CharField(max_length=128, blank=True)
     severity = models.CharField(max_length=32, blank=True)
-    status = models.CharField(max_length=32, default="open", db_index=True)
+    status = models.CharField(max_length=32, choices=STATUS, default=OPEN, db_index=True)
+    # When the case was concluded, not when the row was last written. The stalled-case query
+    # needs an age that a later note or re-analysis does not reset.
+    concluded_at = models.DateTimeField(null=True, blank=True, db_index=True)
     notes = models.TextField(blank=True)
 
     class Meta:
@@ -42,6 +78,28 @@ class Investigation(TimeStamped):
 
     def __str__(self):
         return f"{self.name} ({self.incident_id or self.pk})"
+
+    def can_transition_to(self, target):
+        return target in self.TRANSITIONS.get(self.status, set())
+
+    def transition_to(self, target, save=True):
+        """Move to `target` or raise InvalidTransition. Maintains `concluded_at`.
+
+        Refused in the model rather than in a view, so an import, a management command and
+        the API cannot each hold a different idea of which moves are legal.
+        """
+        if target == self.status:
+            return self                      # idempotent; a no-op move is not an error
+        if not self.can_transition_to(target):
+            raise InvalidTransition(self.status, target)
+        self.status = target
+        if target == self.CONCLUDED:
+            self.concluded_at = timezone.now()
+        elif target == self.OPEN:
+            self.concluded_at = None         # reopened: it is not a concluded case any more
+        if save:
+            self.save(update_fields=["status", "concluded_at", "updated_at"])
+        return self
 
 
 class Host(TimeStamped):
@@ -63,9 +121,64 @@ class Host(TimeStamped):
 
     class Meta:
         ordering = ["hostname"]
+        constraints = [
+            # machine-id is what makes a collection and the memory image analyzed hours
+            # later converge on one host. Enforced only in Python, that convergence was a
+            # read-then-write race: two arrivals for the same machine could each find no
+            # host and each create one, splitting the machine's evidence across two records
+            # with no way to tell afterwards. The database refuses it instead.
+            #
+            # Partial, because blank means "not recorded" — collections predating the
+            # machine-id capture, or where it was unreadable, legitimately have none and
+            # fall back to hostname resolution. A unique index over them would collapse
+            # every such host into one.
+            models.UniqueConstraint(
+                fields=["machine_id"],
+                condition=models.Q(machine_id__gt=""),
+                name="uniq_host_machine_id",
+            ),
+        ]
 
     def __str__(self):
         return self.hostname
+
+
+class HostIdentityChange(TimeStamped):
+    """A change to how a machine identifies itself, kept because the Host row cannot hold it.
+
+    `Host` carries the CURRENT hostname, machine-id and platform — a machine renamed between
+    collections overwrites the old value, and every earlier run then renders under a name that
+    host did not have when its evidence was collected. An analyst reading a six-week-old run
+    would see today's name and have no way to learn it ever had another.
+
+    So identity is historised: the row here says what the value was, what it became, when it
+    was observed and which collection observed it. Answering "what was this machine called at
+    the time of that run" is a lookup rather than a guess.
+
+    Written by ingest, never by a user. Renames are observed, not requested.
+    """
+
+    FIELD = [
+        ("hostname", "hostname"),
+        ("machine_id", "machine_id"),   # adopted when a host first reports one
+        ("platform", "platform"),
+    ]
+    host = models.ForeignKey(Host, related_name="identity_changes", on_delete=models.CASCADE)
+    field = models.CharField(max_length=32, choices=FIELD, db_index=True)
+    from_value = models.CharField(max_length=255, blank=True)
+    to_value = models.CharField(max_length=255)
+    # When the COLLECTION that observed the change was taken, which is not when the row was
+    # written: a bundle can arrive long after the machine was renamed.
+    observed_at = models.DateTimeField(null=True, blank=True)
+    source_stamp = models.CharField(max_length=255, blank=True)   # the collection that saw it
+    actor = models.CharField(max_length=128, default="ingest")
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [models.Index(fields=["host", "field"])]
+
+    def __str__(self):
+        return f"{self.host_id} {self.field}: {self.from_value or '(none)'} -> {self.to_value}"
 
 
 class CollectionRun(TimeStamped):
@@ -98,6 +211,17 @@ class CollectionRun(TimeStamped):
 
     class Meta:
         ordering = ["-created_at"]
+        constraints = [
+            # Ingest documents itself as idempotent on this triple: re-posting a bundle
+            # returns the existing run rather than duplicating it. That was a convention the
+            # application observed, not a rule the store enforced — so a retried delivery
+            # arriving twice concurrently could produce two runs for one collection, and the
+            # same evidence would then be counted, correlated and reported twice.
+            models.UniqueConstraint(
+                fields=["investigation", "host", "stamp"],
+                name="uniq_run_investigation_host_stamp",
+            ),
+        ]
 
     def __str__(self):
         return f"{self.host} @ {self.stamp or self.created_at:%Y-%m-%d}"
@@ -138,9 +262,40 @@ class Finding(TimeStamped):
     source = models.CharField(max_length=32, default="collector")      # collector | memory | LLM
     raw = models.JSONField(default=dict)                               # verbatim finding
 
+    # Who owns the current verdict: "" (nobody has judged it), "engine", or "analyst".
+    # An automated pass may set and revise a verdict it owns; it may not replace one an
+    # analyst set. A report rests on the human determination, and an engine re-run that
+    # quietly overturns it invalidates the report rather than merely annoying its author.
+    adjudicated_by = models.CharField(max_length=16, blank=True, default="")
+    # The analysis pass that PRODUCED the current verdict — not the last pass that looked at
+    # it. A later run that reached the same conclusion did not produce anything.
+    adjudication_run = models.ForeignKey(
+        "MemoryAnalysisRun", related_name="adjudicated_findings",
+        on_delete=models.SET_NULL, null=True, blank=True,
+    )
+    # What the engine would have said where an analyst already ruled otherwise. Empty when
+    # they agree. This is how disagreement reaches review instead of being applied.
+    #
+    # Deliberately unindexed: the conflict set is small, and the triage queue is already
+    # scoped to a run, so an index here would cost writes on the largest table in the store
+    # to serve a query that filters a few hundred rows.
+    adjudication_conflict = models.JSONField(default=dict, blank=True)
+
     class Meta:
         ordering = ["-created_at"]
-        indexes = [models.Index(fields=["finding_type", "verdict"])]
+        indexes = [
+            models.Index(fields=["finding_type", "verdict"]),
+            # `mitre` is queried by containment (`mitre__contains=[technique]`), which a
+            # B-tree cannot serve; GIN is the index that applies to jsonb `@>`.
+            GinIndex(fields=["mitre"], name="finding_mitre_gin"),
+            # Exact-match filter used by the API and by correlation to separate collector,
+            # memory and reverse-engineering evidence.
+            models.Index(fields=["source"], name="finding_source_idx"),
+        ]
+        # `raw` is deliberately NOT indexed. It is read in Python by the correlation engine
+        # and never queried by key in SQL, so a GIN over it would cost write throughput on
+        # the largest table in the store to serve no query. Index it if and when a query
+        # needs it.
 
     def __str__(self):
         return f"{self.finding_type} -> {self.target} [{self.verdict}]"
@@ -199,6 +354,50 @@ class IOC(TimeStamped):
 
     def __str__(self):
         return f"{self.ioc_type}:{self.value}"
+
+
+class IndicatorSighting(TimeStamped):
+    """One (indicator, host, investigation) rollup — what survives archival of the evidence.
+
+    `IOC` rows hang off a `CollectionRun`, so archiving an investigation takes them with it
+    and the cross-case question dies: *which other engagements has this mutex appeared in?*
+    That question is the whole point of L5 attribution, and it has to be answerable after the
+    raw evidence has been moved out — an actor's builder-fixed indicators are precisely what
+    outlives the infrastructure they rotate between engagements.
+
+    Deliberately denormalized. No foreign key to `CollectionRun`, and hostname and incident
+    are copied rather than joined, because a cascade from the rows this summarizes would
+    delete the summary along with them — which is the exact failure it exists to prevent.
+    `host_id` and `investigation_id` are kept as plain integers for pivoting while those
+    records live, and mean nothing once they do not.
+    """
+
+    ioc_type = models.CharField(max_length=64, db_index=True)
+    value = models.CharField(max_length=1024, db_index=True)
+    investigation_id = models.IntegerField(db_index=True)
+    incident_id = models.CharField(max_length=128, blank=True, db_index=True)
+    host_id = models.IntegerField(db_index=True)
+    hostname = models.CharField(max_length=255, db_index=True)
+    first_seen = models.DateTimeField(null=True, blank=True)
+    last_seen = models.DateTimeField(null=True, blank=True)
+    sighting_count = models.IntegerField(default=1)
+    # Kept so an archived sighting still says what kind of finding produced it.
+    context = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        ordering = ["ioc_type", "value", "hostname"]
+        indexes = [
+            # The cross-case pivot: everywhere this indicator has ever been seen.
+            models.Index(fields=["ioc_type", "value"]),
+            # And the per-case read, for the investigation's own indicator index.
+            models.Index(fields=["investigation_id", "ioc_type"]),
+        ]
+        constraints = [models.UniqueConstraint(
+            fields=["ioc_type", "value", "host_id", "investigation_id"],
+            name="uniq_indicator_sighting")]
+
+    def __str__(self):
+        return f"{self.ioc_type}:{self.value} on {self.hostname} x{self.sighting_count}"
 
 
 class Principal(TimeStamped):
@@ -301,10 +500,24 @@ class ProcessVerdict(TimeStamped):
     mitre = models.JSONField(default=list, blank=True)
     positive_dims = models.JSONField(default=list, blank=True)  # the dimensions that fired
     prior_adjudication = models.CharField(max_length=64, blank=True)  # the host's verdict
+    # A re-analysis SUPERSEDES rather than replaces. Deleting the prior pass destroyed the
+    # only record that the engine once judged a PID differently — and "what did we conclude
+    # before, and what changed it" is a question a report has to answer. Same shape as
+    # CorrelationRun, so the two derived stores behave alike.
+    is_current = models.BooleanField(default=True, db_index=True)
+    superseded_at = models.DateTimeField(null=True, blank=True)
+    superseded_by = models.ForeignKey(
+        "MemoryAnalysisRun", null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="superseded_process_verdicts")
 
     class Meta:
         ordering = ["-positive_weight", "pid"]
-        indexes = [models.Index(fields=["run", "verdict"])]
+        indexes = [
+            models.Index(fields=["run", "verdict"]),
+            # Every read path wants the live set; without this the filter scans history that
+            # grows with each re-analysis.
+            models.Index(fields=["run", "is_current"]),
+        ]
 
     def __str__(self):
         return f"pid {self.pid} ({self.process}) — {self.engine_label}"

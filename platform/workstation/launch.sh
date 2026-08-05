@@ -42,10 +42,28 @@ if [ -z "${DISPLAY:-}" ]; then
     exit 2
 fi
 
-# --kiosk keeps it full-screen with no chrome to navigate elsewhere; the profile is
-# ephemeral (SanitizeOnShutdown in policy also clears state).
-exec firefox-esr \
-    --profile "$PROFILE" \
-    --no-remote \
-    ${IR_BROWSER_KIOSK:+--kiosk} \
-    "$URL"
+# --kiosk keeps it full-screen with no chrome to navigate elsewhere.
+#
+# Supervised rather than exec'd, and the profile is DISCARDED before every start. In a kiosk
+# the analyst has no address bar, no history and no settings, so any authentication state
+# that survives a start is state they cannot clear. A login abandoned across a platform
+# redeploy leaves a callback the identity provider no longer recognises; its error page
+# carries no link back, and the workstation is then wedged until an administrator recreates
+# the container. Telling the analyst to clear cookies is not a remedy that exists here.
+#
+# So Firefox exiting is a RECOVERY rather than the end of the session: the profile goes, and
+# the browser returns to the platform root with a clean slate. SanitizeOnShutdown in the
+# policy covers a clean exit; this covers the crash and the wedge, which are the cases that
+# actually strand someone.
+while :; do
+    rm -rf "$PROFILE"
+    mkdir -p "$PROFILE"
+    echo "[browser] clean profile — opening ${URL}"
+    firefox-esr \
+        --profile "$PROFILE" \
+        --no-remote \
+        ${IR_BROWSER_KIOSK:+--kiosk} \
+        "$URL" || true
+    echo "[browser] session ended — clearing authentication state and reopening ${URL}" >&2
+    sleep 2
+done
