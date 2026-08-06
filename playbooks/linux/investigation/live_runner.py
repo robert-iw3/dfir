@@ -43,7 +43,7 @@ from typing import Any, Dict, List, Optional
 from .correlator import correlate, CorrelationVerdict, CrossSourceSignal
 from .verdict import VerdictLabel, HOST_SCOPE_PID
 from .process_tree import load_from_snapshot, load_from_adjudication, ProcessNode
-from .chain_builder import build_chains, AttackChain
+from .chain_builder import build_chains, mitre_ids, AttackChain
 from .ttp_patterns import match_patterns, TTPMatch
 
 
@@ -248,9 +248,7 @@ def _source_summary(signals: List[CrossSourceSignal]) -> Dict[str, int]:
 def _extract_mitre(cv: CorrelationVerdict) -> List[str]:
     mitre = set()
     for f in (cv.memory_verdict.findings if cv.memory_verdict else []):
-        m = f.get('MITRE', '')
-        if m:
-            mitre.add(m.split()[0].rstrip(','))
+        mitre.update(mitre_ids(f.get('MITRE', '')))
     return sorted(mitre)
 
 

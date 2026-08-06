@@ -95,7 +95,7 @@ def _valid_marker(path):
 
     `/run/user/<uid>/doc` is the flatpak document portal: a FUSE mount that SYNTHESISES
     paths on access, so `os.path.exists` answers True for any name asked of it. A bare
-    existence test recognised it as a collection bundle and would have excluded a live
+    existence test recognized it as a collection bundle and would have excluded a live
     writable directory from every check that consults this.
 
     Reading the file defeats that, and it also raises the bar for planting a marker to
@@ -154,7 +154,7 @@ _noted_bundles = set()
 
 
 def _note_own_bundle(bundle):
-    """Remember a recognised bundle. Reported once in total by report_own_bundles()."""
+    """Remember a recognized bundle. Reported once in total by report_own_bundles()."""
     _noted_bundles.add(bundle)
 
 
@@ -2366,7 +2366,7 @@ def main():
         check_gtfobins_exec, check_cred_access, check_timestomp,
         check_process_ancestry, check_masquerade, check_credential_access,
         check_got_plt_hooks, check_mwcp_structural_configs,
-        report_own_bundles,          # last: summarises what the checks above skipped
+        report_own_bundles,          # last: summarizes what the checks above skipped
     ]
     for ch in checks:
         try:

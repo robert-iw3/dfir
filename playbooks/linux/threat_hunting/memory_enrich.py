@@ -63,7 +63,7 @@ _PRIVKEY_RE = re.compile(r"-----BEGIN (?:[A-Z0-9 ]+ )?PRIVATE KEY-----")
 _MINER_RE = re.compile(
     r"(?i)stratum\+(?:tcp|udp|ssl)://[A-Za-z0-9._:\-/?=&%]+(?:[ \t]+-[A-Za-z][ \t]+[A-Za-z0-9._:\-/?=&%]+){0,5}")
 _HOST_OF_RE = re.compile(r"(?i)^[a-z+]+://([A-Za-z0-9._\-]+)")
-# Real-looking-domain check - STRUCTURAL ONLY (no DNS). "Confident" = last label is a recognised TLD
+# Real-looking-domain check - STRUCTURAL ONLY (no DNS). "Confident" = last label is a recognized TLD
 # (any 2-letter ccTLD, which is a complete rule, OR a common gTLD below) and every label is RFC-1035
 # shaped. The gTLD set is a COMMON subset, not the full IANA list; a host that does not match is moved
 # to `unverified` ("not resolvable - verify"), never deleted and never asserted as an IOC.
@@ -86,7 +86,7 @@ def _valid_tld(tld):
 
 
 def _valid_host(h):
-    """True when h is structurally a real domain: >=2 RFC-1035 labels and a recognised TLD. No DNS."""
+    """True when h is structurally a real domain: >=2 RFC-1035 labels and a recognized TLD. No DNS."""
     h = str(h or "").strip().rstrip(".").lower()
     if not h or len(h) > 253 or "." not in h:
         return False
@@ -141,7 +141,7 @@ def extract_c2_iocs(data, bare_domains=True):
         urls.append(u)
         if _IPV4_RE.fullmatch(h):
             ips.add(h)
-        elif _valid_host(h):                 # structured + recognised TLD -> confident domain IOC
+        elif _valid_host(h):                 # structured + recognized TLD -> confident domain IOC
             domains.add(h)
         else:                                # kept, not dropped: "not resolvable - verify"
             unverified.add(h)
@@ -436,7 +436,7 @@ def dossiers_to_findings(dossiers):
 
 
 def _notable(d):
-    """Keep a region's dossier if it carries IOCs, capa capabilities (capa flags behaviour even
+    """Keep a region's dossier if it carries IOCs, capa capabilities (capa flags behavior even
     when no network IOC is present, e.g. anti-analysis / injection / encryption), or a family-
     specific C2 config hit."""
     return (has_iocs(d["iocs"]) or bool((d.get("capa") or {}).get("capabilities"))

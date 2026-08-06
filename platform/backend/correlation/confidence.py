@@ -91,6 +91,25 @@ def band_for(host, links):
     contradicted = next(
         ((link, c) for link in accepted if (c := _contradiction_in(link))), None)
 
+    # What the timeline test CONCLUDED, reported whichever way it went.
+    #
+    # `contradiction_for` distinguishes three outcomes and words each: the movement
+    # contradicts the source's own evidence, it is consistent with it, or it COULD NOT BE
+    # EVALUATED because the source has no standalone confirming evidence to compare against.
+    # Carrying only the first collapsed the other two into a blank field, so "checked, and
+    # the sequence holds" and "there was nothing to check it against" rendered identically —
+    # and on a host whose history the actor destroyed, the second IS the finding.
+    timeline_basis = contradicted[1].get("contradiction_basis") if contradicted else None
+    if not timeline_basis:
+        for link in accepted:
+            factors = link.factors or {}
+            for c in [factors.get("top") or {}, *(factors.get("corroboration") or [])]:
+                if isinstance(c, dict) and c.get("contradiction_basis"):
+                    timeline_basis = c["contradiction_basis"]
+                    break
+            if timeline_basis:
+                break
+
     strong = best.weight >= STRONG_LINK
     corroborated = len(kinds) >= MIN_KINDS_FOR_CONFIRMED
     coherent = temporal is None or temporal >= TEMPORAL_OK
@@ -131,10 +150,9 @@ def band_for(host, links):
         "corroboration": len(kinds),
         "temporal": temporal,
         "contradiction": (contradicted[1].get("contradiction") if contradicted else None),
-        # The instants the discount was decided from, so the arithmetic can be checked
-        # without rerunning correlation.
-        "contradiction_basis": (contradicted[1].get("contradiction_basis")
-                                if contradicted else None),
+        # The instants the test was decided from, so the arithmetic can be checked without
+        # rerunning correlation — and, where it could not be decided, the reason.
+        "contradiction_basis": timeline_basis,
         "link_count": len(accepted),
         "why": why,
     }

@@ -59,7 +59,7 @@ def classify_noise(process_name: str, process_path: str, parent_name: str,
         return False, 1.0, path_rationale
 
     if proc_lower not in KNOWN_SYSTEM_PROCESSES:
-        return False, 0.0, f'{process_name!r} is not a recognised system daemon -- full investigation required.'
+        return False, 0.0, f'{process_name!r} is not a recognized system daemon -- full investigation required.'
 
     non_benign = [f for f in pid_findings
                   if f.get('Type', '') not in _BENIGN_ON_KNOWN_DAEMON]

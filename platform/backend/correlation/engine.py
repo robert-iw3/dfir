@@ -76,6 +76,8 @@ def _movement_edges(runs_by_host):
             "src": src, "dst": dst, "technique": raw.get("technique", ""),
             "protocol": raw.get("protocol", ""), "account": raw.get("account", ""),
             "observed_at": raw.get("observed_at"), "finding_id": f.id,
+            # Carried so linkage weighs the record on the same ladder as everything else.
+            "verdict": f.verdict,
         })
     return edges
 

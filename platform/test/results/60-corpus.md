@@ -2,7 +2,7 @@
 
 *What passing proves:* 25 real collector runs — 16 compromised across two investigations, 9 clean, fleet-wide benign noise on all — ship, ingest, analyze and correlate through the production path; clean hosts classify clean and join no campaign.
 
-- Run: `uat_corpus.sh` — 2026-08-05 16:07:28Z
+- Run: `uat_corpus.sh` — 2026-08-06 16:34:54Z
 
 **Preconditions**
 
@@ -68,13 +68,15 @@
 | ✅ PASS | correlation ran at the weighted algorithm version (2.0) |
 | ✅ PASS | the Ember/miner pair was CONSIDERED — the shared fleet-wide account makes it a candidate (20 pairs) |
 | ✅ PASS | every Ember/miner candidate was DECLINED — G2 closed by weighting, not by absence |
-| ✅ PASS | the declining factor is low RARITY — the shared thing reads as environment (max 0.112) |
-| ✅ PASS | declined weights sit below the threshold (heaviest 0.0614 < 0.35) |
-| ✅ PASS | Ember's own pairs LINK on their real evidence (9 at or above threshold) |
+| ✅ PASS | the declining factor is low RARITY — the shared thing reads as environment (max 0.338) |
+| ✅ PASS | declined weights sit below the threshold (heaviest 0.1860 < 0.35) |
+| ✅ PASS | Ember's own pairs LINK on their real evidence (37 at or above threshold) |
 | ✅ PASS | every link decomposes into all four named factors plus their product |
-| ✅ PASS | campaign pz=WS-007: cohesion_min equals its weakest internal link (0.9974) |
-| ✅ PASS | campaign pz=VPN-GW-01: cohesion_min equals its weakest internal link (0.4018) |
-| ✅ PASS | the miner campaign scores visibly weaker than Ember (0.4018 vs 0.9974) |
+| ✅ PASS | campaign pz=WS-007: cohesion_min equals its weakest internal link (0.4306) |
+| ✅ PASS | campaign pz=VPN-GW-01: cohesion_min equals its weakest internal link (0.4396) |
+| ✅ PASS | the miner campaign scores visibly weaker than Ember (mean 0.4396 vs 0.5691; min 0.4396 vs 0.4306) |
+| ✅ PASS | the miner rests on shared indicators alone (['indicator']) |
+| ✅ PASS | Ember rests on observed movement as well (['artifact', 'movement']) |
 | ✅ PASS | Quiet Fox links are carried by tradecraft and movement, never a shared indicator (['artifact', 'movement']) |
 | ✅ PASS | DC-101 is linked into the campaign despite no movement to it |
 | ✅ PASS | DC-101's link is carried by a shared ARTIFACT — the tradecraft path, proven ({'artifact'}) |
@@ -85,7 +87,7 @@
 
 | Result | Assertion — with evidence |
 |---|---|
-| ✅ PASS | correlation banding truth table: 41 run, 0 failed, 0 errored |
+| ✅ PASS | correlation banding truth table: 72 run, 0 failed, 0 errored |
 
 **L3 — membership confidence decomposes into the evidence that produced it**
 
@@ -178,4 +180,4 @@
 |---|---|
 | ✅ PASS | the corpus rode the production path end to end, and benign stayed benign |
 
-**Verdict: PROVEN** — 99 assertions passed, 0 failed.
+**Verdict: PROVEN** — 101 assertions passed, 0 failed.

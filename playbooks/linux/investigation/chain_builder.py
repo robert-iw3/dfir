@@ -68,6 +68,28 @@ class AttackChain:
     narrative: str
 
 
+def mitre_ids(value) -> List[str]:
+    """Technique ids from a MITRE field, whichever shape it arrived in.
+
+    The finding schema permits both, and both are in use: the hunts write a list of ids,
+    the MWCP parsers write one string — 'T1071.001 (Web Protocols), T1027 (Obfuscated
+    Files)'. Reading only the string shape raises AttributeError on a list, the engine then
+    produces no report at all, and the host is never adjudicated: a label field takes down
+    the entire determination for that endpoint.
+
+    Every id in the field is returned rather than only the first, because a finding that
+    names two techniques and a report that shows one disagree about the same evidence.
+    """
+    if isinstance(value, (list, tuple, set)):
+        return [t for item in value for t in mitre_ids(item)]
+    out = []
+    for part in str(value or '').split(','):
+        token = part.strip().split(' ')[0].strip()
+        if token:
+            out.append(token)
+    return out
+
+
 def _stage_for_type(ftype: str) -> str:
     for pattern, stage in _TYPE_STAGE:
         if re.search(pattern, ftype, re.IGNORECASE):
@@ -82,8 +104,10 @@ def _finding_events(pid: int, process: str, findings: List[dict]) -> List[ChainE
         events.append(ChainEvent(
             timestamp=f.get('Timestamp', ''), pid=pid, process=process,
             stage=_stage_for_type(ftype),
-            description=f'{ftype}: {f.get("Details", "")[:180]}',
-            mitre=f.get('MITRE', ''), source='memory',
+            description=f'{ftype}: {str(f.get("Details", ""))[:180]}',
+            # Joined, because the field is declared a string and a list here makes the same
+            # report carry two shapes for one attribute.
+            mitre=', '.join(mitre_ids(f.get('MITRE', ''))), source='memory',
         ))
     return events
 

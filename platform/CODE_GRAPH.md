@@ -88,12 +88,16 @@ namespace is unproxied, however healthy it looks.
 | `hashicorp/vault/vault-unseal.sh` | — | `enclave/vault` |
 | `troubleshooting/diagnose.sh` | — | `dmz/bastion`<br>`dmz/broker`<br>`enclave/boundary`<br>`enclave/boundary-egress`<br>`workstation/tailnet` |
 | `troubleshooting/remediation-agent.sh` | `deploy/deploy.sh`<br>`hashicorp/consul/consul-acl-bootstrap.sh`<br>`hashicorp/vault/rotate-app-creds.sh`<br>`hashicorp/vault/vault-unseal.sh` | `enclave/backend`<br>`enclave/boundary`<br>`enclave/worker`<br>`enclave/worker-sidecar` |
+| `test/lib/corpus_pipeline.sh` | `collector/build.sh` | `dmz/receiver`<br>`enclave/backend`<br>`enclave/puller`<br>`enclave/worker` |
 | `test/run_uats.sh` | — | `agent/remediation-agent`<br>`dmz/broker`<br>`dmz/coredns`<br>`dmz/headscale`<br>`dmz/receiver`<br>`enclave/backend`<br>`enclave/boundary`<br>`enclave/consul`<br>`enclave/coredns`<br>`enclave/keycloak`<br>`enclave/traefik`<br>`enclave/vault`<br>`enclave/worker`<br>`workstation/browser`<br>`workstation/tailnet` |
 | `test/seed_regions.sh` | — | `enclave/backend` |
 | `test/uat_baseline.sh` | `test/lib/report.sh` | `dmz/receiver`<br>`enclave/backend`<br>`enclave/db`<br>`enclave/keycloak`<br>`enclave/minio`<br>`enclave/puller`<br>`enclave/redis`<br>`enclave/worker` |
 | `test/uat_boundary.sh` | `test/lib/report.sh` | `dmz/bastion`<br>`dmz/broker`<br>`enclave/backend`<br>`enclave/boundary`<br>`enclave/boundary-db`<br>`enclave/boundary-egress` |
 | `test/uat_consul.sh` | `test/lib/report.sh` | `enclave/backend`<br>`enclave/consul`<br>`enclave/frontend`<br>`enclave/vault-agent`<br>`enclave/worker` |
 | `test/uat_corpus.sh` | `collector/build.sh`<br>`test/lib/report.sh` | `dmz/receiver`<br>`enclave/backend`<br>`enclave/puller`<br>`enclave/worker` |
+| `test/uat_corpus_linux.sh` | `test/lib/corpus_pipeline.sh`<br>`test/lib/report.sh` | — |
+| `test/uat_corpus_ransomware.sh` | `test/lib/corpus_pipeline.sh`<br>`test/lib/report.sh` | — |
+| `test/uat_corpus_slow.sh` | `test/lib/corpus_pipeline.sh`<br>`test/lib/report.sh` | — |
 | `test/uat_dns.sh` | `test/lib/report.sh` | `dmz/bastion`<br>`dmz/coredns`<br>`dmz/receiver`<br>`enclave/backend`<br>`enclave/coredns`<br>`enclave/keycloak`<br>`enclave/puller`<br>`enclave/traefik`<br>`enclave/worker`<br>`workstation/browser` |
 | `test/uat_e2e.sh` | `collector/build.sh`<br>`deploy/deploy.sh`<br>`re-workstation/stage_regions.sh`<br>`test/lib/report.sh`<br>`test/seed_regions.sh`<br>`workstation/launch.sh` | `dmz/receiver`<br>`enclave/backend`<br>`enclave/consul`<br>`enclave/puller`<br>`enclave/vault`<br>`enclave/worker` |
 | `test/uat_full_stack.sh` | `deploy/deploy.sh`<br>`test/lib/evidence.sh`<br>`test/lib/report.sh` | `dmz/broker`<br>`dmz/coredns`<br>`dmz/receiver`<br>`enclave/backend`<br>`enclave/keycloak`<br>`enclave/puller`<br>`enclave/traefik`<br>`enclave/worker`<br>`workstation/browser`<br>`workstation/probe` |
@@ -161,6 +165,9 @@ namespace is unproxied, however healthy it looks.
 | `uat_boundary.sh` | `dmz/bastion`, `dmz/broker`, `enclave/backend`, `enclave/boundary`, `enclave/boundary-db`, `enclave/boundary-egress` |
 | `uat_consul.sh` | `enclave/backend`, `enclave/consul`, `enclave/frontend`, `enclave/vault-agent`, `enclave/worker` |
 | `uat_corpus.sh` | `dmz/receiver`, `enclave/backend`, `enclave/puller`, `enclave/worker` |
+| `uat_corpus_linux.sh` | — |
+| `uat_corpus_ransomware.sh` | — |
+| `uat_corpus_slow.sh` | — |
 | `uat_dns.sh` | `dmz/bastion`, `dmz/coredns`, `dmz/receiver`, `enclave/backend`, `enclave/coredns`, `enclave/keycloak`, `enclave/puller`, `enclave/traefik`, `enclave/worker`, `workstation/browser` |
 | `uat_e2e.sh` | `dmz/receiver`, `enclave/backend`, `enclave/consul`, `enclave/puller`, `enclave/vault`, `enclave/worker` |
 | `uat_full_stack.sh` | `dmz/broker`, `dmz/coredns`, `dmz/receiver`, `enclave/backend`, `enclave/keycloak`, `enclave/puller`, `enclave/traefik`, `enclave/worker`, `workstation/browser`, `workstation/probe` |

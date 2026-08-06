@@ -28,7 +28,10 @@ from django.test import SimpleTestCase
 from .confidence import CONFIRMED, INDETERMINATE, POSSIBLE, PROBABLE, band_for
 from .engine import sets_compromise_baseline
 from .fingerprint import _informative, build_fingerprint, convention_of
-from .linkage import CONFIRMING_VERDICTS, CONTRADICTION_DISCOUNT, contradiction_for
+from .linkage import (CONFIRMED_RARITY_FLOOR, CONFIRMING_VERDICTS, CONTRADICTION_DISCOUNT,
+                      LINK_THRESHOLD, TYPE_WEIGHT, VERDICT_WEIGHT, WINDOW_DAYS,
+                      contradiction_for, movement_verdict_weight, rarity,
+                      temporal_coherence)
 
 
 class _Link:
@@ -140,6 +143,35 @@ class BandingTruthTable(SimpleTestCase):
         band, factors = _band("SRV-FILE-101", link)
         self.assertEqual(band, PROBABLE)
         self.assertEqual(factors["contradiction"], 0.35)
+        self.assertIn("contradict", factors["why"].lower())
+        self.assertIn("07:30", factors["contradiction_basis"])
+
+    def test_a_contradiction_ranked_below_the_kept_corroboration_is_still_read(self):
+        """The concealment's third form, and the one the rarity floor caused.
+
+        A pair carries 19 contributions; the record keeps the top and five more. Discounting
+        the movement pushes it down the order, and the confirmed-everywhere rarity floor
+        lifted three artifacts above it, so it fell past the sixth and out of the stored
+        factors entirely. The host still banded down and the reason it banded down was no
+        longer in the record — the discount concealing itself, one level further out than
+        before. `build_links` now retains any contradicted contribution regardless of rank.
+        """
+        link = _Link("JUMP-101", "SRV-FILE-101", 0.5705, ["artifact", "movement"],
+                     kind="artifact", subkind="c2_campaign_id", temporal=1.0)
+        link.factors["corroboration"] = [
+            {"kind": "artifact", "subkind": "c2_sleep", "weight": 0.5705},
+            {"kind": "artifact", "subkind": "campaign_id", "weight": 0.5705},
+            {"kind": "indicator", "subkind": "ja3", "weight": 0.3691},
+            {"kind": "indicator", "subkind": "mutex", "weight": 0.3691},
+            {"kind": "indicator", "subkind": "pipe", "weight": 0.3691},
+            # Ranked seventh, retained because it is contradicted.
+            {"kind": "movement", "weight": 0.35, "contradiction": CONTRADICTION_DISCOUNT,
+             "contradiction_basis": "movement at 07:30 precedes JUMP-101's first compromise "
+                                    "evidence at 09:55"},
+        ]
+        band, factors = _band("SRV-FILE-101", link)
+        self.assertEqual(band, PROBABLE)
+        self.assertEqual(factors["contradiction"], CONTRADICTION_DISCOUNT)
         self.assertIn("contradict", factors["why"].lower())
         self.assertIn("07:30", factors["contradiction_basis"])
 
@@ -396,6 +428,311 @@ class FingerprintFloors(SimpleTestCase):
         ex = fp["convention_examples"]["c2_campaign_id:EF-<number>-Q<number>"]
         self.assertEqual(ex["example"], "EF-2026-Q3")
         self.assertEqual(ex["hosts"], 4)
+
+
+# The Linux hunts' own vocabulary, from `playbooks/linux/threat_hunting/adjudicate.py`.
+# These are the types a Linux collection actually produces, and the NAME each one carries is
+# the tradecraft: an actor who rotates infrastructure between engagements keeps calling their
+# unit `sysstat-collector.service`.
+LINUX_ARTIFACT_TYPES = {
+    "Webshell", "Systemd Persistence", "Systemd Unit", "Cron Persistence", "Cron Entry",
+    "Shell Init Backdoor", "Library Preload Hijack", "Suspicious Kernel Module",
+    "Hidden Kernel Module", "Memory-Only Executable (memfd)", "Execution From Writable Path",
+}
+
+# Corpus L's tradecraft, as the collector records it — full paths, because that is what a
+# Linux hunt reports.
+LTP_V = "Likely True Positive"
+_T0 = datetime(2026, 7, 22, 9, 30, tzinfo=tz.utc)
+
+UNIT_PATH = "/etc/systemd/system/sysstat-collector.service"
+FLEET_UNIT_PATH = "/etc/systemd/system/node_exporter.service"
+PRELOAD_TARGET = "/etc/ld.so.preload -> /usr/lib/x86_64-linux-gnu/libnss_cache.so.2"
+PROFILE_PATH = "/etc/profile.d/00-locale-fix.sh"
+PAYLOAD_PATH = "/dev/shm/.systemd-private/kdevtmpfsi"
+
+
+class LinuxTradecraftReachesTheGraph(SimpleTestCase):
+    """Corpus L is a Linux intrusion, and nothing it leaves behind is shaped like Windows.
+
+    Every threshold in the engine was calibrated while a Windows corpus was the only dataset.
+    These assert the parts that a second platform makes falsifiable.
+    """
+
+    def test_every_linux_artifact_type_contributes_an_artifact_node(self):
+        """A finding type absent from EVENT_MAP contributes no artifact, so the name it
+        carries never reaches linkage or the fingerprint. A Linux campaign whose persistence
+        is invisible has to hold together on movement alone — and the hosts reached without
+        a movement record are then unreachable by any path."""
+        from .behavior import EVENT_MAP
+        missing = sorted(t for t in LINUX_ARTIFACT_TYPES
+                         if not (EVENT_MAP.get(t) or (None, None))[1])
+        self.assertEqual(missing, [], f"no artifact node for: {missing}")
+
+    def test_a_unit_is_named_by_its_unit_not_its_directory(self):
+        """`/etc/systemd/system` is the platform's, not the actor's. Keeping it gives every
+        actor on Linux the same leading shape and buries the part they chose."""
+        from .behavior import artifact_value
+        self.assertEqual(artifact_value("persistence_service", UNIT_PATH),
+                         "sysstat-collector.service")
+        self.assertEqual(artifact_value("persistence_cron", "/etc/cron.d/certbot-renew-helper"),
+                         "certbot-renew-helper")
+        self.assertEqual(artifact_value("persistence_shell_init", PROFILE_PATH),
+                         "00-locale-fix.sh")
+        self.assertEqual(artifact_value("persistence_preload", PRELOAD_TARGET),
+                         "libnss_cache.so.2")
+
+    def test_a_payload_keeps_the_directory_it_was_placed_in(self):
+        """The opposite case: `/dev/shm/.systemd-private/` IS the choice. Where a payload is
+        put is tradecraft in a way a unit's mandatory directory is not."""
+        from .behavior import artifact_value
+        self.assertEqual(artifact_value("payload_path", PAYLOAD_PATH), PAYLOAD_PATH)
+        self.assertTrue(_informative(convention_of(PAYLOAD_PATH)))
+
+    def test_the_separator_is_part_of_the_habit(self):
+        """`node_exporter.service` and `sysstat-collector.service` are not the same shape.
+        Underscore and hyphen are a choice, kept verbatim, so two units that differ only
+        there stay distinguishable without needing any floor at all."""
+        self.assertEqual(convention_of("sysstat-collector.service"), "<name>-<name>.service")
+        self.assertEqual(convention_of("node_exporter.service"), "<name>_<name>.service")
+
+    def test_a_fleet_unit_sharing_the_habit_is_separated_only_by_rarity(self):
+        """`fwupd-refresh.service` ships with the distribution and reduces to the SAME shape
+        as the actor's unit. Nothing about the name distinguishes them; the rarity floor is
+        the whole of the difference, which is what makes it load-bearing."""
+        hosts = [_Host(f"app-node-0{i}") for i in range(4)]
+        fleet = _Node("fwupd-refresh.service", "persistence_service", host_count=22)
+        actor = _Node("sysstat-collector.service", "persistence_service", host_count=4)
+        self.assertEqual(convention_of(fleet.value), convention_of(actor.value))
+        fp = build_fingerprint(hosts, [], [fleet, actor],
+                               confirmed_nodes={fleet.id, actor.id})
+        self.assertEqual(fp["artifact_conventions"],
+                         ["persistence_service:<name>-<name>.service"])
+        self.assertEqual(
+            fp["convention_examples"]["persistence_service:<name>-<name>.service"]["example"],
+            "sysstat-collector.service")
+
+
+class LinuxVerdictCeiling(SimpleTestCase):
+    """Linux adjudication never returns True Positive.
+
+    `adjudicate.py` ALWAYS_TP — webshells, preload hijacks, rootkit modules — returns *Likely*
+    True Positive, so every Linux link is multiplied by 0.75 where the Windows corpus supplies
+    1.00. LINK_THRESHOLD was set against the corpus that reaches 1.00.
+    """
+
+    POPULATION = 22
+
+    def _artifact_weight(self, host_count, verdict=LTP_V, population=None):
+        return (TYPE_WEIGHT["artifact"]
+                * rarity(host_count, population or self.POPULATION)
+                * VERDICT_WEIGHT[verdict]
+                * temporal_coherence(_T0, _T0))
+
+    def test_a_rare_likely_true_positive_artifact_links(self):
+        """Three hosts out of twenty-two: the preload library, and the cron entry."""
+        self.assertGreaterEqual(self._artifact_weight(3), LINK_THRESHOLD)
+
+    def test_the_same_artifact_on_more_hosts_stops_linking(self):
+        """Four hosts out of twenty-two reaches 0.33 and is declined, while three reaches
+        0.38 and is accepted. The campaign's MOST widespread habit is the one that fails, and
+        the same evidence at True Positive would clear the bar at either count."""
+        four = self._artifact_weight(4)
+        self.assertLess(four, LINK_THRESHOLD)
+        self.assertGreaterEqual(
+            self._artifact_weight(4, verdict="True Positive"), LINK_THRESHOLD)
+
+    def test_whether_it_links_depends_on_the_rest_of_the_deployment(self):
+        """Same campaign, same evidence, a larger fleet around it: rarity is measured against
+        the deployment, so hosts belonging to unrelated cases decide this one."""
+        self.assertLess(self._artifact_weight(4, population=22), LINK_THRESHOLD)
+        self.assertGreaterEqual(self._artifact_weight(4, population=47), LINK_THRESHOLD)
+
+    def test_an_indeterminate_artifact_never_links_however_rare(self):
+        """A planted authorized_keys entry is filed HUMAN_REVIEW — Indeterminate — so the
+        strongest artifact a Linux intrusion leaves cannot carry a link. Asserted at the
+        rarest possible count so this reads as a ceiling, not a close call."""
+        self.assertLess(self._artifact_weight(2, verdict="Indeterminate"), LINK_THRESHOLD)
+
+    def test_an_account_alone_cannot_link_two_hosts(self):
+        """Even a rogue uid=0 account on exactly two hosts, adjudicated at the top of the
+        ladder: 0.45 x 0.71 x 1.00. Accounts are corroboration by construction."""
+        weight = (TYPE_WEIGHT["account"] * rarity(2, self.POPULATION)
+                  * VERDICT_WEIGHT["True Positive"] * temporal_coherence(_T0, _T0))
+        self.assertLess(weight, LINK_THRESHOLD)
+
+
+class MovementCarriesItsVerdict(SimpleTestCase):
+    """An SSH session between two hosts is routine on Linux, and a hunt that cannot tell an
+    admin hop from an intrusion files it Indeterminate. Scoring every movement record at True
+    Positive makes that record fuse whatever it touches."""
+
+    def test_an_adjudicated_movement_record_keeps_its_own_weight(self):
+        self.assertEqual(movement_verdict_weight("Likely True Positive"), 0.75)
+        self.assertEqual(movement_verdict_weight("True Positive"), 1.0)
+
+    def test_an_indeterminate_hop_cannot_link(self):
+        """Corpus L's trap: the bastion is a campaign member and the workstation carries an
+        unrelated compromise, joined by one routine admin session."""
+        weight = (TYPE_WEIGHT["movement"] * movement_verdict_weight("Indeterminate")
+                  * temporal_coherence(_T0, _T0))
+        self.assertLess(weight, LINK_THRESHOLD)
+
+    def test_an_unadjudicated_record_is_treated_as_indeterminate(self):
+        """Same default as everywhere else on the ladder, rather than the benefit of doubt."""
+        self.assertEqual(movement_verdict_weight(""), VERDICT_WEIGHT["Indeterminate"])
+
+
+class TimelineCheckIsReportedEitherWay(SimpleTestCase):
+    """Three outcomes, three records. A blank field meant all of them.
+
+    `contradiction_for` words each case, and the band kept only the contradicted one — so a
+    movement checked and found consistent, a movement that could not be checked because its
+    source has no standalone confirming evidence, and a link with no movement at all were
+    indistinguishable to the reader. On a host whose logs the actor cleared, "could not be
+    checked" is the finding, not the absence of one.
+    """
+
+    def _factors(self, **top):
+        _, factors = _band("SRV-FS-01", _Link(
+            "DC-R1", "SRV-FS-01", 0.85, ["movement", "artifact"], kind="movement",
+            temporal=1.0, **top))
+        return factors
+
+    def test_a_consistent_timeline_says_so(self):
+        factors = self._factors(contradiction=1.0,
+                                contradiction_basis="consistent — DC-R1 shows compromise from X")
+        self.assertIsNone(factors["contradiction"])
+        self.assertIn("consistent", factors["contradiction_basis"])
+
+    def test_an_unevaluated_timeline_says_that_instead(self):
+        factors = self._factors(
+            contradiction=1.0,
+            contradiction_basis="not evaluated — no standalone confirming evidence on DC-R1")
+        self.assertIsNone(factors["contradiction"])
+        self.assertIn("not evaluated", factors["contradiction_basis"])
+
+    def test_a_contradicted_timeline_still_carries_its_multiplier(self):
+        factors = self._factors(contradiction=CONTRADICTION_DISCOUNT,
+                                contradiction_basis="movement at X precedes DC-R1's first")
+        self.assertEqual(factors["contradiction"], CONTRADICTION_DISCOUNT)
+        self.assertIn("precedes", factors["contradiction_basis"])
+
+    def test_no_movement_at_all_reports_nothing_rather_than_a_verdict(self):
+        """The one case where silence is right: there was no movement to test."""
+        _, factors = _band("SRV-FS-01", _Link(
+            "DC-R1", "SRV-FS-01", 0.85, ["artifact"], kind="artifact", temporal=1.0))
+        self.assertIsNone(factors["contradiction"])
+        self.assertIsNone(factors["contradiction_basis"])
+
+    def test_the_basis_is_found_in_corroboration_too(self):
+        """Same reason banding reads every contribution: the movement is often not the top."""
+        link = _Link("DC-R1", "SRV-FS-01", 0.85, ["artifact", "movement"],
+                     kind="artifact", temporal=1.0)
+        link.factors["corroboration"] = [
+            {"kind": "movement", "contradiction": 1.0,
+             "contradiction_basis": "not evaluated — no standalone confirming evidence on DC-R1"}]
+        _, factors = _band("SRV-FS-01", link)
+        self.assertIn("not evaluated", factors["contradiction_basis"])
+
+
+class MassImpactRarity(SimpleTestCase):
+    """Rarity assumes that something on many hosts is the environment.
+
+    That is a hypothesis about benign presence, and adjudication tests it on every carrier.
+    A ransomware event refutes it everywhere at once: the note is on each host BECAUSE each
+    host was encrypted, so the larger the event, the less its own signature argued that its
+    victims were related. On a 24-host fleet the note on 12 of them scored 0.31 against a
+    0.35 threshold, and one event was reported as fourteen unrelated incidents.
+    """
+
+    POPULATION = 54
+
+    def _weight(self, kind, host_count, floored, verdict="True Positive"):
+        r = rarity(host_count, self.POPULATION)
+        if floored:
+            r = max(r, CONFIRMED_RARITY_FLOOR)
+        return TYPE_WEIGHT[kind] * r * VERDICT_WEIGHT[verdict] * temporal_coherence(_T0, _T0)
+
+    def test_a_mass_impact_artifact_is_declined_on_rarity_alone(self):
+        """The defect, stated: True Positive on all twelve carriers and still not a link."""
+        self.assertLess(self._weight("artifact", 12, floored=False), LINK_THRESHOLD)
+
+    def test_the_floor_lets_it_link(self):
+        self.assertGreaterEqual(self._weight("artifact", 12, floored=True), LINK_THRESHOLD)
+
+    def test_the_deployment_task_on_fifteen_hosts_links_too(self):
+        """Scale must not be the thing that breaks it: more victims, same conclusion."""
+        self.assertLess(self._weight("artifact", 15, floored=False), LINK_THRESHOLD)
+        self.assertGreaterEqual(self._weight("artifact", 15, floored=True), LINK_THRESHOLD)
+
+    def test_a_commodity_binary_still_cannot_merge_two_compromises(self):
+        """The floor's residual risk, bounded by the type weight rather than by hope.
+
+        A public file-transfer binary is adjudicated True Positive by both a ransomware
+        operator staging exfiltration and an unrelated insider — confirmed on every carrier,
+        distinctive of neither. It arrives as a bare INDICATOR, and at 0.55 the floor leaves
+        it below the threshold.
+        """
+        self.assertLess(self._weight("indicator", 5, floored=True), LINK_THRESHOLD)
+
+    def test_an_account_confirmed_everywhere_still_cannot_merge(self):
+        """Accounts are corroboration by construction, floor or no floor."""
+        self.assertLess(self._weight("account", 16, floored=True), LINK_THRESHOLD)
+
+    def test_the_floor_never_lowers_a_rare_artifact(self):
+        """It is a floor, not a replacement — an artifact on three hosts keeps its own value."""
+        self.assertEqual(self._weight("artifact", 3, floored=True),
+                         self._weight("artifact", 3, floored=False))
+
+
+class DwellWindow(SimpleTestCase):
+    """A targeted intrusion dwells for months, and the window said thirty days.
+
+    Corpus S is one operator returning over eight months, adjacent hosts up to 56 days apart.
+    At `WINDOW_DAYS = 30` every pair scored the 0.2 floor and the campaign never formed —
+    which then read as no patient zero, no fingerprint and a technique sequence that stopped
+    at the first host. The bound is two-sided, so both sides are asserted: wide enough to
+    hold one slow campaign together, narrow enough to keep unrelated shadow IT apart.
+    """
+
+    POPULATION = 74
+    CHAIN_GAP = 56          # widest gap between adjacent Glass Heron hosts
+    SHADOW_GAP = 190        # two unsanctioned remote-access installs, different people
+
+    def _artifact(self, host_count, days, verdict="True Positive"):
+        return (TYPE_WEIGHT["artifact"]
+                * max(rarity(host_count, self.POPULATION), CONFIRMED_RARITY_FLOOR)
+                * VERDICT_WEIGHT[verdict]
+                * temporal_coherence(_T0, _T0 + timedelta(days=days)))
+
+    def test_a_campaign_hop_weeks_apart_links(self):
+        self.assertGreaterEqual(self._artifact(7, self.CHAIN_GAP), LINK_THRESHOLD)
+
+    def test_unrelated_shadow_it_months_apart_still_does_not(self):
+        """The other side of the bound. Same tool, two people, half a year between them."""
+        self.assertLess(
+            self._artifact(2, self.SHADOW_GAP, verdict="Likely True Positive"), LINK_THRESHOLD)
+
+    def test_coherence_still_discriminates_rather_than_saturating(self):
+        """A window wide enough to hold a slow campaign must not make everything coherent."""
+        near = temporal_coherence(_T0, _T0 + timedelta(days=self.CHAIN_GAP))
+        far = temporal_coherence(_T0, _T0 + timedelta(days=self.SHADOW_GAP))
+        self.assertGreater(near, far)
+        self.assertLess(far, 1.0)
+
+    def test_beyond_the_window_it_reaches_the_floor_and_stops(self):
+        self.assertEqual(temporal_coherence(_T0, _T0 + timedelta(days=WINDOW_DAYS)), 0.2)
+        self.assertEqual(temporal_coherence(_T0, _T0 + timedelta(days=WINDOW_DAYS * 3)), 0.2)
+
+    def test_unknown_timing_neither_confirms_nor_refutes(self):
+        self.assertEqual(temporal_coherence(None, _T0), 0.6)
+
+    def test_the_window_covers_a_dwell_measured_in_months(self):
+        """Stated as its own assertion: the constant is a claim about how intrusions behave,
+        and shortening it silently is what broke corpus S."""
+        self.assertGreaterEqual(WINDOW_DAYS, 254)
+        self.assertLessEqual(WINDOW_DAYS, 644)
 
 
 class BandVocabulary(SimpleTestCase):

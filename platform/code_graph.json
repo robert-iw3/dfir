@@ -647,6 +647,31 @@
    "to": "enclave/worker-sidecar"
   },
   {
+   "from": "test/lib/corpus_pipeline.sh",
+   "kind": "runs",
+   "to": "collector/build.sh"
+  },
+  {
+   "from": "test/lib/corpus_pipeline.sh",
+   "kind": "drives",
+   "to": "dmz/receiver"
+  },
+  {
+   "from": "test/lib/corpus_pipeline.sh",
+   "kind": "drives",
+   "to": "enclave/backend"
+  },
+  {
+   "from": "test/lib/corpus_pipeline.sh",
+   "kind": "drives",
+   "to": "enclave/puller"
+  },
+  {
+   "from": "test/lib/corpus_pipeline.sh",
+   "kind": "drives",
+   "to": "enclave/worker"
+  },
+  {
    "from": "test/run_uats.sh",
    "kind": "drives",
    "to": "agent/remediation-agent"
@@ -865,6 +890,36 @@
    "from": "test/uat_corpus.sh",
    "kind": "drives",
    "to": "enclave/worker"
+  },
+  {
+   "from": "test/uat_corpus_linux.sh",
+   "kind": "runs",
+   "to": "test/lib/corpus_pipeline.sh"
+  },
+  {
+   "from": "test/uat_corpus_linux.sh",
+   "kind": "runs",
+   "to": "test/lib/report.sh"
+  },
+  {
+   "from": "test/uat_corpus_ransomware.sh",
+   "kind": "runs",
+   "to": "test/lib/corpus_pipeline.sh"
+  },
+  {
+   "from": "test/uat_corpus_ransomware.sh",
+   "kind": "runs",
+   "to": "test/lib/report.sh"
+  },
+  {
+   "from": "test/uat_corpus_slow.sh",
+   "kind": "runs",
+   "to": "test/lib/corpus_pipeline.sh"
+  },
+  {
+   "from": "test/uat_corpus_slow.sh",
+   "kind": "runs",
+   "to": "test/lib/report.sh"
   },
   {
    "from": "test/uat_dns.sh",
@@ -1878,6 +1933,17 @@
    ],
    "runs": []
   },
+  "test/lib/corpus_pipeline.sh": {
+   "drives": [
+    "dmz/receiver",
+    "enclave/backend",
+    "enclave/puller",
+    "enclave/worker"
+   ],
+   "runs": [
+    "collector/build.sh"
+   ]
+  },
   "test/run_uats.sh": {
    "drives": [
     "agent/remediation-agent",
@@ -1953,6 +2019,27 @@
    ],
    "runs": [
     "collector/build.sh",
+    "test/lib/report.sh"
+   ]
+  },
+  "test/uat_corpus_linux.sh": {
+   "drives": [],
+   "runs": [
+    "test/lib/corpus_pipeline.sh",
+    "test/lib/report.sh"
+   ]
+  },
+  "test/uat_corpus_ransomware.sh": {
+   "drives": [],
+   "runs": [
+    "test/lib/corpus_pipeline.sh",
+    "test/lib/report.sh"
+   ]
+  },
+  "test/uat_corpus_slow.sh": {
+   "drives": [],
+   "runs": [
+    "test/lib/corpus_pipeline.sh",
     "test/lib/report.sh"
    ]
   },
@@ -2550,6 +2637,9 @@
    "enclave/puller",
    "enclave/worker"
   ],
+  "uat_corpus_linux.sh": [],
+  "uat_corpus_ransomware.sh": [],
+  "uat_corpus_slow.sh": [],
   "uat_dns.sh": [
    "dmz/bastion",
    "dmz/coredns",

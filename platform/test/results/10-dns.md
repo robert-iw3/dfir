@@ -2,7 +2,7 @@
 
 *What passing proves:* Services address each other by dynamic name, and no tier can resolve anything outside its zone — closing DNS as an exfiltration channel from the tier that parses hostile memory.
 
-- Run: `uat_dns.sh` — 2026-08-05 20:34:03Z
+- Run: `uat_dns.sh` — 2026-08-06 16:25:40Z
 
 **Resolvers**
 

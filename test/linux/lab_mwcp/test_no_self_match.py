@@ -19,7 +19,7 @@ Two levels are asserted:
   * `extract_all()` — the production contract. `memory_enrich.py` and `edr_hunt.py` call
     only this, so its gate is what actually protects an investigation.
   * `identify()` per parser — the stricter standard, and now the standard for all of them.
-    `extract_all()`'s prose gate is a whole-region judgement; a parser whose own gate is
+    `extract_all()`'s prose gate is a whole-region judgment; a parser whose own gate is
     "these strings appear somewhere" still fires the moment a region is not prose enough to
     be suppressed. Both have to hold.
 """

@@ -55,7 +55,8 @@ report_begin() {  # <order> <slug> <title> <claim>
     printf '     deploy.sh enclave  ->  test/uat_*.sh  ->  deploy.sh down enclave && deploy.sh enclave\n'
     printf '   They rotate live credentials, register services and open real sessions, so the\n'
     printf '   stack they leave behind is a tested one, not a clean one. Reports under\n'
-    printf '   test/results/ record live user names and identifiers — treat them as sensitive.\033[0m\n'
+    printf '   test/results/ are PUBLISHED — the identifiers in them belong to a throwaway\n'
+    printf '   deployment, but nothing an operator would not publish may reach an assertion.\033[0m\n'
     {   printf '## %s\n\n' "${REPORT_TITLE}"
         printf '*What passing proves:* %s\n\n' "${claim}"
         printf -- '- Run: `%s` — %s\n' "uat_${slug}.sh" "$(date -u '+%Y-%m-%d %H:%M:%SZ')"
@@ -91,8 +92,14 @@ report_finish() {
         printf '> clean one.\n'
         printf '>\n'
         printf '> The evidence below is deliberately specific — dynamic user names, session and\n'
-        printf '> worker identifiers, row counts — because "PASS" alone proves only that a check\n'
-        printf '> ran. That makes these files sensitive; they are not a public artifact.\n\n'
+        printf '> worker identifiers, container addresses, row counts — because "PASS" alone\n'
+        printf '> proves that a check ran, not that the platform is in the claimed state. An\n'
+        printf '> assertion nobody can dispute from what is printed beside it is not evidence.\n'
+        printf '>\n'
+        printf '> These reports are published. Every identifier in them is issued fresh by a\n'
+        printf '> deployment that is torn down and rebuilt — container-bridge and tailnet\n'
+        printf '> addresses, generated account names, session ids. The operator running it is\n'
+        printf '> not named, and the sync gate refuses any file that would name them.\n\n'
         printf '## Summary\n\n| # | UAT | Verdict | Pass | Fail |\n|---|---|---|---|---|\n'
         for f in "${REPORT_DIR}"/[0-9]*-*.md; do
             [[ -f "$f" ]] || continue

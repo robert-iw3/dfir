@@ -136,7 +136,7 @@ def enumerate_threads(pid):
 def analyze_pid(pid, source_hint="", flagged_tids=None):
     """Emit one 'Process Thread Inventory (memory)' finding listing every TID,
     plus a separate escalated finding for any thread under active ptrace
-    attachment by a process OTHER than a recognised debugger, since that is
+    attachment by a process OTHER than a recognized debugger, since that is
     exactly the mechanism the Ptrace Injection finding describes -- this
     script corroborates it with the full sibling-thread picture.
 

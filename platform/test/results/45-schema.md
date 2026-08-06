@@ -2,7 +2,7 @@
 
 *What passing proves:* Identity and idempotency are refused at the store, not merely avoided by the application: a concurrent duplicate host is rejected, a re-posted collection cannot duplicate, and the queries the UI runs use the indexes built for them. Adjudication is held to the same standard — a re-analysis supersedes rather than deletes, and an automated pass cannot discard an analyst's verdict without recording that it disagreed.
 
-- Run: `uat_schema.sh` — 2026-08-05 16:03:32Z
+- Run: `uat_schema.sh` — 2026-08-06 16:27:15Z
 
 **Preconditions**
 
@@ -77,7 +77,7 @@
 | ✅ PASS | a finding the engine holds a verdict for exists to assert against |
 | ✅ PASS | an engine pass does NOT overwrite the analyst's verdict (kept True Positive; the engine said Indeterminate) |
 | ✅ PASS | the disagreement is RECORDED for review instead of applied (engine: Indeterminate) |
-| ✅ PASS | the conflict names the pass that disagreed (run 707) |
+| ✅ PASS | the conflict names the pass that disagreed (run 1248) |
 | ✅ PASS | a refused overwrite writes no history — nothing changed to record |
 | ✅ PASS | a verdict the ENGINE owns is still revised by a later pass (True Positive -> Indeterminate) |
 | ✅ PASS | the change of mind is history naming BOTH values (True Positive -> Indeterminate) |
@@ -93,11 +93,16 @@
 | ✅ PASS | concluding stamps concluded_at for the stalled-case query |
 | ✅ PASS | reopening CLEARS concluded_at — a reopened case is not a concluded one |
 | ✅ PASS | archived is terminal — its evidence has been moved out |
+| ✅ PASS | a bundle's ISO timestamp parses to a datetime |
+| ✅ PASS | a datetime passes through still aware |
+| ✅ PASS | a naive timestamp is made aware rather than refused — the instant is still real |
+| ✅ PASS | an absent or unparseable timestamp yields None, so the caller falls back to now() |
 | ✅ PASS | ingest writes an indicator sighting beside the IOC rows |
 | ✅ PASS | the sighting carries its investigation and hostname denormalized |
 | ✅ PASS | a re-collection increments the sighting rather than duplicating it |
 | ✅ PASS | deleting the runs took their IOC rows with them |
 | ✅ PASS | and the indicator sighting SURVIVED — the cross-case pivot still answers |
+| ✅ PASS | T1/T2 left nothing behind — the probe is re-runnable |
 
 **Probe completed**
 
@@ -111,4 +116,4 @@
 |---|---|
 | ✅ PASS | the schema enforces its own invariants — the application no longer has to be careful |
 
-**Verdict: PROVEN** — 57 assertions passed, 0 failed.
+**Verdict: PROVEN** — 62 assertions passed, 0 failed.
