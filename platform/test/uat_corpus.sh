@@ -13,6 +13,10 @@
 #
 # Scenario data is declared synthetic in the bundle itself (_scenario.json). Seeds two
 # investigations (INC-CORPUS-A/B); re-running supersedes their correlation runs.
+#
+# Scoped to those two incidents BY NAME, never by the `INC-CORPUS-` prefix: that prefix also
+# matches INC-CORPUS-L and INC-CORPUS-R, so the reset deleted the other corpora and every
+# count here silently included their endpoints.
 # ==============================================================================
 set -uo pipefail
 
@@ -98,7 +102,7 @@ import os, django
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "ir_platform.settings"); django.setup()
 from cases.models import Investigation, CollectionRun, Host
 from correlation.models import CorrelationRun
-invs = list(Investigation.objects.filter(incident_id__startswith="INC-CORPUS-"))
+invs = list(Investigation.objects.filter(incident_id__in=("INC-CORPUS-A", "INC-CORPUS-B")))
 host_ids = set(CollectionRun.objects.filter(investigation__in=invs).values_list("host_id", flat=True))
 for inv in invs:
     CorrelationRun.objects.filter(investigation_id=inv.id).delete()
@@ -168,7 +172,7 @@ for _ in $(seq 1 60); do
 import os, django
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'ir_platform.settings'); django.setup()
 from cases.models import CollectionRun
-print(CollectionRun.objects.filter(investigation__incident_id__startswith='INC-CORPUS-').count())" 2>/dev/null)"
+print(CollectionRun.objects.filter(investigation__incident_id__in=('INC-CORPUS-A', 'INC-CORPUS-B')).count())" 2>/dev/null)"
     [[ "${INGESTED:-0}" -ge 25 ]] && break
     sleep 10
 done
@@ -180,7 +184,7 @@ HOSTS="$(be python3 -c "
 import os, django
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'ir_platform.settings'); django.setup()
 from cases.models import Host, CollectionRun
-runs = CollectionRun.objects.filter(investigation__incident_id__startswith='INC-CORPUS-').select_related('host')
+runs = CollectionRun.objects.filter(investigation__incident_id__in=('INC-CORPUS-A', 'INC-CORPUS-B')).select_related('host')
 hosts = {r.host.hostname: r.host.machine_id for r in runs}
 print(len(hosts), len(set(hosts.values())))" 2>/dev/null)"
 read -r NHOSTS NMIDS <<<"${HOSTS}"
@@ -200,9 +204,9 @@ for _ in $(seq 1 150); do
 import os, django
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'ir_platform.settings'); django.setup()
 from cases.models import MemoryCapture, CollectionRun
-caps = MemoryCapture.objects.filter(run__investigation__incident_id__startswith='INC-CORPUS-')
+caps = MemoryCapture.objects.filter(run__investigation__incident_id__in=('INC-CORPUS-A', 'INC-CORPUS-B'))
 term = sum(1 for c in caps if c.analyses.filter(status__in=('completed','failed')).exists())
-comp = CollectionRun.objects.filter(investigation__incident_id__startswith='INC-CORPUS-', compromised=True).count()
+comp = CollectionRun.objects.filter(investigation__incident_id__in=('INC-CORPUS-A', 'INC-CORPUS-B'), compromised=True).count()
 print(term, comp)" 2>/dev/null)"
     if [[ "${TERMINAL:-0}" -ge 25 && "${NCOMP:-0}" == "${PREV}" ]]; then
         STABLE=$((STABLE + 1)); [[ "${STABLE}" -ge 2 ]] && break
@@ -231,7 +235,7 @@ import os, django
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "ir_platform.settings"); django.setup()
 from cases.models import MemoryAnalysisRun
 qs = MemoryAnalysisRun.objects.filter(
-    capture__run__investigation__incident_id__startswith="INC-CORPUS-")
+    capture__run__investigation__incident_id__in=("INC-CORPUS-A", "INC-CORPUS-B"))
 failed = [r for r in qs if r.status == "failed"]
 if failed:
     print(f"ABAD {len(failed)}/{qs.count()} corpus analyses FAILED: {failed[0].error or '?'}"[:400])
@@ -268,7 +272,7 @@ import os, sys, django
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "ir_platform.settings"); django.setup()
 from cases.models import CollectionRun
 comp, clean = set(), set()
-for r in CollectionRun.objects.filter(investigation__incident_id__startswith="INC-CORPUS-").select_related("host"):
+for r in CollectionRun.objects.filter(investigation__incident_id__in=("INC-CORPUS-A", "INC-CORPUS-B")).select_related("host"):
     (comp if r.compromised else clean).add(r.host.hostname)
 clean -= comp
 expect = sorted(x for x in sys.argv[1].split(",") if x)
@@ -306,7 +310,7 @@ os.environ.setdefault("DJANGO_SETTINGS_MODULE", "ir_platform.settings"); django.
 from cases.models import Investigation
 from correlation.models import Campaign, CampaignHost
 out = []
-for inv in Investigation.objects.filter(incident_id__startswith="INC-CORPUS-"):
+for inv in Investigation.objects.filter(incident_id__in=("INC-CORPUS-A", "INC-CORPUS-B")):
     for c in Campaign.objects.filter(investigation_id=inv.id, run__is_current=True):
         hosts = sorted(CampaignHost.objects.filter(campaign=c).values_list("hostname", flat=True))
         out.append({"inv": inv.name, "pz": c.patient_zero, "hosts": hosts})
@@ -354,7 +358,7 @@ def chk(cond, label):
     print(("PASSCHK " if cond else "FAILCHK ") + label)
 
 runs = {}
-for inv in Investigation.objects.filter(incident_id__startswith="INC-CORPUS-"):
+for inv in Investigation.objects.filter(incident_id__in=("INC-CORPUS-A", "INC-CORPUS-B")):
     r = CorrelationRun.objects.filter(investigation_id=inv.id, is_current=True).first()
     if r:
         runs[inv.incident_id] = r
@@ -413,12 +417,32 @@ if a:
 
     # Held together by indicators with no observed movement, the miner must read weaker than
     # an intrusion reconstructed from movement — a true statement about that evidence.
+    #
+    # Compared on the MEAN and on the evidence itself, not on cohesion_min. The minimum is
+    # the weakest link inside a campaign, so it falls as a campaign gains corroboration:
+    # Ember holds 37 internal links to the miner's one, and its weakest is necessarily lower
+    # than a two-host campaign's only link. Read that way the comparison measures breadth and
+    # calls it weakness.
     camps = list(Campaign.objects.filter(run=a))
     ember_c = next((c for c in camps if "WS-007" in set(c.hosts.values_list("hostname", flat=True))), None)
     miner_c = next((c for c in camps if set(c.hosts.values_list("hostname", flat=True)) & MINER), None)
-    chk(bool(ember_c and miner_c) and miner_c.cohesion_min < ember_c.cohesion_min,
+    chk(bool(ember_c and miner_c) and miner_c.cohesion_mean < ember_c.cohesion_mean,
         f"the miner campaign scores visibly weaker than Ember "
-        f"({miner_c.cohesion_min if miner_c else 'none'} vs {ember_c.cohesion_min if ember_c else 'none'})")
+        f"(mean {miner_c.cohesion_mean if miner_c else 'none'} vs "
+        f"{ember_c.cohesion_mean if ember_c else 'none'}; "
+        f"min {miner_c.cohesion_min if miner_c else 'none'} vs "
+        f"{ember_c.cohesion_min if ember_c else 'none'})")
+
+    # And the claim underneath the number: what each campaign actually rests on.
+    def kinds_of(c):
+        hosts = set(c.hosts.values_list("hostname", flat=True))
+        return {((l.factors or {}).get("top") or {}).get("kind")
+                for k, l in links.items() if k[0] in hosts and k[1] in hosts and l.linked}
+
+    chk(bool(miner_c) and kinds_of(miner_c) == {"indicator"},
+        f"the miner rests on shared indicators alone ({sorted(kinds_of(miner_c)) if miner_c else []})")
+    chk(bool(ember_c) and "movement" in kinds_of(ember_c),
+        f"Ember rests on observed movement as well ({sorted(kinds_of(ember_c)) if ember_c else []})")
 
 if b:
     # G1's mechanism: Quiet Fox rotated every indicator, so no linked pair may rest on a
@@ -491,7 +515,7 @@ def chk(cond, label):
     print(("PASSCHK " if cond else "FAILCHK ") + label)
 
 runs = {}
-for inv in Investigation.objects.filter(incident_id__startswith="INC-CORPUS-"):
+for inv in Investigation.objects.filter(incident_id__in=("INC-CORPUS-A", "INC-CORPUS-B")):
     r = CorrelationRun.objects.filter(investigation_id=inv.id, is_current=True).first()
     if r:
         runs[inv.incident_id] = r
@@ -576,7 +600,7 @@ def chk(cond, label):
     print(("PASSCHK " if cond else "FAILCHK ") + label)
 
 runs = {}
-for inv in Investigation.objects.filter(incident_id__startswith="INC-CORPUS-"):
+for inv in Investigation.objects.filter(incident_id__in=("INC-CORPUS-A", "INC-CORPUS-B")):
     r = CorrelationRun.objects.filter(investigation_id=inv.id, is_current=True).first()
     if r:
         runs[inv.incident_id] = r
@@ -707,7 +731,7 @@ from cases.models import Investigation
 from correlation.models import BehaviorEvent, BehaviorNode, CorrelationRun
 
 runs = {}
-for inv in Investigation.objects.filter(incident_id__startswith="INC-CORPUS-"):
+for inv in Investigation.objects.filter(incident_id__in=("INC-CORPUS-A", "INC-CORPUS-B")):
     r = CorrelationRun.objects.filter(investigation_id=inv.id, is_current=True).first()
     if r:
         runs[inv.incident_id] = r
@@ -766,7 +790,7 @@ def chk(cond, label):
     print(("PASSCHK " if cond else "FAILCHK ") + label)
 
 runs = {}
-for inv in Investigation.objects.filter(incident_id__startswith="INC-CORPUS-"):
+for inv in Investigation.objects.filter(incident_id__in=("INC-CORPUS-A", "INC-CORPUS-B")):
     r = CorrelationRun.objects.filter(investigation_id=inv.id, is_current=True).first()
     if r:
         runs[inv.incident_id] = r

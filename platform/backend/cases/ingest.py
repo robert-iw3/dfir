@@ -14,6 +14,7 @@ import logging
 
 from django.db import IntegrityError, transaction
 from django.utils import timezone
+from django.utils.dateparse import parse_datetime
 
 from . import audit
 from .models import (
@@ -119,6 +120,35 @@ def _iocs_from_findings(run, findings, existing=()):
     return rows
 
 
+def as_datetime(value):
+    """A bundle's timestamp as an aware datetime, whatever shape it arrived in.
+
+    A bundle carries `collected_at` as an ISO STRING. Django coerces a field on save but
+    leaves the in-memory attribute exactly as assigned, so `run.collected_at` stayed a string
+    on the object the ingest path goes on to use — and comparing it against a `first_seen`
+    loaded from the database raised
+    `TypeError: '<' not supported between instances of 'str' and 'datetime.datetime'`.
+
+    That surfaced only on RE-collection, the `not created` branch of the rollup, so a first
+    ingest was always clean and a second one returned HTTP 500. The puller then held the
+    bundle rather than discarding it — correctly — and the evidence sat in the DMZ
+    indefinitely, six deep by the time a UAT asserted the staging area drains.
+
+    Naive values are made aware rather than rejected: a collector without a configured zone
+    still reports a real instant, and refusing it would strand the bundle for a formatting
+    detail.
+    """
+    if value in (None, ""):
+        return None
+    if isinstance(value, str):
+        value = parse_datetime(value)
+        if value is None:
+            return None
+    if timezone.is_naive(value):
+        return timezone.make_aware(value, timezone.get_default_timezone())
+    return value
+
+
 def roll_up_sightings(run, iocs):
     """Write the per-(indicator, host, investigation) rollup beside the IOC rows.
 
@@ -140,7 +170,7 @@ def roll_up_sightings(run, iocs):
                        run.id, len(iocs))
         return 0
 
-    seen = run.collected_at or timezone.now()
+    seen = as_datetime(run.collected_at) or timezone.now()
     written = 0
     for ioc in iocs:
         obj, created = IndicatorSighting.objects.get_or_create(
@@ -198,7 +228,7 @@ def resolve_host(host_in, run_in=None):
     # When the collection that observed the change was taken — not when this row is written.
     # Taken from the run, since a bundle can arrive long after the rename it reports; the
     # host payload carries identity, the run payload carries timing.
-    observed = (run_in or {}).get("collected_at") or None
+    observed = as_datetime((run_in or {}).get("collected_at"))
     stamp = (run_in or {}).get("stamp", "")
 
     def record_change(host, field, from_value, to_value):
@@ -296,7 +326,7 @@ def ingest_bundle(payload, actor="ir-broker"):
         status_json=run_in.get("status_json", {}),
         custody_verified=bool(custody.get("verified", False)),
         custody_summary=custody.get("summary", {}),
-        collected_at=run_in.get("collected_at") or timezone.now(),
+        collected_at=as_datetime(run_in.get("collected_at")) or timezone.now(),
         run_kind=run_in.get("run_kind", "initial"),
     )
 

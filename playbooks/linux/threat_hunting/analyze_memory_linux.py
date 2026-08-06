@@ -1076,7 +1076,7 @@ def analyze_yara(rows):
         # What each string actually matched, not just which slot fired. An identifier like
         # '$a' cannot be reviewed: it does not distinguish a real C2 string from a rule
         # matching its own source text quoted in some buffer, and that distinction is the
-        # whole judgement.
+        # whole judgment.
         for md in (_get(r, "matches") or [])[:6]:
             details += (f" [{md.get('id', '?')} @ 0x{md.get('offset', 0):x}]"
                         f" {md.get('text', '')!r}")

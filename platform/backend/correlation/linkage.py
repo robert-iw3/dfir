@@ -62,7 +62,27 @@ LINK_THRESHOLD = 0.35
 
 # Beyond this many days apart, two observations are not one intrusion window. Inside it the
 # penalty scales smoothly rather than cliff-edging, because intrusions dwell.
-WINDOW_DAYS = 30.0
+#
+# A year, because that is how long targeted intrusions dwell. At thirty days the factor
+# collapsed every low-and-slow campaign: corpus S is one operator returning over eight
+# months, adjacent hosts up to 56 days apart, and EVERY pair scored the 0.2 floor — the
+# campaign did not form at all, so it had no patient zero, no fingerprint and a technique
+# sequence that stopped at the first host. One constant, ten symptoms.
+#
+# The two hosts compared here are each host's first CONFIRMING evidence (`intrusion_first` in
+# engine.py), not their first activity — the estate's own baseline sits on every endpoint at
+# the start of the period and would otherwise make every pair look simultaneous.
+#
+# Bounded from both directions on real data rather than chosen:
+#
+#   must LINK     corpus S's widest gap between adjacent hosts is 56 days, on tradecraft
+#                 carried by all 7 compromised endpoints -> needs WINDOW >= ~254 days
+#   must DECLINE  two unsanctioned remote-access installs 190 days apart, by different
+#                 people, on two endpoints -> needs WINDOW <= ~644 days
+#
+# 365 sits inside both with margin at every population the corpora produce, and is the outer
+# bound of what anyone would call a single engagement.
+WINDOW_DAYS = 365.0
 
 
 def rarity(host_count, population):
@@ -86,6 +106,28 @@ def rarity(host_count, population):
     return max(0.0, min(1.0, log((population + 1) / (host_count + 0.5)) / log(population + 1)))
 
 
+# The floor rarity may fall to for a node that is CONFIRMING COMPROMISE EVIDENCE ON EVERY
+# HOST THAT CARRIES IT.
+#
+# Rarity assumes that something on many hosts is the environment. That assumption is a
+# hypothesis about benign presence, and adjudication has already tested it on every carrier:
+# no ordinary software is adjudicated a confirmed compromise on all twenty machines it sits
+# on. Where the hypothesis is refuted everywhere, the environment penalty is measuring
+# nothing — and it is measuring nothing hardest exactly when an event is large.
+#
+# A ransomware event is where that shows. The ransom note, the appended extension and the
+# deployment task are on EVERY host the event reached, so the more endpoints it encrypted the
+# less its own signature argued that they were related: on a 24-host fleet a note on 12 of
+# them scored 0.31 against a 0.35 threshold, and a single event reported as fourteen
+# unrelated incidents.
+#
+# A floor rather than an exemption. At 0.5 an artifact adjudicated True Positive on every
+# carrier reaches 0.425 and links, while a bare INDICATOR reaches 0.275 and still does not —
+# so a commodity binary dropped by two unrelated operators, which is confirmed on both and
+# distinctive of neither, cannot merge them on its hash alone.
+CONFIRMED_RARITY_FLOOR = 0.5
+
+
 def temporal_coherence(a_time, b_time):
     """1.0 for co-occurrence, decaying to 0.2 across the intrusion window."""
     if not a_time or not b_time:
@@ -99,6 +141,19 @@ def temporal_coherence(a_time, b_time):
 # A movement recorded before its source shows any compromise cannot be right. Discounted to
 # this rather than dropped: a contradictory record is itself something an analyst should see.
 CONTRADICTION_DISCOUNT = 0.35
+
+
+def movement_verdict_weight(verdict):
+    """The ladder weight for a movement record, read from the record itself.
+
+    Movement was scored at True Positive whatever the collector concluded. On Windows that
+    was invisible: a `Lateral Movement` finding was an intrusion by construction. On Linux an
+    SSH session between two hosts is how the estate is administered, and a hunt that cannot
+    separate an admin hop from an intrusion files it Indeterminate. At 1.00 one such record
+    fuses whatever it touches — and movement carries the heaviest type weight there is, so
+    nothing else on the pair can outvote it.
+    """
+    return VERDICT_WEIGHT.get(verdict or "", VERDICT_WEIGHT["Indeterminate"])
 
 
 def contradiction_for(src, moved_at, src_first):
@@ -155,6 +210,13 @@ def build_links(crun, compromised, host_first, edges, population=None, first_sta
         if len(carriers) < 2:
             continue
         r = rarity(node.host_count, population)
+        # EVERY host carrying it, not only the compromised ones. One clean endpoint holding
+        # the same thing revives the environment hypothesis, and the penalty applies again.
+        confirmed_everywhere = bool(node.hostnames) and all(
+            best_verdict.get((node.id, h), "") in CONFIRMING_VERDICTS
+            for h in node.hostnames)
+        if confirmed_everywhere:
+            r = max(r, CONFIRMED_RARITY_FLOOR)
         tw = TYPE_WEIGHT.get(node.kind, 0.3)
         for i, a in enumerate(carriers):
             for b in carriers[i + 1:]:
@@ -167,6 +229,9 @@ def build_links(crun, compromised, host_first, edges, population=None, first_sta
                     "verdict_weight": round(vw, 3), "temporal": round(tc, 3),
                     "weight": round(tw * r * vw * tc, 4),
                     "host_count": node.host_count,
+                    # Named, because "on 12 of 24 hosts and still counted as rare" is a claim
+                    # a reader is entitled to see stated rather than infer from a number.
+                    "rarity_floored": confirmed_everywhere,
                 })
 
     # Observed movement, scored separately: it is the one link type that is direct evidence
@@ -176,7 +241,7 @@ def build_links(crun, compromised, host_first, edges, population=None, first_sta
         if a not in compromised or b not in compromised:
             continue
         key = (a, b) if a < b else (b, a)
-        vw = VERDICT_WEIGHT.get("True Positive", 1.0)
+        vw = movement_verdict_weight(e.get("verdict"))
         tc = temporal_coherence(host_first.get(a), host_first.get(b))
         contradiction, basis = contradiction_for(
             a, e.get("observed_dt"), first_standalone.get(a))
@@ -195,6 +260,17 @@ def build_links(crun, compromised, host_first, edges, population=None, first_sta
     for (a, b), contributions in pairs.items():
         contributions.sort(key=lambda c: -c["weight"])
         top = contributions[0]["weight"]
+        # Corroboration is truncated to keep the record a readable size. A CONTRADICTED
+        # contribution is never dropped by that truncation, whatever it ranks.
+        #
+        # Discounting a movement is what pushes it down the order, so the discount hides
+        # itself — the same concealment that once put it below the pair's top contribution,
+        # now pushing it past the sixth. On the corpus's contradiction edge the pair carries
+        # 19 contributions and the confirmed-everywhere rarity floor lifted three artifacts
+        # above it, so the movement fell out of the stored factors: the host still banded
+        # down, and the reason it banded down was no longer in the record.
+        keep = contributions[1:6]
+        keep += [c for c in contributions[6:] if (c.get("contradiction") or 1.0) < 1.0]
         # The strongest link decides membership; the rest are corroboration. Summing instead
         # would let a pile of fleet-wide noise out-vote one piece of real evidence.
         links[(a, b)] = HostLink(
@@ -203,7 +279,7 @@ def build_links(crun, compromised, host_first, edges, population=None, first_sta
             linked=top >= LINK_THRESHOLD,
             factors={
                 "top": contributions[0],
-                "corroboration": contributions[1:6],
+                "corroboration": keep,
                 "contribution_count": len(contributions),
                 # Every evidence type that contributed, not only the five strongest kept in
                 # full. Truncating the detail is a size decision; letting a shared user-agent
@@ -249,6 +325,12 @@ def cohesion(group, links):
 
     The MINIMUM is reported alongside the mean because it is what an opposing analyst
     attacks: a campaign is only as defensible as its weakest internal link.
+
+    It is not a quality score, and it moves the wrong way for one. A campaign that gains
+    corroboration gains links, and every added link can only lower the minimum — Ember holds
+    37 internal links and its weakest is below a two-host campaign's only one. Compare
+    campaigns on the mean, or on what the links are made of; use the minimum for what it is,
+    the weakest point of a single campaign's own case.
     """
     inside = [l.weight for (a, b), l in links.items()
               if a in group and b in group and l.linked]

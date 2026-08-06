@@ -2,7 +2,7 @@
 
 *What passing proves:* The ingress states its TLS floor, refuses weak and export ciphers, bounds request rate and concurrency, does not name itself, constrains the application as mobile code, and logs what the SRG requires it to log.
 
-- Run: `uat_srg_webtier.sh` — 2026-08-05 22:03:29Z
+- Run: `uat_srg_webtier.sh` — 2026-08-06 16:33:40Z
 
 **TLS — SRG-APP-000014-WSR-000006, SRG-APP-000439-WSR-000188**
 
@@ -76,7 +76,7 @@
 
 | Result | Assertion — with evidence |
 |---|---|
-| ✅ PASS | SRG-APP-000125-WSR-000071: the deployed shipper completes a pass (2 object(s) shipped) |
+| ✅ PASS | SRG-APP-000125-WSR-000071: the deployed shipper completes a pass (1 object(s) shipped) |
 | ✅ PASS | SRG-APP-000125-WSR-000071: ingress access records are held in the object store, off the web tier's filesystems |
 | ✅ PASS | SRG-APP-000125-WSR-000071: shipping state is in the bucket — a replaced shipper resumes, not re-uploads |
 | ✅ PASS | SRG-APP-000358-WSR-000163: shipped objects are whole structured records — a SIEM reads the bucket as-is |
@@ -85,7 +85,7 @@
 | ✅ PASS | the log sources are read-only to the shipper — the record cannot be altered by its own transport |
 | ✅ PASS | SRG-APP-000108-WSR-000166: the shipper self-reports to Component Health — going quiet or failing is surfaced, not silent |
 | ✅ PASS | SRG-APP-000357-WSR-000150: the report carries usage against the declared allocation |
-| ✅ PASS | SRG-APP-000108-WSR-000166: the shipper's report is CURRENT (586s old) — a stale row is a reporter that stopped, which the existence check cannot tell from one that never started |
+| ✅ PASS | SRG-APP-000108-WSR-000166: the shipper's report is CURRENT (129s old) — a stale row is a reporter that stopped, which the existence check cannot tell from one that never started |
 | ✅ PASS | SRG-APP-000359-WSR-000065: the warning fires at 75% of allocated log storage and not below it |
 | ✅ PASS | SRG-APP-000108-WSR-000166: a shipping failure becomes a Component Health alert |
 
@@ -103,7 +103,7 @@
 | ✅ PASS | default-admin re-provisioned to its deployed initial state |
 | ✅ PASS | the initial credential admits NO session — Keycloak demands a replacement first |
 | ✅ PASS | a real authorization-code login completed through the hardened ingress, forced password change included |
-| ✅ PASS | SRG-APP-000001-WSR-000002: the login created server-side session state in Redis database 1 (0 -> 1 keys) |
+| ✅ PASS | SRG-APP-000001-WSR-000002: the login created server-side session state in Redis database 1 (3 -> 4 keys) |
 | · | the intention check could not be read from inside Consul; the store is working regardless |
 | ✅ PASS | default-admin restored to provisioned state (initial password, change re-armed) |
 | ✅ PASS | a provisioned account carries the forced password change until its first login consumes it |

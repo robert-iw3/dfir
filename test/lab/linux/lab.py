@@ -142,7 +142,7 @@ def _long_runner(dest):
     a valid applet and exits immediately. The plant reported success and the process was gone
     before the collection ran, which reads as a collection gap and is not one.
 
-    The interpreter ignores argv[0] for behaviour, so the same plant works on glibc and musl.
+    The interpreter ignores argv[0] for behavior, so the same plant works on glibc and musl.
     """
     src = next((s for s in ("/usr/bin/python3", "/usr/local/bin/python3", "/bin/python3")
                 if os.path.exists(s)), None)

@@ -73,6 +73,7 @@ LINUX=(
     test_66_edr_got_plt_hooks.py test_67_edr_mwcp_structural.py
     test_68_adjudicate_subject_resolution.py test_69_package_integrity_anchor.py
     test_70_login_records.py test_71_deleted_file_recovery.py
+    test_72_mitre_field_shapes.py
 )
 
 WINDOWS=(
@@ -89,7 +90,8 @@ WINDOWS=(
     test_60_mwcp_delivery_parsers.py test_61_mwcp_cloud_saas_parsers.py
     test_62_mwcp_tier3_specialized_parsers.py test_63_mwcp_parser_performance.py
     test_64_mwcp_tier4_backlog_parsers.py test_65_memory_full_sweep.py
-    test_67_edr_mwcp_structural.py test_egress_beacon_classifier.py
+    test_67_edr_mwcp_structural.py test_72_mitre_field_shapes.py
+    test_egress_beacon_classifier.py
 )
 
 CLOUD=(

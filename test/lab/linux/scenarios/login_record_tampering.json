@@ -18,7 +18,7 @@
      "finding_contains": {"type": "Login Record Removed", "contains": "lastlog"},
      "needs_plant": "removed"},
 
-    {"id": "the surviving sessions are still parsed and summarised",
+    {"id": "the surviving sessions are still parsed and summarized",
      "finding_contains": {"type": "Login History", "contains": "session"},
      "needs_plant": "removed"},
 

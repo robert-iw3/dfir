@@ -2,7 +2,7 @@
 
 *What passing proves:* An analyst workstation reaches the platform only over an authenticated WireGuard tunnel to the bastion, with no route to any internal host.
 
-- Run: `uat_tailnet.sh` — 2026-08-05 16:02:06Z
+- Run: `uat_tailnet.sh` — 2026-08-06 16:25:51Z
 
 **Control plane**
 

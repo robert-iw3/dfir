@@ -6,8 +6,11 @@
 # Asserting that a constraint appears in pg_constraint proves the DDL ran, not that the
 # defect is closed: the defect was a read-then-write race, so the test has to race.
 #
-# Non-destructive: works in a savepoint that is rolled back, so a run leaves the evidence
-# store exactly as it found it.
+# Non-destructive and re-runnable: a run leaves the evidence store exactly as it found it.
+# Sections proving the database REFUSES something roll back, since nothing they write should
+# land. T1 and T2 must commit — a rollup that outlives the evidence it summarizes cannot be
+# demonstrated inside a transaction thrown away regardless — so they delete their fixtures
+# instead, this run's and any an earlier run left.
 # ==============================================================================
 set -uo pipefail
 
@@ -365,7 +368,29 @@ chk(_n == 0, f"every finding an analyst reclassified is marked as theirs ({_n} u
 from cases.models import Investigation, InvalidTransition
 from django.db import transaction as _txn
 
-_sp = _txn.savepoint()
+
+# T1 and T2 write real rows and clean up by DELETING them, not by rolling back.
+#
+# Both run in autocommit, like the ingest path they exercise, because T2's whole claim is
+# that a rollup survives the deletion of the evidence it summarizes — and survival cannot be
+# demonstrated inside a transaction that is thrown away regardless.
+#
+# The sections above roll back instead, and are right to: they prove the database REFUSES
+# something, so nothing they write should ever land.
+#
+# What was here before was `transaction.savepoint()`, which returns None outside an atomic
+# block. `savepoint_rollback(None)` did nothing, the fixtures were committed, and the probe
+# passed exactly once before failing on its own leftovers at the unique machine-id
+# constraint on every later run.
+def _clear_fixtures():
+    """Remove T1/T2 fixtures — this run's, and any a previous run committed."""
+    from cases.models import Host as _H, IndicatorSighting as _S
+    _S.objects.filter(value="Global\\uat-t2-mutex").delete()
+    Investigation.objects.filter(incident_id__in=("UAT-T1", "UAT-T2")).delete()
+    _H.objects.filter(machine_id="uat-t2-machine").delete()
+
+
+_clear_fixtures()
 _inv = Investigation.objects.create(name="uat-lifecycle", incident_id="UAT-T1")
 chk(_inv.status == "open", "a new investigation starts open")
 
@@ -391,13 +416,30 @@ try:
 except InvalidTransition:
     _terminal = True
 chk(_terminal, "archived is terminal — its evidence has been moved out")
-_txn.savepoint_rollback(_sp)
+_clear_fixtures()
 
 # --- T2: the rollup outlives the rows it summarizes ---------------------------------------
-from cases.ingest import roll_up_sightings
+from cases.ingest import as_datetime, roll_up_sightings
 from cases.models import CollectionRun, Host, IndicatorSighting, IOC
 
-_sp = _txn.savepoint()
+# A bundle carries collected_at as an ISO STRING, and Django leaves an assigned attribute
+# exactly as given until it is reloaded — so the run object the ingest path uses held a str.
+# Comparing it against a first_seen from the database raised, and only on RE-collection: the
+# first ingest of an indicator created the row and never compared, the second returned HTTP
+# 500, and the puller held the bundle in the DMZ rather than discard evidence it could not
+# store. Asserted on the parser AND on the second rollup below, because the shape is the
+# cause and the re-collection is where it bites.
+import datetime as _dt
+chk(isinstance(as_datetime("2026-07-15T09:30:00+00:00"), _dt.datetime),
+    "a bundle's ISO timestamp parses to a datetime")
+chk(as_datetime(_dt.datetime(2026, 7, 15, tzinfo=_dt.timezone.utc)).tzinfo is not None,
+    "a datetime passes through still aware")
+_naive = as_datetime("2026-07-15T09:30:00")
+chk(_naive is not None and _naive.tzinfo is not None,
+    "a naive timestamp is made aware rather than refused — the instant is still real")
+chk(as_datetime(None) is None and as_datetime("") is None and as_datetime("not a date") is None,
+    "an absent or unparseable timestamp yields None, so the caller falls back to now()")
+
 _inv = Investigation.objects.create(name="uat-sightings", incident_id="UAT-T2")
 _host = Host.objects.create(hostname="uat-t2-host", machine_id="uat-t2-machine")
 _run = CollectionRun.objects.create(investigation=_inv, host=_host, stamp="uat-t2-1")
@@ -424,7 +466,10 @@ chk(IOC.objects.filter(value="Global\\uat-t2-mutex").count() == 0,
     "deleting the runs took their IOC rows with them")
 chk(_s.count() == 1,
     "and the indicator sighting SURVIVED — the cross-case pivot still answers")
-_txn.savepoint_rollback(_sp)
+_clear_fixtures()
+chk(not Investigation.objects.filter(incident_id__in=("UAT-T1", "UAT-T2")).exists()
+    and not Host.objects.filter(machine_id="uat-t2-machine").exists(),
+    "T1/T2 left nothing behind — the probe is re-runnable")
 
 print("DONECHK")
 PYEOF

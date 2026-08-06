@@ -2,7 +2,7 @@
 
 *What passing proves:* A repair is requested in the web tier and executed only by the isolated agent's own allow-list; the outcome is recorded once and cannot be forged or replayed.
 
-- Run: `uat_repairs.sh` — 2026-08-05 21:44:53Z
+- Run: `uat_repairs.sh` — 2026-08-06 16:27:05Z
 
 **The catalog and the allow-list**
 
@@ -27,13 +27,13 @@
 | ✅ PASS | a principal without the admin role cannot request a repair (403) |
 | ✅ PASS | an unknown action is refused at the API (400) |
 | ✅ PASS | the queue endpoint answers the service credential with a requests list |
-| ✅ PASS | admin queued consul-converge-policy (request 2) |
+| ✅ PASS | admin queued consul-converge-policy (request 4) |
 
 **The deployed agent claims and executes**
 
 | Result | Assertion — with evidence |
 |---|---|
-| ✅ PASS | request 2 landed succeeded — claimed and executed by the deployed agent |
+| ✅ PASS | request 4 landed succeeded — claimed and executed by the deployed agent |
 | ✅ PASS | the agent's own log records the claim |
 | ✅ PASS | the record carries the executing host, the output, and exit 0 |
 

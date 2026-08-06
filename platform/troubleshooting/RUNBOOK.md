@@ -430,6 +430,39 @@ order that works when the thread's own errors are invisible:
 
 ---
 
+## 6b. The test harness itself
+
+**Symptom — a password / authentication dialog appears during a UAT.**
+Nothing in this platform needs elevation. A UAT that interpolates `${PREFIX}` into an embedded
+Python block leaves that heredoc unquoted, so bash also expands **backticks inside it,
+including inside Python comments**: `` `/usr/bin/pkexec` `` written as an aside was executed
+and raised a polkit prompt. Sibling symptoms are stray `<word>: command not found` lines that
+read as podman chatter.
+
+```bash
+grep -n '<<[A-Za-z_]' test/uat_*.sh test/lib/*.sh    # unquoted heredocs
+```
+
+Only config-file writes should appear, and those must contain no backticks. Everything that
+runs code uses the `test/lib/corpus_pipeline.sh` pattern: values cross into the container as
+environment, every block is `<<'PYEOF'`.
+
+**Symptom — "only N/M analyses adjudicated", downstream reads as a correlation defect.**
+The investigation engine raises rather than returning a partial report, so one bad field costs
+the host its entire determination and the campaign looks thin for reasons nowhere near
+correlation. `corpus_assert_analysis_ran` prints the recorded error and the hosts; read that
+before touching linkage. A `MITRE` value arriving as a list where the runner expected a string
+did exactly this — see `change_logs/2026-08-05-corpus-linux.md`.
+
+**Symptom — a Linux campaign clusters on one deployment and not another.**
+Rarity is measured against `Host.objects.count()`, the whole deployment, so hosts belonging to
+unrelated cases change how rare this case's evidence is. Combined with Linux adjudication's
+Likely-True-Positive ceiling (x0.75 where Windows gives x1.00), an artifact on four of
+twenty-two hosts scores 0.33 against a 0.35 threshold. `correlation.tests.LinuxVerdictCeiling`
+states the arithmetic; `uat_corpus_linux.sh` records the live population it ran against.
+
+---
+
 ## 7. When you change something, re-validate
 
 ```bash
@@ -442,6 +475,8 @@ test/uat_baseline.sh       # identity and the SSO gate
 test/uat_consul.sh         # mesh: hardened control plane, default-deny intentions
 test/uat_vault.sh          # dynamic secrets
 test/uat_repairs.sh        # admin-requested repairs, isolated executor
+test/uat_corpus.sh         # 25 Windows endpoints: classification, linkage, tradecraft
+test/uat_corpus_linux.sh   # 22 Linux endpoints: the same claims on the other platform
 troubleshooting/diagnose.sh
 ```
 

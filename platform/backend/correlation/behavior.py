@@ -33,6 +33,55 @@ EVENT_MAP = {
     "Authentication": ("authenticated", None),
     "Macro Execution": ("executed", None),
     "Cryptominer Process": ("executed", None),
+
+    # The Linux hunts' vocabulary (`playbooks/linux/threat_hunting/adjudicate.py`). Every
+    # name here is a choice the operator made and keeps between engagements, which is what
+    # the artifact path exists to carry. Without these a Linux campaign contributes no
+    # artifact at all: it holds together on movement alone, and any host reached without a
+    # movement record is unreachable by any path.
+    #
+    # The benign counterparts are mapped too — a fleet's own units and cron entries must be
+    # visible AS fleet-wide, or the rarity floor has nothing to measure the actor's against.
+    "Systemd Persistence": ("persisted", "persistence_service"),
+    "Systemd Unit": ("observed", "persistence_service"),
+    "Suspicious systemd service": ("persisted", "persistence_service"),
+    "Cron Persistence": ("persisted", "persistence_cron"),
+    "Cron Entry": ("observed", "persistence_cron"),
+    "Shell Init Backdoor": ("persisted", "persistence_shell_init"),
+    "Library Preload Hijack": ("persisted", "persistence_preload"),
+    "Suspicious Kernel Module": ("persisted", "kernel_module"),
+    "Hidden Kernel Module": ("persisted", "kernel_module"),
+    "Unsigned Kernel Module": ("observed", "kernel_module"),
+    "Webshell": ("dropped", "webshell"),
+    "Execution From Writable Path": ("executed", "payload_path"),
+    "Memory-Only Executable (memfd)": ("executed", "payload_path"),
+    "Crypto Miner": ("executed", None),
+    "Reverse Shell": ("executed", None),
+
+    # Impact and the destruction around it. The ransom note's name and the policy object the
+    # payload rode out on are chosen by the affiliate and reused across engagements; the rest
+    # carry no name of their own and contribute their verb and technique only.
+    "Ransomware": ("encrypted", "ransom_note"),
+    "Group Policy Modification": ("persisted", "gpo_name"),
+    "DLL Sideload": ("dropped", "sideloaded_dll"),
+    "Phishing Attachment": ("delivered", None),
+    "Shadow Copy Deletion": ("destroyed", None),
+    "Backup Deletion": ("destroyed", None),
+    "Service Stop": ("stopped", None),
+    "Defender Disabled": ("evaded", None),
+    "Event Log Cleared": ("evaded", None),
+    "Audit Logging Disabled": ("evaded", None),
+
+    # Long-dwell persistence and the tooling around it.
+    "WMI Event Subscription": ("persisted", "persistence_wmi"),
+    "Certificate Theft": ("stole", None),
+    "External Connection": ("beaconed", None),
+    "Exfiltration Over C2": ("exfiltrated", None),
+    "Exfiltration Over Web Service": ("exfiltrated", None),
+    # A remote-access tool's NAME is what distinguishes sanctioned from unsanctioned, and two
+    # endpoints running the same unsanctioned one are worth comparing — which is exactly why
+    # it must be an artifact rather than a hash alone.
+    "Remote Access Tool": ("executed", "rmm_tool"),
 }
 
 
@@ -49,10 +98,26 @@ from cases.indicators import as_values as _as_values  # noqa: E402
 IOC_ARTIFACTS = {"malware_family", "yara_rule", "campaign_id"}
 
 
-def _staging_name(target):
-    """The convention, not the path: `D:\\shares\\finance\\_archive.7z` names its actor by
-    `_archive.7z` — the path varies per host, the name is tradecraft."""
-    return target.replace("\\", "/").rsplit("/", 1)[-1] if target else ""
+# Subkinds whose VALUE is the file name, not the path holding it. Where these live is fixed
+# — `/etc/systemd/system`, `/etc/cron.d`, `/etc/profile.d`, a share the actor happened to
+# reach — so keeping the path gives every actor the same leading shape and buries the part
+# they chose. `payload_path` is deliberately absent: where a payload is dropped
+# (`/dev/shm/.systemd-private/`) is itself the habit.
+BASENAME_SUBKINDS = {
+    "staging_name", "persistence_service", "persistence_cron",
+    "persistence_shell_init", "persistence_preload", "webshell",
+}
+
+
+def artifact_value(subkind, target):
+    """What the artifact node holds for this subkind: a name, or the whole path."""
+    if not target:
+        return ""
+    if subkind not in BASENAME_SUBKINDS:
+        return target
+    # A preload hijack records both ends — `/etc/ld.so.preload -> /usr/lib/.../libX.so.2`.
+    # The library is the actor's; the file naming it is the platform's.
+    return target.replace("\\", "/").rsplit("/", 1)[-1].strip()
 
 
 def build_graph(crun, run_ids):
@@ -81,8 +146,8 @@ def build_graph(crun, run_ids):
         raw = f.raw if isinstance(f.raw, dict) else {}
 
         if artifact_subkind:
-            value = _staging_name(f.target) if artifact_subkind == "staging_name" else f.target
-            record(touch("artifact", artifact_subkind, value, host), host, verb, f)
+            record(touch("artifact", artifact_subkind,
+                         artifact_value(artifact_subkind, f.target), host), host, verb, f)
 
         # Indicators embedded in the finding itself. IOC rows cover the hunt's own output;
         # these cover what a finding attributes to THIS event — and the richer material that

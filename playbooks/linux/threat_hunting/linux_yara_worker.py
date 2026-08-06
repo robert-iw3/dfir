@@ -120,7 +120,7 @@ def _task_name(task):
 def _matched_string_ids(match):
     """The yara STRING identifiers that actually fired (e.g. '$elf_magic' vs '$c2_url') - the single
     best FP/TP tell: a rule that only matched a generic anchor (ELF magic) is noise; one that matched
-    a specific C2/behaviour string is real."""
+    a specific C2/behavior string is real."""
     out = set()
     try:
         for s in match.strings:
@@ -140,7 +140,7 @@ def _matched_string_detail(match, excerpt=48, per_string=4):
     The identifier alone does not survive review. '$a' says which slot in the rule fired, not
     what was found, and no one can tell a genuine C2 string from a rule matching its own
     source text quoted in a buffer without seeing the bytes. Recording the offset and a
-    bounded excerpt here means that judgement does not require re-deriving it by hand from
+    bounded excerpt here means that judgment does not require re-deriving it by hand from
     the carved region.
 
     Excerpts are bounded and rendered printable: this is malware content destined for a
