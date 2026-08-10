@@ -2,7 +2,7 @@
 
 *What passing proves:* An analyst workstation reaches the platform only over an authenticated WireGuard tunnel to the bastion, with no route to any internal host.
 
-- Run: `uat_tailnet.sh` — 2026-08-06 16:25:51Z
+- Run: `uat_tailnet.sh` — 2026-08-09 21:23:03Z
 
 **Control plane**
 
@@ -47,16 +47,16 @@
 | Result | Assertion — with evidence |
 |---|---|
 | ✅ PASS | the brokered port is bound in the bastion's namespace |
-| · | listeners in the bastion namespace: 3 (tailscaled's own sockets included) |
+| · | listeners in the bastion namespace: 11 (tailscaled's own sockets included) |
 
 **DERP — the tunnel has a relay to fall back on**
 
 | Result | Assertion — with evidence |
 |---|---|
 | ✅ PASS | bastion relays through the embedded DERP region (bastion) |
-| ✅ PASS | bastion reports no tunnel health warnings |
+| ✅ PASS | bastion: no impairment — 1 warning(s), all the rootless-container netfilter limitation, which does not stop WireGuard carrying |
 | ✅ PASS | analyst relays through the embedded DERP region (bastion) |
-| ✅ PASS | analyst reports no tunnel health warnings |
+| ✅ PASS | analyst: no impairment — 1 warning(s), all the rootless-container netfilter limitation, which does not stop WireGuard carrying |
 | ✅ PASS | control plane advertises https://headscale:8080 (TLS — required for DERP) |
 
 **Bounds — the tunnel is not a route to the enclave**
@@ -77,9 +77,18 @@
 | ✅ PASS | analyst cannot reach backend:8000 |
 | ✅ PASS | analyst cannot reach keycloak:8080 |
 
+**Identity — a second workstation is a second node, not a collision**
+
+| Result | Assertion — with evidence |
+|---|---|
+| ✅ PASS | every configured workstation is a distinct node on the control plane (2: analyst ws-002) |
+| ✅ PASS | 2 workstations hold 2 distinct machine keys and 2 distinct tailnet addresses |
+| ✅ PASS | 2 separate tailnet state volumes — no workstation writes another's node identity |
+| ✅ PASS | ws-002 reached the platform through its own tunnel (HTTP 200) |
+
 **Tailnet**
 
 | Result | Assertion — with evidence |
 |---|---|
 
-**Verdict: PROVEN** — 27 assertions passed, 0 failed.
+**Verdict: PROVEN** — 31 assertions passed, 0 failed.

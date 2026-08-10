@@ -33,6 +33,12 @@ deletion; `analyst` works cases end-to-end — notes, rescans, investigation —
 rights; `auditor` reads investigations and the complete audit trail. Every mutation and
 privileged read is recorded in an append-only, hash-chained audit log, re-verified on read.
 
+**Bounds what leaves.** `export` is a right held alongside the role, not a consequence of being
+able to read: reading a finding inside the enclave and carrying ten thousand of them out are
+different acts, and the enclave exists to bound the second. An auditor sees everything and
+exports nothing unless granted it. Every export — and every refused one — lands in an export
+ledger that answers what left, under whose name, in what volume, and to where.
+
 **Validates remediation.** An analyst can initiate a rescan of a host from the web application
 to confirm eradication held or that a host was restored to a known-good baseline; the follow-up
 collection is diffed against its baseline.
@@ -59,7 +65,7 @@ The platform deploys as separate tiers, each on its own hardware:
 | Tier | Contains |
 |---|---|
 | **Enclave** | PostgreSQL, object storage, task broker, API, analysis sandbox, Keycloak, SSO gate, ingress, service mesh, evidence puller, resolver |
-| **DMZ** | Evidence receiver, bastion broker, tailnet control plane, resolver |
+| **DMZ** | Evidence receiver, bastion broker, connection distributor, tailnet control plane, resolver |
 | **Analyst workstation** | Hardened browser, tailnet node |
 | **RE workstation** | Binary Ninja or Ghidra, opened on carved regions with no network |
 | **Collector** | Collection container, run on the endpoint under investigation |
@@ -99,8 +105,16 @@ contained to a disposable worker that can neither reach an internal service nor 
 ![The platform inside a zero-trust enclave with brokered analyst access](img/endstate-hashicorp.svg)
 
 Analyst workstations join a self-hosted tailnet whose policy is an explicit allow-list with no
-subnet routes, so a workstation cannot address an internal host. A bastion broker forwards
-**one port** to the platform; nothing else has a forwarder.
+subnet routes, so a workstation cannot address an internal host. The tailnet admits **one
+port** on the bastion; nothing else has a forwarder.
+
+Behind that port the bastion holds **several independent Boundary sessions**, each on a
+loopback address, each supervised on its own. A layer-4 distributor owns the analyst-facing
+port and spreads connections across them, retrying past a session that has died. One shared
+session would be a fleet-wide failure domain: when it ends, every analyst riding it drops
+together. The sessions are unreachable from any network, so no workstation can pin itself to
+one and re-create that. The distributor terminates no TLS and holds no credentials — the
+analyst's connection stays encrypted from the workstation to the SSO ingress.
 
 Everything the browser touches is served from **one origin**, path-routed at the ingress:
 
@@ -197,6 +211,9 @@ ownership is stable across credential rotation.
 | [`UI_OVERVIEW.md`](UI_OVERVIEW.md) | The web application, screen by screen |
 | [`SECURITY-MODEL.md`](SECURITY-MODEL.md) | The principles, what enforces each, and the test that proves it |
 | [`CODE_GRAPH.md`](CODE_GRAPH.md) | Generated dependency graph: services, wiring, scripts, API surface, UAT coverage — regenerate with `gen_code_graph.py` after adding logic |
+| [`CHANGE-MANAGEMENT.md`](CHANGE-MANAGEMENT.md) | Read before making a change: ground rules, blast radius per change type, the document inventory, and the obligations a change carries |
+| [`troubleshooting/TOPOLOGY.md`](troubleshooting/TOPOLOGY.md) | Component topology: every hop, its port and protocol, and what refuses it |
+| [`re-workstation/README.md`](re-workstation/README.md) | The RE tier: containment, staging, tool selection |
 | [`admin/README.md`](admin/README.md) | Administrative access to management interfaces, per tier |
 | [`deploy/README.md`](deploy/README.md) | Deployment: configuration, staged rollout, per-tier installation, running a collection |
 | [`deploy/NETWORKING.md`](deploy/NETWORKING.md) | Network design: VLANs, routing, firewall policy, IDPS placement, DNS |

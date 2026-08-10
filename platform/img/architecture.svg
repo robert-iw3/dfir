@@ -85,8 +85,8 @@
   <text class="boxS" x="354" y="352">one name → bastion · REFUSES all else</text>
 
   <rect class="box" x="342" y="408" width="260" height="104"/>
-  <text class="boxT" x="354" y="428">bastion + session broker</text>
-  <text class="boxS" x="354" y="444">Boundary CLIENT only — holds no authority</text>
+  <text class="boxT" x="354" y="428">bastion + distributor + session broker</text>
+  <text class="boxS" x="354" y="444">Boundary CLIENTS only — N sessions, holds no authority</text>
   <text class="boxS" x="354" y="458">one target: the SSO gate, per session,</text>
   <text class="boxS" x="354" y="472">per principal · listener on the tunnel</text>
   <text class="chip" x="354" y="490">SUPERVISED: re-establishes on any session end;</text>
@@ -100,7 +100,7 @@
   <text class="boxS" x="670" y="164">own Postgres · API is TLS, pinned</text>
 
   <rect class="box" x="908" y="100" width="180" height="80"/>
-  <text class="boxT" x="920" y="120">Boundary egress worker</text>
+  <text class="boxT" x="920" y="120">Boundary egress workers (N)</text>
   <text class="boxS" x="920" y="136">proxies authorized sessions</text>
   <text class="boxS" x="920" y="150">per-session mutual TLS</text>
   <text class="boxS" x="920" y="164">the only DMZ-facing proxy</text>
@@ -200,7 +200,7 @@
   <text class="lab" x="612" y="313">(TLS · pinned)</text>
 
   <path class="ein" d="M602 470 Q770 545 908 180"/>
-  <text class="labin" x="700" y="512">Boundary session — per-session mutual TLS</text>
+  <text class="labin" x="700" y="512">N Boundary sessions — per-session mutual TLS</text>
 
   <path class="ein" d="M1088 140 L1108 140"/>
   <path class="en" d="M1288 140 L1308 140"/>

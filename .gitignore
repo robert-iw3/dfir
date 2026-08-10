@@ -66,3 +66,13 @@ secrets/
 *_rsa
 *_ed25519
 id_*
+
+# -- Deploy-generated state (never source) ---------------------------------------
+# TLS material generated at deploy; the platform mints these per deployment.
+**/certs/
+# The distributor's workstation-pinning map: the deployment's own workstation names and
+# tailnet addresses, rendered by deploy.sh.
+platform/deploy/dmz/rendered/
+# Per-run UAT logs (results/ ARE published; raw logs are not).
+platform/test/logs/
+platform/deploy/.compose-applied

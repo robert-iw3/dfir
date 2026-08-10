@@ -105,5 +105,17 @@ rc=0
 mint bastion  bastion  TS_BASTION_AUTHKEY  || rc=1
 mint analyst  analyst  TS_ANALYST_AUTHKEY  || rc=1
 
+# One key per workstation, so revoking a lost workstation does not unenroll the fleet. All of
+# them join as the `analyst` user — the ACL is written against that user, and per-node grants
+# are not what this buys; the node NAME is what distinguishes them.
+#
+# The id is upper-cased and non-alphanumerics become underscores, because it becomes part of a
+# shell variable name and an id with a hyphen would otherwise write one nothing can read back.
+for ws in ${IR_WS_IDS:-}; do
+    [ "${ws}" = "analyst" ] && continue
+    var="TS_WS_AUTHKEY_$(printf '%s' "${ws}" | tr '[:lower:]' '[:upper:]' | tr -c '[:alnum:]\n' '_')"
+    mint analyst "${ws}" "${var}" || rc=1
+done
+
 echo "[tailnet] wrote ${OUT}"
 exit "${rc}"

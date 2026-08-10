@@ -34,6 +34,8 @@ SUITE=(
     "keycloak_db:ir-enclave_keycloak_1"
     "baseline:ir-enclave_backend_1 ir-dmz_receiver_1"
     "srg_webtier:ir-enclave_traefik_1"
+    "audit:ir-enclave_backend_1 ir-enclave_boundary_1"
+    "load:ir-enclave_backend_1 ir-dmz_distributor_1"
     "corpus:ir-enclave_worker_1 ir-dmz_receiver_1"
     "corpus_linux:ir-enclave_worker_1 ir-dmz_receiver_1"
     "corpus_ransomware:ir-enclave_worker_1 ir-dmz_receiver_1"
@@ -64,6 +66,10 @@ say() { printf '\n\033[1;36m========== %s\033[0m\n' "$*"; }
 LOGDIR="${PLATFORM}/test/logs"; mkdir -p "${LOGDIR}"
 
 PASSED=(); FAILED=(); SKIPPED=()
+if [[ -n "${ONLY}" ]] && ! printf '%s\n' "${SUITE[@]}" | cut -d: -f1 | grep -qx "${ONLY}"; then
+    echo "--only ${ONLY} names no suite member (see --list); refusing to report an empty run as green" >&2
+    exit 2
+fi
 START_ALL=$(date +%s)
 
 for entry in "${SUITE[@]}"; do

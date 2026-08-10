@@ -236,9 +236,24 @@ def storage_metrics():
 def audit_integrity():
     from . import audit as audit_mod
 
-    ok, broken = audit_mod.verify_audit_chain()
-    return {"chain_intact": ok, "first_broken_id": broken,
-            "entries": AuditLog.objects.count()}
+    ok, broken, sigs = audit_mod.verify_audit_detail()
+    # Reported APART. "BROKEN" for a key that was merely replaced is a false alarm on the one
+    # display an incident lead trusts, and a display that has cried wolf makes a real break
+    # read the same. The chain is the tamper-evidence; the signature is a second, key-bound
+    # layer that can legitimately be unverifiable without anything being wrong.
+    return {
+        "chain_intact": ok, "first_broken_id": broken,
+        "entries": AuditLog.objects.count(),
+        "signatures": {
+            "verified": sigs["current"],
+            # Signed under a key this deployment no longer holds. Not a finding.
+            "unverifiable_superseded_key": sigs["superseded"],
+            "unsigned": sigs["unsigned"],
+            # Claims the CURRENT key and fails it — the only signature state that accuses.
+            "invalid": len(sigs["invalid"]),
+            "invalid_ids": sigs["invalid"][:20],
+        },
+    }
 
 
 def workload_summary():

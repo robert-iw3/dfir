@@ -213,11 +213,31 @@ class Command(BaseCommand):
             run = make_run(ember, hostname, first + timedelta(hours=6), True)
 
             for ftype, target, verdict, conf, mitre, when in activity:
+                raw = {"observed_at": when.isoformat(), "campaign": "Ember Fox"}
+                # A beacon carries what analysis RECOVERED from it, not just that it was seen.
+                # The findings table shows type/target/verdict/ATT&CK; without these the
+                # detail panel has nothing to render and the recovered intelligence stays in
+                # the API where no analyst reaches it.
+                if ftype == "C2 Beacon":
+                    raw.update({
+                        "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                                      "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0 Safari/537.36",
+                        "mutex": "Global\\EmberFox-7f3a1c",
+                        "pipe": "\\\\.\\pipe\\ember-7f3a",
+                        "ja3": "51c64c77e60f3980eea90869b68c58a8",
+                        "registry_key": "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run\\EmberSync",
+                        "certificate": "CN=cdn-edge.emberfox.net, O=Ember CDN, C=US",
+                        "config_extracted": {
+                            "campaign_id": "EF-2026-014",
+                            "sleep": 60,
+                            "address": C2_DOMAIN,
+                            "port": 443,
+                        },
+                    })
                 Finding.objects.create(
                     run=run, finding_type=ftype, target=target, verdict=verdict,
                     confidence=conf, mitre=mitre, source="collector",
-                    subject_path=target,
-                    raw={"observed_at": when.isoformat(), "campaign": "Ember Fox"},
+                    subject_path=target, raw=raw,
                 )
 
             # The movement that reached this host, recorded with both endpoints so the

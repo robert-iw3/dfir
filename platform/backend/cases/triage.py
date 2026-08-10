@@ -18,7 +18,8 @@ from rest_framework.views import APIView
 from .audit import audit
 from .models import (Finding, FindingReclassification, IOC, MemoryAnalysisRun,
                      MemoryCapture)
-from .rbac import IsAnalystOrAdmin, role_of
+from .exportledger import record_export
+from .rbac import CanExport, IsAnalystOrAdmin, role_of
 
 VALID_VERDICTS = {
     "True Positive", "Likely True Positive", "Indeterminate",
@@ -252,10 +253,12 @@ class ReclassifyView(APIView):
 class FindingExportView(APIView):
     """Export findings as CSV or JSON, or the IOC set as a shareable bundle.
 
-    Export is a handoff, so it records who took what: the export itself is audited.
+    Export is a handoff, so it records who took what: every attempt reaches the export
+    ledger, completed or refused, and read access does not imply the right to take it.
     """
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, CanExport]
+    export_kind = "findings"
 
     def get(self, request):
         # Not "format": DRF reserves that query parameter for content negotiation and
@@ -285,12 +288,11 @@ class FindingExportView(APIView):
             "source": f.source,
         } for f in qs]
 
-        audit(getattr(request.user, "username", "?"), "finding.export",
-              role=role_of(request.user), method="GET", path=request.path,
-              object_type="Finding",
-              detail={"fmt": fmt, "rows": len(rows),
-                      "filters": {"investigation": investigation, "verdict": verdict,
-                                  "run": run}})
+        # `ioc` is a different kind of handoff from a findings dump — a bundle meant to be
+        # shared onward — so it is recorded as its own kind rather than as a format of one.
+        record_export(request, kind="ioc" if fmt == "ioc" else "findings", fmt=fmt,
+                      row_count=len(rows),
+                      filters={"investigation": investigation, "verdict": verdict, "run": run})
 
         if fmt == "ioc":
             iocs = IOC.objects.select_related("run__host")

@@ -20,6 +20,10 @@
     {
       "name": "reverse_engineer",
       "path": "/reverse_engineer"
+    },
+    {
+      "name": "export",
+      "path": "/export"
     }
   ],
   "clients": [
@@ -78,5 +82,5 @@
   "failureFactor": 5,
   "waitIncrementSeconds": 60,
   "maxFailureWaitSeconds": 900,
-  "passwordPolicy": "length(15) and upperCase(1) and lowerCase(1) and digits(1) and specialChars(1) and notUsername(undefined) and notEmail(undefined) and passwordHistory(5) and forceExpiredPasswordChange(60) and hashAlgorithm(pbkdf2-sha512) and hashIterations(210000)"
+  "passwordPolicy": "length(15) and upperCase(1) and lowerCase(1) and digits(1) and specialChars(1) and notUsername(undefined) and notEmail(undefined) and passwordHistory(5) and forceExpiredPasswordChange(60) and passwordBlacklist(dfir-platform.txt) and hashAlgorithm(pbkdf2-sha512) and hashIterations(210000)"
 }

@@ -15,6 +15,14 @@
 #
 #   ci/image-currency.sh          # report
 #   ci/image-currency.sh --strict # non-zero exit when anything has moved on (CI gate)
+#   ci/image-currency.sh --record # report, then write ci/image-currency.record
+#   ci/image-currency.sh --age    # fail if the record is older than the review interval
+#
+# SRG-APP-000456-WSR-000187 requires security-relevant updates within 30 days. Detecting drift
+# was never the gap — this script already did that. The gap was that nothing recorded WHEN the
+# review last happened, so "we check regularly" was unfalsifiable. `--record` writes the date
+# and the finding count; `--age` fails once that record passes REVIEW_DAYS, which is what turns
+# the cadence into something a UAT can assert rather than a claim in a document.
 #
 # Track precision is respected: a pin of `postgres:18` tracks the 18.x line and is current as
 # long as no 19 exists, while `coredns:1.13.1` names an exact build and is stale the moment
@@ -25,9 +33,34 @@ set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PLATFORM="$(cd "${HERE}/.." && pwd)"
-STRICT=0
-[[ "${1:-}" == "--strict" ]] && STRICT=1
+STRICT=0; RECORD=0
+case "${1:-}" in
+    --strict) STRICT=1 ;;
+    --record) RECORD=1 ;;
+esac
 FINDINGS=0
+
+# The interval the control names. Thirty days is the SRG's own ceiling, not a preference.
+REVIEW_DAYS="${IR_IMAGE_REVIEW_DAYS:-30}"
+RECORD_FILE="${HERE}/image-currency.record"
+
+# Asked BEFORE any registry call, so an unreachable registry cannot mask an overdue review —
+# the two failures are different and must not report the same way.
+if [[ "${1:-}" == "--age" ]]; then
+    if [[ ! -f "${RECORD_FILE}" ]]; then
+        printf '  \033[1;31mNO RECORD\033[0m image currency has never been reviewed — run ci/image-currency.sh --record\n'
+        exit 1
+    fi
+    last="$(awk -F'= *' '/^reviewed/ {print $2}' "${RECORD_FILE}" | tr -d '"')"
+    last_s="$(date -d "${last}" +%s 2>/dev/null)" || { printf '  \033[1;31mBAD RECORD\033[0m cannot read review date %s\n' "${last}"; exit 1; }
+    age=$(( ( $(date +%s) - last_s ) / 86400 ))
+    if (( age > REVIEW_DAYS )); then
+        printf '  \033[1;31mOVERDUE\033[0m  last reviewed %s (%dd ago, ceiling %dd)\n' "${last}" "${age}" "${REVIEW_DAYS}"
+        exit 1
+    fi
+    printf '  \033[1;32mCURRENT\033[0m  reviewed %s (%dd ago, ceiling %dd)\n' "${last}" "${age}" "${REVIEW_DAYS}"
+    exit 0
+fi
 
 say()  { printf '\n\033[1;36m== %s\033[0m\n' "$*"; }
 ok()   { printf '  \033[1;32mCURRENT\033[0m  %s\n' "$*"; }
@@ -150,6 +183,20 @@ for ref in "${PINS[@]}"; do
 done
 
 say "Image currency"
+
+# The record states what was found, not merely that a review happened. A review that found
+# five stale images and a review that found none are different events, and a record that
+# cannot tell them apart is a signature on an empty page.
+if (( RECORD )); then
+    {   printf '# Image currency review — SRG-APP-000456-WSR-000187.\n'
+        printf '# Written by ci/image-currency.sh --record. Checked by --age.\n'
+        printf 'reviewed = "%s"\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+        printf 'findings = %d\n' "${FINDINGS}"
+        printf 'interval_days = %d\n' "${REVIEW_DAYS}"
+    } > "${RECORD_FILE}"
+    printf '  \033[0;37mrecorded: %s (%d finding(s))\033[0m\n' "${RECORD_FILE#"${PLATFORM}/"}" "${FINDINGS}"
+fi
+
 if (( FINDINGS )); then
     printf '  \033[1;33m%d image(s) need attention\033[0m\n\n' "${FINDINGS}"
     (( STRICT )) && exit 1

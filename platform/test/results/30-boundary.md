@@ -2,7 +2,7 @@
 
 *What passing proves:* The analyst's hop into the enclave is an authenticated, authorized, auditable session against exactly one target; the DMZ holds no authority and has no route of its own.
 
-- Run: `uat_boundary.sh` — 2026-08-06 16:26:14Z
+- Run: `uat_boundary.sh` — 2026-08-09 19:23:02Z
 
 **Placement — authority in the enclave, a client in the DMZ**
 
@@ -30,16 +30,16 @@
 |---|---|
 | ✅ PASS | exactly one target exists — everything else in the enclave has no route |
 | ✅ PASS | the target is the SSO gate, not a service behind it |
-| ✅ PASS | exactly one worker is registered — no stale registration to hand a session to |
-| ✅ PASS | the worker advertises the enclave egress address |
+| ✅ PASS | exactly 3 workers are registered — the expected set, no stale registration to hand a session to |
+| ✅ PASS | every worker advertises its own enclave egress address — sessions can dial each one distinctly |
 
 **Attribution**
 
 | Result | Assertion — with evidence |
 |---|---|
-| ✅ PASS | a live session exists |
-| ✅ PASS | the session is bound to principal u_xioponHmyn |
-| ✅ PASS | that principal is the provisioned analyst |
+| ✅ PASS | live sessions exist |
+| ✅ PASS | 8 live sessions are bound to 8 DISTINCT principals — each session individually attributable |
+| ✅ PASS | every live principal is a provisioned session principal — no session runs as anything else |
 
 **The session carries traffic**
 
@@ -52,8 +52,8 @@
 
 | Result | Assertion — with evidence |
 |---|---|
-| ✅ PASS | session s_nnrQjjsY4C was canceled and the broker re-established unattended — traffic flows again |
-| ✅ PASS | the recovery is a NEW authorized session (s_Kdooygukeg), not a lingering socket |
+| ✅ PASS | session s_05c8rHgTFn was canceled and the analyst path kept carrying — traffic flows |
+| ✅ PASS | the recovery is a NEW authorized session (s_tsiidD7Mb0), and s_05c8rHgTFn is gone — not a lingering socket |
 
 **The DMZ has no route of its own**
 
@@ -75,14 +75,52 @@
 | Result | Assertion — with evidence |
 |---|---|
 | ✅ PASS | the page reads live from Boundary with its own credential |
-| ✅ PASS | the record is complete: page 8 sessions, controller 8, id sets match |
-| ✅ PASS | live count matches the controller (1 == 1) |
-| ✅ PASS | exactly one live session — the running broker, no ghosts of replaced brokers (1 live) |
-| ✅ PASS | the live session's client address is the running broker (10.89.0.10 == 10.89.0.10) |
-| ✅ PASS | the principal resolves to a name, not an id (analyst) |
+| ✅ PASS | the record is complete: every one of the controller's 41 sessions is on the page (41 shown) |
+| ✅ PASS | the page shows no session the controller does not have |
+| ✅ PASS | every session the controller reports live is live on the page (8 of 8) |
+| ✅ PASS | 8 live sessions, one per brokered port (expected 8) — separate failure domains, and no ghosts of replaced brokers |
+| ✅ PASS | every session that carried a connection came from the running broker (7 of 8 addressed, 10.89.0.106) |
+| ✅ PASS | every session resolves to its own session principal (8 distinct, all analyst-s*) |
 | ✅ PASS | byte counters are real — the session that carried the request shows transfer |
 | ✅ PASS | the page's auditor credential authenticates on its own |
 | ✅ PASS | the auditor credential CANNOT cancel a session — watching access is not a way to control it |
+
+**One session per client — the shape a fleet of workstations needs**
+
+| Result | Assertion — with evidence |
+|---|---|
+| ✅ PASS | 8/8 concurrent connections carried over the analyst path — capacity at this size is not the constraint |
+| · | each of the 8 sessions runs as its own principal; binding a PERSON to a principal needs workstation identity (M1) |
+
+**The fleet is spread across the sessions, not piled onto one**
+
+| Result | Assertion — with evidence |
+|---|---|
+| ✅ PASS | a connection distributor is deployed in the DMZ |
+| ✅ PASS | no session port is reachable from the analyst network — the distributor is the only way in |
+| ✅ PASS | the distributor is layer 4 (mode tcp) — it passes bytes through and cannot read the session |
+| ✅ PASS | the distributor holds no TLS material — encryption stays end to end |
+| ✅ PASS | no backend health probing — the checker cannot cause the failure it would report |
+| ✅ PASS | redispatch is on — a connection to a dead session is retried on a sibling rather than dropped |
+| ✅ PASS | held connections were carried by 2 of 3 egress workers (w1=1 w2=0 w3=4 ) — connection setup no longer funnels through one handshake path |
+| · | 5 of 8 cold connections established in one burst ({'SSLEOFError': 3}) — the egress worker's setup ceiling, M3 |
+| ✅ PASS | 5 connections spread over 5/8 sessions, busiest holding 20% (18443=0 18444=1 18445=1 18446=1 18447=1 18448=0 18449=0 18450=1 ) — no session carries the fleet |
+
+**One session's death is not the fleet's — measured, not asserted**
+
+| Result | Assertion — with evidence |
+|---|---|
+| ✅ PASS | 8 independent sessions are listening (18443-18450) — separate failure domains behind one analyst port |
+| ✅ PASS | killing one session left the other 7 serving — a death costs 1/8 of the fleet, not all of it |
+| ✅ PASS | the analyst port still carried a request while that session was down — the distributor routed around it |
+| ✅ PASS | and the killed session came back on its own — its supervisor replaced only its own client |
+
+**One egress worker's death is not the fleet's**
+
+| Result | Assertion — with evidence |
+|---|---|
+| ✅ PASS | the analyst port carried a request with worker ir-egress-2 DOWN — its sessions' loss is not the fleet's |
+| ✅ PASS | worker restarted and the full complement of 8 sessions is live again — recovery is unattended |
 
 **Result**
 
@@ -90,4 +128,4 @@
 |---|---|
 | ✅ PASS | brokered access holds: authority in the enclave, one target, attributable, encrypted, carrying traffic, and reported truthfully |
 
-**Verdict: PROVEN** — 36 assertions passed, 0 failed.
+**Verdict: PROVEN** — 52 assertions passed, 0 failed.

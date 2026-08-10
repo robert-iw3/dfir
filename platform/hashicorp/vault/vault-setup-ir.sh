@@ -52,12 +52,29 @@ init_status() {
   echo "$out" | python3 -c "import json,sys;print(str(json.load(sys.stdin)['$1']).lower())" 2>/dev/null || echo unknown
 }
 
+# The unseal material is read at EVERY start by the server itself, which runs unprivileged
+# (uid 65535). Root-owned 0600 means only `podman exec --user root` can read it, which makes
+# unsealing a deployment step rather than a property of the server coming back — and a Vault
+# restarted by anything other than a deploy then stays sealed, answering health checks and
+# serving nothing. Ownership moves to the account that needs it; the mode does not change, so
+# the key is still readable by exactly one identity.
+own_unseal_material() {
+  chmod 600 "$STATE/vault-init.json"
+  chown "$(id -u vault 2>/dev/null || echo 65535)":"$(id -g vault 2>/dev/null || echo 65535)" \
+    "$STATE/vault-init.json" 2>/dev/null || true
+}
+
 if [ "$(init_status initialized)" != "true" ]; then
   echo "==> initializing (${SHARES} share(s) / threshold ${THRESHOLD})"
   vault operator init -key-shares="${SHARES}" -key-threshold="${THRESHOLD}" \
     -format=json > "$STATE/vault-init.json"
-  chmod 600 "$STATE/vault-init.json"
+  own_unseal_material
 fi
+
+# Reconciled on EVERY run, not only at init. A Vault initialized before this ownership was
+# required would otherwise keep the old one for the life of the volume, and the defect it
+# causes — a restart that stays sealed — appears far from here and long afterwards.
+[ -s "$STATE/vault-init.json" ] && own_unseal_material
 
 # Unsealed here so provisioning can proceed; vault-unseal.sh does the same job on every restart.
 # Via the sys/unseal API so the key never appears on a command line: the CLI's only
@@ -408,10 +425,48 @@ vault write database/roles/keycloak \
 
 echo "==> KV v2: ir/config (non-DB app secrets)"
 vault secrets enable -path=ir kv-v2 2>/dev/null || echo "    kv already enabled"
+
+# GENERATED ONCE, THEN PRESERVED FOREVER.
+#
+# `vault kv put` replaces the whole secret, and this script runs on every deploy. Generating
+# defaults inline therefore MINTED NEW KEYS EVERY TIME:
+#
+#   audit_hmac_key    every existing audit row's signature stops verifying — the platform
+#                     reports its own tamper-evidence as BROKEN, and cannot tell a rotated
+#                     key from an actual forgery
+#   custody_hmac_key  every existing custody seal stops verifying — on a forensic platform
+#                     that is the evidentiary chain for material already collected
+#   django_secret_key every issued session and signed token is invalidated
+#
+# These are identity for data already at rest. A value that exists is kept; only a MISSING
+# one is created. Rotation is a deliberate act with a migration behind it, never a side
+# effect of redeploying — so an explicit IR_KV_* override still wins, and says so.
+kv_get() { vault kv get -field="$1" ir/config 2>/dev/null || true; }
+kv_keep() { # field  env-override  entropy-bytes
+    local field="$1" override="$2" bytes="$3"
+    local existing; existing="$(kv_get "${field}")"
+    if [ -n "${override}" ]; then
+        [ -n "${existing}" ] && [ "${override}" != "${existing}" ] \
+            && echo "    ${field}: REPLACED from IR_KV_* override — anything signed with the previous key stops verifying" >&2
+        printf '%s' "${override}"
+    elif [ -n "${existing}" ]; then
+        printf '%s' "${existing}"
+    else
+        echo "    ${field}: generated (first deploy for this Vault store)" >&2
+        python3 -c "import secrets,sys;print(secrets.token_urlsafe(int(sys.argv[1])))" "${bytes}"
+    fi
+}
+KV_DJANGO="$(kv_keep django_secret_key "${IR_KV_DJANGO_SECRET:-}" 50)"
+KV_AUDIT="$(kv_keep audit_hmac_key "${IR_KV_AUDIT_HMAC:-}" 32)"
+KV_CUSTODY="$(kv_keep custody_hmac_key "${IR_KV_CUSTODY_HMAC:-}" 32)"
+[ -n "${KV_DJANGO}" ] && [ -n "${KV_AUDIT}" ] && [ -n "${KV_CUSTODY}" ] || {
+    echo "    FAILED to resolve the KV signing keys — refusing to write a partial ir/config" >&2
+    exit 1
+}
 vault kv put ir/config \
-  django_secret_key="${IR_KV_DJANGO_SECRET:-$(python3 -c 'import secrets;print(secrets.token_urlsafe(50))')}" \
-  audit_hmac_key="${IR_KV_AUDIT_HMAC:-$(python3 -c 'import secrets;print(secrets.token_urlsafe(32))')}" \
-  custody_hmac_key="${IR_KV_CUSTODY_HMAC:-$(python3 -c 'import secrets;print(secrets.token_urlsafe(32))')}" \
+  django_secret_key="${KV_DJANGO}" \
+  audit_hmac_key="${KV_AUDIT}" \
+  custody_hmac_key="${KV_CUSTODY}" \
   minio_access="${S3_ACCESS_KEY:-ir_platform}" \
   minio_secret="${S3_SECRET_KEY:-ir_platform_secret}"
 
@@ -511,7 +566,7 @@ d.pop("root_token", None)
 d["root_token_revoked"] = True
 json.dump(d, open(p, "w"), indent=2)
 PY
-    chmod 600 "$STATE/vault-init.json"
+    own_unseal_material
     echo "    revoked; recover with 'vault operator generate-root' if ever needed"
   else
     echo "    WARNING: could not revoke the root token — it remains valid in $STATE" >&2

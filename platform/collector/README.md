@@ -59,7 +59,7 @@ the volume to be re-sent.
 Restrict egress at the runtime as well as by convention — the container should be able to
 reach the receiver and nothing else, whether by a dedicated network with a single route or
 by the host's own containment rules
-([`playbooks/linux/01_contain_host.sh`](../../playbooks/linux/01_contain_host.sh) drops all
+([`playbooks/linux/01_contain_host.sh`](../../toolkit/playbooks/linux/01_contain_host.sh) drops all
 traffic except management access).
 
 ## What is captured for symbols

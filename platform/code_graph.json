@@ -15,6 +15,7 @@
   "captures/<int:capture_id>/purge/": "CapturePurgeView",
   "captures/<int:capture_id>/reanalyze/": "ReAnalyzeView",
   "component-health/report/": "ComponentHealthReportView",
+  "exports/": "ExportLedgerView",
   "ingest/": "IngestView",
   "rescans/": "RescanRequestView",
   "tasks/": "TaskStatusView",
@@ -28,6 +29,16 @@
   },
   {
    "from": "enclave/boundary-egress",
+   "kind": "depends_on",
+   "to": "enclave/boundary"
+  },
+  {
+   "from": "enclave/boundary-egress-2",
+   "kind": "depends_on",
+   "to": "enclave/boundary"
+  },
+  {
+   "from": "enclave/boundary-egress-3",
    "kind": "depends_on",
    "to": "enclave/boundary"
   },
@@ -247,6 +258,16 @@
    "to": "dmz/bastion"
   },
   {
+   "from": "dmz/distributor",
+   "kind": "shares_netns",
+   "to": "dmz/bastion"
+  },
+  {
+   "from": "dmz/distributor",
+   "kind": "depends_on",
+   "to": "dmz/bastion"
+  },
+  {
    "from": "workstation/browser",
    "kind": "shares_netns",
    "to": "workstation/tailnet"
@@ -344,6 +365,11 @@
   {
    "from": "deploy/deploy.sh",
    "kind": "drives",
+   "to": "dmz/distributor"
+  },
+  {
+   "from": "deploy/deploy.sh",
+   "kind": "drives",
    "to": "dmz/headscale"
   },
   {
@@ -370,6 +396,16 @@
    "from": "deploy/deploy.sh",
    "kind": "drives",
    "to": "enclave/boundary-egress"
+  },
+  {
+   "from": "deploy/deploy.sh",
+   "kind": "drives",
+   "to": "enclave/boundary-egress-2"
+  },
+  {
+   "from": "deploy/deploy.sh",
+   "kind": "drives",
+   "to": "enclave/boundary-egress-3"
   },
   {
    "from": "deploy/deploy.sh",
@@ -410,6 +446,11 @@
    "from": "deploy/deploy.sh",
    "kind": "drives",
    "to": "enclave/minio"
+  },
+  {
+   "from": "deploy/deploy.sh",
+   "kind": "drives",
+   "to": "enclave/ntp"
   },
   {
    "from": "deploy/deploy.sh",
@@ -594,6 +635,11 @@
   {
    "from": "troubleshooting/diagnose.sh",
    "kind": "drives",
+   "to": "dmz/distributor"
+  },
+  {
+   "from": "troubleshooting/diagnose.sh",
+   "kind": "drives",
    "to": "enclave/boundary"
   },
   {
@@ -752,6 +798,16 @@
    "to": "enclave/backend"
   },
   {
+   "from": "test/uat_audit.sh",
+   "kind": "runs",
+   "to": "test/lib/report.sh"
+  },
+  {
+   "from": "test/uat_audit.sh",
+   "kind": "drives",
+   "to": "enclave/backend"
+  },
+  {
    "from": "test/uat_baseline.sh",
    "kind": "runs",
    "to": "test/lib/report.sh"
@@ -814,6 +870,11 @@
   {
    "from": "test/uat_boundary.sh",
    "kind": "drives",
+   "to": "dmz/distributor"
+  },
+  {
+   "from": "test/uat_boundary.sh",
+   "kind": "drives",
    "to": "enclave/backend"
   },
   {
@@ -830,6 +891,11 @@
    "from": "test/uat_boundary.sh",
    "kind": "drives",
    "to": "enclave/boundary-egress"
+  },
+  {
+   "from": "test/uat_boundary.sh",
+   "kind": "drives",
+   "to": "enclave/boundary-egress-2"
   },
   {
    "from": "test/uat_consul.sh",
@@ -1152,6 +1218,46 @@
    "to": "enclave/worker"
   },
   {
+   "from": "test/uat_load.sh",
+   "kind": "runs",
+   "to": "hashicorp/keycloak/provision-demo-users.sh"
+  },
+  {
+   "from": "test/uat_load.sh",
+   "kind": "runs",
+   "to": "test/lib/report.sh"
+  },
+  {
+   "from": "test/uat_load.sh",
+   "kind": "drives",
+   "to": "dmz/broker"
+  },
+  {
+   "from": "test/uat_load.sh",
+   "kind": "drives",
+   "to": "enclave/backend"
+  },
+  {
+   "from": "test/uat_load.sh",
+   "kind": "drives",
+   "to": "enclave/db"
+  },
+  {
+   "from": "test/uat_load.sh",
+   "kind": "drives",
+   "to": "enclave/keycloak"
+  },
+  {
+   "from": "test/uat_load.sh",
+   "kind": "drives",
+   "to": "enclave/oauth2-proxy"
+  },
+  {
+   "from": "test/uat_load.sh",
+   "kind": "drives",
+   "to": "enclave/redis"
+  },
+  {
    "from": "test/uat_memory_analysis.sh",
    "kind": "drives",
    "to": "enclave/backend"
@@ -1219,6 +1325,26 @@
   {
    "from": "test/uat_srg_webtier.sh",
    "kind": "runs",
+   "to": "ci/clock-sync-check.sh"
+  },
+  {
+   "from": "test/uat_srg_webtier.sh",
+   "kind": "runs",
+   "to": "ci/image-currency.sh"
+  },
+  {
+   "from": "test/uat_srg_webtier.sh",
+   "kind": "runs",
+   "to": "ci/password-blacklist-check.sh"
+  },
+  {
+   "from": "test/uat_srg_webtier.sh",
+   "kind": "runs",
+   "to": "ci/pin-base-images.sh"
+  },
+  {
+   "from": "test/uat_srg_webtier.sh",
+   "kind": "runs",
    "to": "test/lib/report.sh"
   },
   {
@@ -1250,6 +1376,11 @@
    "from": "test/uat_srg_webtier.sh",
    "kind": "drives",
    "to": "enclave/log-shipper"
+  },
+  {
+   "from": "test/uat_srg_webtier.sh",
+   "kind": "drives",
+   "to": "enclave/ntp"
   },
   {
    "from": "test/uat_srg_webtier.sh",
@@ -1299,6 +1430,11 @@
   {
    "from": "test/uat_vault.sh",
    "kind": "runs",
+   "to": "deploy/deploy.sh"
+  },
+  {
+   "from": "test/uat_vault.sh",
+   "kind": "runs",
    "to": "hashicorp/vault/rotate-app-creds.sh"
   },
   {
@@ -1329,7 +1465,32 @@
   {
    "from": "test/uat_vault.sh",
    "kind": "drives",
+   "to": "enclave/vault-setup"
+  },
+  {
+   "from": "test/uat_vault.sh",
+   "kind": "drives",
+   "to": "enclave/vault-sidecar"
+  },
+  {
+   "from": "test/uat_vault.sh",
+   "kind": "drives",
    "to": "enclave/worker"
+  },
+  {
+   "from": "ci/clock-sync-check.sh",
+   "kind": "drives",
+   "to": "enclave/backend"
+  },
+  {
+   "from": "ci/clock-sync-check.sh",
+   "kind": "drives",
+   "to": "enclave/ntp"
+  },
+  {
+   "from": "test/uat_audit.sh",
+   "kind": "proves",
+   "to": "enclave/backend"
   },
   {
    "from": "test/uat_baseline.sh",
@@ -1384,6 +1545,11 @@
   {
    "from": "test/uat_boundary.sh",
    "kind": "proves",
+   "to": "dmz/distributor"
+  },
+  {
+   "from": "test/uat_boundary.sh",
+   "kind": "proves",
    "to": "enclave/backend"
   },
   {
@@ -1400,6 +1566,11 @@
    "from": "test/uat_boundary.sh",
    "kind": "proves",
    "to": "enclave/boundary-egress"
+  },
+  {
+   "from": "test/uat_boundary.sh",
+   "kind": "proves",
+   "to": "enclave/boundary-egress-2"
   },
   {
    "from": "test/uat_consul.sh",
@@ -1612,6 +1783,36 @@
    "to": "enclave/worker"
   },
   {
+   "from": "test/uat_load.sh",
+   "kind": "proves",
+   "to": "dmz/broker"
+  },
+  {
+   "from": "test/uat_load.sh",
+   "kind": "proves",
+   "to": "enclave/backend"
+  },
+  {
+   "from": "test/uat_load.sh",
+   "kind": "proves",
+   "to": "enclave/db"
+  },
+  {
+   "from": "test/uat_load.sh",
+   "kind": "proves",
+   "to": "enclave/keycloak"
+  },
+  {
+   "from": "test/uat_load.sh",
+   "kind": "proves",
+   "to": "enclave/oauth2-proxy"
+  },
+  {
+   "from": "test/uat_load.sh",
+   "kind": "proves",
+   "to": "enclave/redis"
+  },
+  {
    "from": "test/uat_memory_analysis.sh",
    "kind": "proves",
    "to": "enclave/backend"
@@ -1689,6 +1890,11 @@
   {
    "from": "test/uat_srg_webtier.sh",
    "kind": "proves",
+   "to": "enclave/ntp"
+  },
+  {
+   "from": "test/uat_srg_webtier.sh",
+   "kind": "proves",
    "to": "enclave/oauth2-proxy"
   },
   {
@@ -1745,6 +1951,16 @@
    "from": "test/uat_vault.sh",
    "kind": "proves",
    "to": "enclave/vault-agent"
+  },
+  {
+   "from": "test/uat_vault.sh",
+   "kind": "proves",
+   "to": "enclave/vault-setup"
+  },
+  {
+   "from": "test/uat_vault.sh",
+   "kind": "proves",
+   "to": "enclave/vault-sidecar"
   },
   {
    "from": "test/uat_vault.sh",
@@ -1829,18 +2045,28 @@
   }
  },
  "scripts": {
+  "ci/clock-sync-check.sh": {
+   "drives": [
+    "enclave/backend",
+    "enclave/ntp"
+   ],
+   "runs": []
+  },
   "deploy/deploy.sh": {
    "drives": [
     "agent/remediation-agent",
     "dmz/bastion",
     "dmz/broker",
     "dmz/coredns",
+    "dmz/distributor",
     "dmz/headscale",
     "dmz/receiver",
     "enclave/backend",
     "enclave/boundary",
     "enclave/boundary-db",
     "enclave/boundary-egress",
+    "enclave/boundary-egress-2",
+    "enclave/boundary-egress-3",
     "enclave/consul",
     "enclave/coredns",
     "enclave/db",
@@ -1849,6 +2075,7 @@
     "enclave/keycloak",
     "enclave/log-shipper",
     "enclave/minio",
+    "enclave/ntp",
     "enclave/oauth2-proxy",
     "enclave/oauth2-proxy-sidecar",
     "enclave/puller",
@@ -1970,6 +2197,14 @@
    ],
    "runs": []
   },
+  "test/uat_audit.sh": {
+   "drives": [
+    "enclave/backend"
+   ],
+   "runs": [
+    "test/lib/report.sh"
+   ]
+  },
   "test/uat_baseline.sh": {
    "drives": [
     "dmz/receiver",
@@ -1989,10 +2224,12 @@
    "drives": [
     "dmz/bastion",
     "dmz/broker",
+    "dmz/distributor",
     "enclave/backend",
     "enclave/boundary",
     "enclave/boundary-db",
-    "enclave/boundary-egress"
+    "enclave/boundary-egress",
+    "enclave/boundary-egress-2"
    ],
    "runs": [
     "test/lib/report.sh"
@@ -2113,6 +2350,20 @@
     "test/lib/report.sh"
    ]
   },
+  "test/uat_load.sh": {
+   "drives": [
+    "dmz/broker",
+    "enclave/backend",
+    "enclave/db",
+    "enclave/keycloak",
+    "enclave/oauth2-proxy",
+    "enclave/redis"
+   ],
+   "runs": [
+    "hashicorp/keycloak/provision-demo-users.sh",
+    "test/lib/report.sh"
+   ]
+  },
   "test/uat_memory_analysis.sh": {
    "drives": [
     "enclave/backend",
@@ -2162,11 +2413,16 @@
     "enclave/frontend",
     "enclave/keycloak",
     "enclave/log-shipper",
+    "enclave/ntp",
     "enclave/oauth2-proxy",
     "enclave/redis",
     "enclave/traefik"
    ],
    "runs": [
+    "ci/clock-sync-check.sh",
+    "ci/image-currency.sh",
+    "ci/password-blacklist-check.sh",
+    "ci/pin-base-images.sh",
     "test/lib/report.sh"
    ]
   },
@@ -2193,9 +2449,12 @@
     "enclave/db",
     "enclave/vault",
     "enclave/vault-agent",
+    "enclave/vault-setup",
+    "enclave/vault-sidecar",
     "enclave/worker"
    ],
    "runs": [
+    "deploy/deploy.sh",
     "hashicorp/vault/rotate-app-creds.sh",
     "test/lib/report.sh"
    ]
@@ -2204,6 +2463,7 @@
    "drives": [
     "dmz/bastion",
     "dmz/broker",
+    "dmz/distributor",
     "enclave/boundary",
     "enclave/boundary-egress",
     "workstation/tailnet"
@@ -2259,6 +2519,14 @@
      "edge"
     ],
     "shares_netns_of": null
+   },
+   "distributor": {
+    "depends_on": [
+     "bastion"
+    ],
+    "image": "docker.io/library/haproxy:3.4.3-alpine",
+    "networks": [],
+    "shares_netns_of": "bastion"
    },
    "headscale": {
     "depends_on": [],
@@ -2322,6 +2590,28 @@
     "shares_netns_of": null
    },
    "boundary-egress": {
+    "depends_on": [
+     "boundary"
+    ],
+    "image": "docker.io/hashicorp/boundary:0.21.3",
+    "networks": [
+     "internal",
+     "dmzlink"
+    ],
+    "shares_netns_of": null
+   },
+   "boundary-egress-2": {
+    "depends_on": [
+     "boundary"
+    ],
+    "image": "docker.io/hashicorp/boundary:0.21.3",
+    "networks": [
+     "internal",
+     "dmzlink"
+    ],
+    "shares_netns_of": null
+   },
+   "boundary-egress-3": {
     "depends_on": [
      "boundary"
     ],
@@ -2448,6 +2738,15 @@
     "image": "localhost/ir-consul-sidecar:latest",
     "networks": [],
     "shares_netns_of": "minio"
+   },
+   "ntp": {
+    "depends_on": [],
+    "image": "localhost/ir-ntp:latest",
+    "networks": [
+     "internal",
+     "dmzlink"
+    ],
+    "shares_netns_of": null
    },
    "oauth2-proxy": {
     "depends_on": [
@@ -2606,6 +2905,9 @@
   }
  },
  "uat_coverage": {
+  "uat_audit.sh": [
+   "enclave/backend"
+  ],
   "uat_baseline.sh": [
    "dmz/receiver",
    "enclave/backend",
@@ -2619,10 +2921,12 @@
   "uat_boundary.sh": [
    "dmz/bastion",
    "dmz/broker",
+   "dmz/distributor",
    "enclave/backend",
    "enclave/boundary",
    "enclave/boundary-db",
-   "enclave/boundary-egress"
+   "enclave/boundary-egress",
+   "enclave/boundary-egress-2"
   ],
   "uat_consul.sh": [
    "enclave/backend",
@@ -2681,6 +2985,14 @@
    "enclave/vault-agent",
    "enclave/worker"
   ],
+  "uat_load.sh": [
+   "dmz/broker",
+   "enclave/backend",
+   "enclave/db",
+   "enclave/keycloak",
+   "enclave/oauth2-proxy",
+   "enclave/redis"
+  ],
   "uat_memory_analysis.sh": [
    "enclave/backend",
    "enclave/worker"
@@ -2706,6 +3018,7 @@
    "enclave/frontend",
    "enclave/keycloak",
    "enclave/log-shipper",
+   "enclave/ntp",
    "enclave/oauth2-proxy",
    "enclave/redis",
    "enclave/traefik"
@@ -2724,6 +3037,8 @@
    "enclave/db",
    "enclave/vault",
    "enclave/vault-agent",
+   "enclave/vault-setup",
+   "enclave/vault-sidecar",
    "enclave/worker"
   ]
  }

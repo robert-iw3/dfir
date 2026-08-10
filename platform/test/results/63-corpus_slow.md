@@ -2,7 +2,7 @@
 
 *What passing proves:* A campaign that dwells for 238 days correlates as one, with four members carrying no movement record and every indicator rotated away — while two unrelated endpoints running the same unsanctioned tool 190 days apart stay separate, and the host whose delivery evidence aged out reports that it could not be established rather than that nothing was found.
 
-- Run: `uat_corpus_slow.sh` — 2026-08-06 16:57:25Z
+- Run: `uat_corpus_slow.sh` — 2026-08-09 02:18:58Z
 
 **Preconditions**
 

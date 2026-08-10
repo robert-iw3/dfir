@@ -157,3 +157,19 @@ staging area is too small.
 **MinIO and the worker staging volume may share a disk.** Object transfers use limited
 concurrency for that reason; `IR_S3_CONCURRENCY` raises it when the object store is on its
 own hardware.
+
+---
+
+## Adding an analyst workstation
+
+Each workstation is its own tailnet node. Two sharing a node name are one node to the control
+plane, and the tunnel then works only for whichever registered last.
+
+1. Add its id to `IR_WS_IDS` in `deploy/.env`.
+2. `./deploy/deploy.sh dmz` — mints that workstation's own pre-auth key.
+3. `./deploy/deploy.sh workstation <id>` — its own compose project, containers and tailnet
+   state volume, all named from the id.
+
+Revoking one workstation's key does not unenroll the others. `test/uat_tailnet.sh` asserts that
+every configured workstation is a distinct node with its own machine key, address and state
+volume, and that each reaches the platform through its own tunnel.

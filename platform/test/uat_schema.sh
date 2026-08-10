@@ -483,6 +483,133 @@ else
     printf '%s\n' "${TRACE}" >&2
 fi
 
+# ============================================================ audit chain under concurrency
+say "The audit chain stays linear when writers collide"
+
+# The chain is the platform's tamper-evidence, and ordinary concurrent work could break it:
+# `select_for_update()` on the last row cannot lock a row that does not exist yet, so two
+# appenders read the same predecessor and both chain from it. A load test's concurrent
+# provisioning did exactly that and forked the ledger at row 2024.
+#
+# Asserted by RACING it. The defect is invisible to a sequential test, which is why it
+# survived every previous run of this suite.
+RACE="$(${RUNTIME} exec -i "${BE}" python3 - <<'PY' 2>&1 | tail -6
+import os, django
+os.environ.setdefault("DJANGO_SETTINGS_MODULE", "ir_platform.settings"); django.setup()
+from concurrent.futures import ThreadPoolExecutor
+from django.db import connections
+from cases.audit import audit, verify_audit_detail
+from cases.models import AuditLog
+
+N = 24
+def one(i):
+    try:
+        audit("uat-race", "uat.chain.race", role="admin", method="POST",
+              path="/uat/race", object_id=str(i), detail={"i": i})
+    finally:
+        connections.close_all()
+
+before_ok, before_broken, _ = verify_audit_detail()
+with ThreadPoolExecutor(max_workers=N) as ex:
+    list(ex.map(one, range(N)))
+written = AuditLog.objects.filter(action="uat.chain.race").count()
+ok, broken, _ = verify_audit_detail()
+prevs = list(AuditLog.objects.filter(action="uat.chain.race")
+             .values_list("prev_hash", flat=True))
+print(f"WRITTEN {written}/{N}")
+print(f"DISTINCT_PREV {len(set(prevs))}/{len(prevs)}")
+print(f"CHAIN_AFTER {'ok' if ok else 'broken@' + str(broken)}")
+print(f"CHAIN_BEFORE {'ok' if before_ok else 'broken@' + str(before_broken)}")
+AuditLog.objects.filter(action="uat.chain.race").delete()
+PY
+)"
+W="$(sed -n 's#^WRITTEN \([0-9]*\)/.*#\1#p' <<<"${RACE}")"
+read -r D_UNIQ D_TOT <<<"$(sed -n 's#^DISTINCT_PREV \([0-9]*\)/\([0-9]*\)#\1 \2#p' <<<"${RACE}")"
+[[ "${W:-0}" -eq 24 ]] \
+    && ok "24 concurrent appenders all wrote (${W}/24) — none lost to lock contention" \
+    || bad "only ${W:-0}/24 concurrent audit writes landed"
+[[ "${D_UNIQ:-0}" -eq "${D_TOT:-1}" && "${D_TOT:-0}" -gt 0 ]] \
+    && ok "every racing row chained from a DIFFERENT predecessor (${D_UNIQ}/${D_TOT} distinct) — the appenders serialized" \
+    || bad "${D_UNIQ:-0} distinct predecessors across ${D_TOT:-0} racing rows — writers collided and the chain forked"
+# Compared BEFORE against AFTER, not against perfection. This ledger carries a historical
+# break from the very race being fixed (rows 2023/2024, written before the lock existed), and
+# an absolute assertion would fail forever on damage already done while saying nothing about
+# whether the appenders still collide. The question is whether the race makes it WORSE.
+C_BEFORE="$(sed -n 's/^CHAIN_BEFORE //p' <<<"${RACE}")"
+C_AFTER="$(sed -n 's/^CHAIN_AFTER //p' <<<"${RACE}")"
+[[ -n "${C_AFTER}" && "${C_AFTER}" == "${C_BEFORE}" ]] \
+    && ok "24 simultaneous appends left the chain exactly as they found it (${C_AFTER}) — concurrency adds no break" \
+    || bad "concurrent appends CHANGED the chain verdict: ${C_BEFORE:-?} -> ${C_AFTER:-?}"
+
+# ============================================================ checkpoints cannot hide tampering
+say "An acknowledged discontinuity is not a way to clear a real one"
+
+# A checkpoint lets a KNOWN historical break be declared rather than re-chained. That is only
+# safe if it cannot also clear a break nobody declared, and cannot survive the row it covers
+# being edited afterwards. Both run inside a transaction that is rolled back, so the ledger is
+# unchanged either way — asserted at the end.
+CP="$(${RUNTIME} exec -i -w /app ir-enclave_backend_1 python - <<'PYCP' 2>&1
+import os, django
+os.environ.setdefault("DJANGO_SETTINGS_MODULE", "ir_platform.settings")
+django.setup()
+from django.db import transaction
+from cases import audit as A
+from cases.models import AuditCheckpoint, AuditLog
+
+base_ok, base_bad, base_sigs = A.verify_audit_detail()
+print(f"BASE {base_ok} {len(base_sigs.get('discontinuities', []))}")
+
+# 1. Edit a row the checkpoints do NOT cover. The chain must break.
+with transaction.atomic():
+    row = AuditLog.objects.order_by("-id").first()
+    row.detail = dict(row.detail or {}, uat_tamper=True)
+    row.save(update_fields=["detail"])
+    ok, bad, _ = A.verify_audit_detail()
+    print(f"TAMPER {ok} {bad}")
+    transaction.set_rollback(True)
+
+# 2. A checkpoint whose hashes do not match the gap must NOT clear it.
+with transaction.atomic():
+    row = AuditLog.objects.order_by("-id").first()
+    row.detail = dict(row.detail or {}, uat_tamper=True)
+    row.save(update_fields=["detail"])
+    AuditCheckpoint.objects.create(
+        at_entry_id=row.id, observed_prev_hash="0" * 64, declared_prev_hash="0" * 64,
+        reason="uat forged acknowledgement", recorded_by="uat",
+        signature="", sig_key_id=A._key_id())
+    ok, bad, _ = A.verify_audit_detail()
+    print(f"FORGED {ok} {bad}")
+    transaction.set_rollback(True)
+
+after_ok, _, after_sigs = A.verify_audit_detail()
+print(f"AFTER {after_ok} {len(after_sigs.get('discontinuities', []))}")
+PYCP
+)"
+read -r B_OK B_N <<<"$(sed -n 's/^BASE //p' <<<"${CP}")"
+read -r T_OK T_AT <<<"$(sed -n 's/^TAMPER //p' <<<"${CP}")"
+read -r F_OK F_AT <<<"$(sed -n 's/^FORGED //p' <<<"${CP}")"
+read -r A_OK A_N <<<"$(sed -n 's/^AFTER //p' <<<"${CP}")"
+
+if [[ -z "${B_OK}" || -z "${T_OK}" || -z "${F_OK}" || -z "${A_OK}" ]]; then
+    # A missing verdict is not a failed one. Reporting each absent line as "the platform is
+    # broken" hides that the probe stopped, and the reason is in its output.
+    bad "the checkpoint probe stopped part-way (base=${B_OK:-none} tamper=${T_OK:-none} forged=${F_OK:-none} after=${A_OK:-none}) — a test defect, not a platform verdict"
+    while IFS= read -r l; do [[ -n "${l}" ]] && info "${l}"; done < <(tail -6 <<<"${CP}")
+else
+    [[ "${B_OK}" == "True" ]] \
+        && ok "the chain verifies with ${B_N} acknowledged discontinuit(ies) and no unexplained break" \
+        || bad "the chain has an UNEXPLAINED break — a checkpoint covers only what was declared"
+    [[ "${T_OK}" == "False" ]] \
+        && ok "editing a row still breaks the chain (detected at entry ${T_AT}) — checkpoints do not blanket-forgive" \
+        || bad "a tampered row verified clean — the chain no longer detects tampering"
+    [[ "${F_OK}" == "False" ]] \
+        && ok "a checkpoint naming the wrong hashes did NOT clear the break (still ${F_AT}) — an acknowledgement must match its gap" \
+        || bad "a forged checkpoint cleared a real break — anyone able to write the table could hide tampering"
+    [[ "${A_OK}" == "True" && "${A_N}" == "${B_N}" ]] \
+        && ok "the ledger is unchanged by this test (${A_N} discontinuities, same as before)" \
+        || bad "this test altered the ledger: ${B_N} -> ${A_N} discontinuities"
+fi
+
 say "Result"
 if [[ "${FAILED}" == "0" ]]; then
     ok "the schema enforces its own invariants — the application no longer has to be careful"

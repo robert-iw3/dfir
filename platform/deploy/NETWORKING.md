@@ -17,7 +17,7 @@ flow isn't listed here, it is denied — there is no implicit any-any anywhere.
 |---:|---|---|---|
 | 10 | `IR-MGMT` | out-of-band management: switch/router/firewall mgmt, IPMI, jump access for admins | highest — never routable from any other VLAN |
 | 20 | `IR-ENCLAVE` | PostgreSQL, MinIO, Redis, API, **analysis sandbox**, Keycloak, Vault, Consul, ingest **puller**, SSO ingress | high — the system of record |
-| 30 | `IR-DMZ` | ir-ingest **receiver**, bastion broker, headscale, CoreDNS | low — untrusted parties touch this |
+| 30 | `IR-DMZ` | ir-ingest **receiver**, bastion broker + connection distributor, headscale, CoreDNS | low — untrusted parties touch this |
 | 40 | `IR-ANALYST` | analyst workstations (kiosk browser) | low |
 | 50 | `IR-COLLECT` | *transit only* — where endpoints shipping evidence appear (often an existing corporate/field VLAN, not one you own) | untrusted |
 
@@ -86,7 +86,11 @@ Read this next to the architecture diagram; each row is a claim the application 
 | # | Source | Destination | Port | Purpose | Notes |
 |---|---|---|---|---|---|
 | 1 | `IR-COLLECT` (endpoints) | DMZ **receiver** | 8090/tcp (mTLS) | ship sealed evidence | **Only** flow from endpoint space. Rate-limit; cap session duration. |
-| 2 | `IR-ANALYST` | DMZ **broker** | 8443/tcp | analyst reaches the SSO app | Only the broker port. |
+| 2 | `IR-ANALYST` | DMZ **distributor** | 8443/tcp | analyst reaches the SSO app | Only this port. The Boundary sessions behind it bind loopback and are unreachable from any network. |
+
+Each workstation is its own tailnet node: `IR_WS_ID` names it, and `IR_WS_IDS` lists every
+workstation the deployment issues an identity to. Two sharing a name are ONE node to the
+control plane, and the tunnel then works only for whichever registered last.
 | 3 | `IR-ANALYST` | DMZ **CoreDNS** | 53/udp+tcp | resolve the one platform name | **No other DNS destination permitted from VLAN 40** (see §5). |
 | 4 | `IR-ANALYST` | DMZ **headscale** | 8080/tcp, 3478/udp | tailnet control plane + DERP | Enrollment only. |
 | 5 | **ENCLAVE puller** | DMZ **receiver** | 8090/tcp | **enclave pulls** verified evidence | Direction is the whole point: *enclave → DMZ*, established/related back only. |

@@ -2,7 +2,7 @@
 
 *What passing proves:* The identity store is a separate database the application is refused the CONNECTION to; both sides run on Vault leases with no static secret in any environment; accounts survive a Keycloak recreate through the deploy path; the realm file is enforced on existing realms; the database hop rides the mesh.
 
-- Run: `uat_keycloak_db.sh` — 2026-08-06 16:27:17Z
+- Run: `uat_keycloak_db.sh` — 2026-08-09 01:45:38Z
 
 **Preconditions**
 
@@ -19,7 +19,7 @@
 
 | Result | Assertion — with evidence |
 |---|---|
-| ✅ PASS | read the application's rendered credential (v-approle-ir-platf-LqBg5XD7ALwaDGARquWP-1786033607) |
+| ✅ PASS | read the application's rendered credential (v-approle-ir-platf-zWTrCcUJ6VhIw9nvFV3j-1786239902) |
 | ✅ PASS | the credential is Vault-issued (username shape v-…) |
 | ✅ PASS | control: that credential DOES open the evidence database over TCP |
 
@@ -58,7 +58,7 @@
 
 | Result | Assertion — with evidence |
 |---|---|
-| ✅ PASS | Keycloak's rendered credential is Vault-issued (v-approle-keycloak-yoyU5eQPetFDny0YXNtY-1786033162) |
+| ✅ PASS | Keycloak's rendered credential is Vault-issued (v-approle-keycloak-pfn1txWaejUFu379rMdA-1786238927) |
 | ✅ PASS | that user EXPIRES (VALID UNTIL set) — it is a lease |
 | ✅ PASS | the leased user acts as kc_app — objects survive rotation |
 | ✅ PASS | Keycloak is CONNECTED to its store with that lease (2 connection(s)) |

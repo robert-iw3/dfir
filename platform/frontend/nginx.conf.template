@@ -110,6 +110,14 @@ server {
         proxy_set_header X-Auth-Request-Email $http_x_auth_request_email;
         proxy_set_header X-Auth-Request-Groups $http_x_auth_request_groups;
         proxy_set_header X-Auth-Request-Preferred-Username $http_x_auth_request_preferred_username;
+        # Carries the OIDC session id the sign-on record is keyed by. Forwarded for
+        # correlation only — authorization is decided by the identity headers above.
+        #
+        # `--pass-access-token` sends it upstream as X-Forwarded-Access-Token. The
+        # X-Auth-Request-* form is what `--set-xauthrequest` puts on the RESPONSE for nginx
+        # auth_request mode, and never arrives here; it is accepted as a fallback only.
+        proxy_set_header X-Forwarded-Access-Token $http_x_forwarded_access_token;
+        proxy_set_header X-Auth-Request-Access-Token $http_x_auth_request_access_token;
         client_max_body_size 50m;
     }
     location /admin/ {

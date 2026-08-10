@@ -460,11 +460,13 @@ ref="$(grep -o 'refresh:after [^ ]*' <<<"${GLOG}" | awk '{print $2}')"
 # since every retry resends the same header. Asserted as a BOUND at the gate, because the
 # alternative fix (a bigger header buffer) enlarges per-connection memory to absorb unbounded
 # growth, and every analyst shares one source address through the broker.
-CSRF_LIMIT="$(${RUNTIME} inspect "${GATE}" --format '{{range .Config.Cmd}}{{println .}}{{end}}' 2>/dev/null \
-    | grep -c -- '--cookie-csrf-per-request-limit')"
-[[ "${CSRF_LIMIT:-0}" -ge 1 ]] \
-    && ok "the SSO gate CAPS per-request CSRF cookies — accumulation cannot grow the header without bound" \
-    || bad "per-request CSRF cookies are uncapped — the header grows until the analyst is locked out"
+GATE_CMD="$(${RUNTIME} inspect "${GATE}" --format '{{range .Config.Cmd}}{{println .}}{{end}}' 2>/dev/null)"
+CSRF_LIMIT="$(sed -n 's/^--cookie-csrf-per-request-limit=//p' <<<"${GATE_CMD}")"
+# The VALUE, not the flag: a limit is a number, and a check that only asks whether the flag
+# was passed agrees with any number at all — including one large enough to be no bound.
+[[ -n "${CSRF_LIMIT}" && "${CSRF_LIMIT}" -ge 1 && "${CSRF_LIMIT}" -le 10 ]] \
+    && ok "the SSO gate caps per-request CSRF cookies at ${CSRF_LIMIT} — accumulation cannot grow the header without bound" \
+    || bad "per-request CSRF cookies are not bounded to a small number (limit='${CSRF_LIMIT:-unset}') — the header grows until the analyst is locked out"
 
 # And the application server's own header capacity stays near its default rather than being
 # widened to hide that: a buffer sized for unbounded growth is not a bound.
@@ -476,11 +478,10 @@ grep -qE '4 16k' <<<"${HDRBUF}" \
 
 # Server-side session management: the session must live in the store, not in the client's
 # cookie. Proven by the store HOLDING one — a cookie-store deployment writes nothing here.
-# Captured, then matched. Piped into `grep -q` this control CANNOT FAIL, measured: grep exits
-# on the first match, `podman logs` is still writing 33KB and takes SIGPIPE, and under
-# `set -o pipefail` the pipeline reports 141. The `&&` branch never runs, so a gate that DID
-# log session-store errors is recorded as having reached its session store. Both the healthy
-# and the broken case took the `||` branch — the control only ever agreed with itself.
+# Captured, then matched. Piped into `grep -q` this control cannot fail: grep exits on the
+# first match, `podman logs` takes SIGPIPE while still writing, and under `set -o pipefail`
+# the pipeline reports 141. Both the healthy and the broken case then take the `||` branch,
+# so the control only ever agrees with itself.
 gate_log="$(${RUNTIME} logs "${GATE}" 2>&1 || true)"
 if printf '%s' "${gate_log}" \
         | grep -iE "redis.*(connection refused|error initiali[sz]ing|unable to)" >/dev/null; then
@@ -498,6 +499,9 @@ before="$(${RUNTIME} exec ir-enclave_redis_1 redis-cli -n 1 dbsize 2>/dev/null |
 # whatever earlier runs consumed: initial password from .env, replacement forced at first
 # login. That forced update is asserted, then completed — the flow a real analyst walks.
 PROVISION="${PLATFORM}/hashicorp/keycloak/provision-demo-users.sh"
+# The login flow below rotates default-admin to a throwaway value. Restored ON EXIT so the
+# account always leaves this test holding its documented initial credential.
+trap 'bash "${PROVISION}" --force default-admin >/dev/null 2>&1 || true' EXIT
 bash "${PROVISION}" --force default-admin >/dev/null 2>&1 \
     && ok "default-admin re-provisioned to its deployed initial state" \
     || bad "could not re-provision default-admin"
@@ -537,6 +541,139 @@ ${RUNTIME} exec ir-enclave_consul_1 sh -c \
     | grep -q Allowed \
     && ok "SRG-APP-000001-WSR-000002: the gate's access to the session store is an intention, not network reach" \
     || info "the intention check could not be read from inside Consul; the store is working regardless"
+
+# ============================================================ the login flow survives a page load
+say "Login flow — a page load must not evict the attempt the analyst is standing in"
+
+# The gate mints a CSRF cookie per authentication attempt, caps how many it keeps, and evicts
+# OLDEST-FIRST — so the attempt discarded is the one already in progress. Every unauthenticated
+# request starts an attempt, and the SPA fires several data calls on load: one page view
+# produced four attempts against a ceiling of three, and the flow ended in "403 Forbidden ...
+# CSRF cookie was not found" after a long login, with Go Back as the only way out.
+#
+# API paths must be ANSWERED rather than redirected. Config first, since a flag that failed to
+# parse takes the gate down rather than changing its answers, then the reproduction.
+API_ROUTE="$(sed -n 's/^--api-route=//p' <<<"${GATE_CMD}")"
+[[ -n "${API_ROUTE}" ]] \
+    && ok "the gate separates data calls from navigation (--api-route=${API_ROUTE}) — only navigation starts an attempt" \
+    || bad "no --api-route on the gate: every data call redirects to the identity provider and mints an attempt of its own"
+
+# Re-armed deliberately. The forced change is what holds an attempt OPEN across a page load,
+# and it is the state the defect was reported from; an already-rotated account completes the
+# flow too quickly to leave a window, so the run would agree with itself either way.
+CSRF_PW="Uat-Csrf-Pw1!$(date +%s)"
+bash "${PROVISION}" --force default-admin >/dev/null 2>&1 \
+    && ok "default-admin re-armed with the forced change that holds a login flow open" \
+    || bad "could not re-provision default-admin for the flow test"
+CSRF_SINCE="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+FLOW="$(${RUNTIME} run --rm --network ir-edge --dns "${DNS_EDGE_IP}" \
+    -v "${HERE}/lib/oidc_csrf.py:/t.py:ro,z" localhost/ir-workstation:latest \
+    python3 /t.py "${IR_PLATFORM_URL}" default-admin "${ADMIN_PW}" "${CSRF_PW}" 2>&1)"
+
+NAV_MINTED="$(sed -n 's/^NAV_MINTED //p' <<<"${FLOW}")"
+[[ "${NAV_MINTED:-0}" -eq 1 ]] \
+    && ok "the analyst's navigation starts exactly one authentication attempt" \
+    || bad "navigation started ${NAV_MINTED:-no} attempts, expected 1 — the ceiling is consumed before the page even loads"
+
+API_SEEN="$(grep -c '^API_STATUS ' <<<"${FLOW}" || true)"
+API_401="$(grep -c '^API_STATUS .* 401$' <<<"${FLOW}" || true)"
+API_IDP="$(grep -c '^API_STATUS .*->idp' <<<"${FLOW}" || true)"
+[[ "${API_SEEN:-0}" -ge 4 ]] \
+    && ok "a page load's worth of data calls (${API_SEEN}) was issued on top of the open flow" \
+    || bad "the page load was not reproduced — only ${API_SEEN:-0} data calls reached the gate ($(sed -n '1,3p' <<<"${FLOW}" | tr '\n' ' '))"
+[[ "${API_SEEN:-0}" -gt 0 && "${API_401}" -eq "${API_SEEN}" ]] \
+    && ok "every data call was ANSWERED 401 — the SPA turns that into one sign-in rather than ${API_SEEN} of them" \
+    || bad "${API_401}/${API_SEEN:-0} data calls answered 401; the rest were redirected: $(grep '^API_STATUS' <<<"${FLOW}" | grep -v ' 401$' | tr '\n' ' ')"
+# Sent with the headers the SPA's fetch actually sends. The gate 401s anything declaring
+# `Accept: application/json` on that header alone, path irrelevant — so a probe that sent one
+# would earn its 401 from the AJAX heuristic and pass with --api-route removed.
+grep -q '^PROBE_ACCEPT \*/\*' <<<"${FLOW}" \
+    && ok "and it earned that 401 on the PATH: the probes sent Accept: */* like the app's fetch, not the application/json that would trigger the gate's AJAX shortcut" \
+    || bad "the probes did not send the app's Accept header ($(sed -n 's/^PROBE_ACCEPT //p' <<<"${FLOW}")) — a 401 obtained this way is not attributable to --api-route"
+[[ "${API_IDP:-0}" -eq 0 ]] \
+    && ok "no data call was sent to the identity provider, so none minted an attempt" \
+    || bad "${API_IDP} data call(s) redirected to the identity provider — each one mints a CSRF cookie and displaces an older attempt"
+
+API_MINTED="$(sed -n 's/^API_MINTED //p' <<<"${FLOW}")"
+[[ "${API_MINTED:-1}" -eq 0 ]] \
+    && ok "the page load minted NO additional CSRF cookies — the ceiling is never approached by data calls" \
+    || bad "the page load minted ${API_MINTED} CSRF cookie(s); at a ceiling of ${CSRF_LIMIT:-?} that evicts the analyst's own attempt"
+
+# A page load is a burst; a login takes minutes, and the tab keeps polling throughout. This is
+# the case the first fix missed: /index.html is not under /api/, DeployWatch re-fetches it
+# every 30 seconds, and each fetch minted an attempt — so an idle tab exhausted the ceiling in
+# ninety seconds while the analyst was still typing a new password.
+POLL_MINTED="$(sed -n 's/^POLL_MINTED //p' <<<"${FLOW}")"
+[[ "${POLL_MINTED:-1}" -eq 0 ]] \
+    && ok "six polling cycles (three minutes of an open tab) minted NOTHING — waiting at a login page cannot exhaust the ceiling" \
+    || bad "polling minted ${POLL_MINTED} attempt(s) over six cycles; at a ceiling of ${CSRF_LIMIT:-?} an unattended tab evicts the analyst's flow in $(( ${CSRF_LIMIT:-3} * 30 ))s"
+
+grep -q '^NAV_SURVIVED 1' <<<"${FLOW}" \
+    && ok "the navigation's own CSRF cookie was still present when the callback ran" \
+    || bad "the navigation's CSRF cookie was evicted before its callback — this is the 403 the analyst cannot retry past"
+
+grep -q '^FLOW OK' <<<"${FLOW}" \
+    && ok "a login held open across a full page load completed through the callback, forced password change included" \
+    || bad "the held-open flow did not complete — $(grep '^FLOW ' <<<"${FLOW}" | head -1)"
+
+# The gate's own account of the same window. A 403 the client saw and the gate did not record
+# would mean the refusal came from somewhere else, and the fix would be aimed at the wrong tier.
+GATE_WINDOW="$(${RUNTIME} logs --since "${CSRF_SINCE}" "${GATE}" 2>&1 || true)"
+CSRF_FAIL="$(grep -cE 'unable to obtain CSRF cookie|CSRF cookie .* was not found' <<<"${GATE_WINDOW}" || true)"
+[[ "${CSRF_FAIL:-0}" -eq 0 ]] \
+    && ok "the gate logged no CSRF failure for that flow" \
+    || bad "the gate logged ${CSRF_FAIL} CSRF cookie failure(s) during the flow"
+
+# The client half. The gate answers 401; something still has to turn however many arrive at
+# once into ONE sign-in, and that is the deployed bundle's job — asserted against the asset
+# nginx actually serves, because a guard that exists only in src/ is not deployed.
+BUNDLE="$(${RUNTIME} exec "${FRONTEND}" sh -c \
+    'cat /usr/share/nginx/html/assets/*.js 2>/dev/null | grep -o ".\{0,160\}/oauth2/start"' 2>/dev/null)"
+STARTS="$(grep -c '/oauth2/start' <<<"${BUNDLE}" || true)"
+[[ "${STARTS:-0}" -eq 1 ]] \
+    && ok "the deployed bundle has ONE sign-in entry point" \
+    || bad "the deployed bundle has ${STARTS:-0} sign-in entry points — each is a path that can start a competing attempt"
+# Matched on shape rather than on names: the bundle is minified, so the guard survives as
+# `if(v)return;v=!0` with whatever identifier the minifier chose.
+grep -qE 'if\([A-Za-z_$][A-Za-z0-9_$]*\)return;[A-Za-z_$][A-Za-z0-9_$]*=!0' <<<"${BUNDLE}" \
+    && ok "that entry point is single-flight — the second and later 401s of a page load redirect nothing" \
+    || bad "the deployed sign-in is unguarded: every 401 in a page load starts its own attempt"
+
+# ---- negative control -------------------------------------------------------------------
+# Everything above passes on a gate that never had this defect AND on one where the driver
+# simply cannot see it, and those two are not the same result. So the same page load is
+# repeated over paths the gate does NOT classify as data calls: they must redirect, they must
+# mint, and the analyst's attempt must be evicted — the 403 itself, reproduced on demand.
+#
+# Same driver, same headers, same held-open flow: the ONLY variable is the path, which is the
+# one thing --api-route reads. Nothing is reconfigured to produce it, and nothing needs to be —
+# the defect is one classification away from the deployed gate at all times.
+CTRL_PW="Uat-Ctrl-Pw1!$(date +%s)"
+bash "${PROVISION}" --force default-admin >/dev/null 2>&1 \
+    && ok "default-admin re-armed for the control run" \
+    || bad "could not re-provision default-admin for the control run"
+# Derived from the ceiling, never a fixed count. Hardcoded at four, this control silently
+# stopped testing anything the moment the limit was raised past it — it reported a flow that
+# survived and called that a failure of eviction, when eviction had simply not been reached.
+# One more than the ceiling is the smallest number that must evict.
+CTRL_PATHS=()
+for i in $(seq 1 $(( ${CSRF_LIMIT:-3} + 1 ))); do CTRL_PATHS+=("/ctrl${i}"); done
+CTRL="$(${RUNTIME} run --rm --network ir-edge --dns "${DNS_EDGE_IP}" \
+    -v "${HERE}/lib/oidc_csrf.py:/t.py:ro,z" localhost/ir-workstation:latest \
+    python3 /t.py "${IR_PLATFORM_URL}" default-admin "${ADMIN_PW}" "${CTRL_PW}" \
+    "${CTRL_PATHS[@]}" 2>&1)"
+
+CTRL_IDP="$(grep -c '^API_STATUS .*->idp' <<<"${CTRL}" || true)"
+CTRL_MINTED="$(sed -n 's/^API_MINTED //p' <<<"${CTRL}")"
+[[ "${CTRL_IDP:-0}" -ge 1 && "${CTRL_MINTED:-0}" -ge 1 ]] \
+    && ok "control: ${CTRL_IDP} unclassified path(s) redirected to the identity provider and minted ${CTRL_MINTED} attempt(s) — the driver can see a mint, so the zero it reported above is a measurement" \
+    || bad "control: unclassified paths minted nothing (idp=${CTRL_IDP:-0}, minted=${CTRL_MINTED:-0}) — the driver cannot detect the defect, so its clean result above proves nothing"
+grep -q '^NAV_SURVIVED 0' <<<"${CTRL}" \
+    && ok "control: those attempts evicted the analyst's own, oldest-first, exactly as the ceiling of ${CSRF_LIMIT} requires" \
+    || bad "control: the analyst's attempt survived ${CTRL_MINTED:-0} competing mints at a ceiling of ${CSRF_LIMIT} — eviction is not behaving as the fix assumes"
+grep -q '^FLOW FAIL: callback returned HTTP 403' <<<"${CTRL}" \
+    && ok "control: the flow ended in the reported 403 at the callback — the defect is reproducible, and --api-route is what the deployed gate uses to avoid it" \
+    || bad "control: the evicted flow did not end in a 403 — $(grep '^FLOW ' <<<"${CTRL}" | head -1)"
 
 # The rotated password is a test artifact: the account goes back to its deployed initial
 # state, which re-arms the forced change for the next real first login.
@@ -612,6 +749,103 @@ else
         || bad "the smartcard-logon templates are missing"
     info "proving a CARD authenticates needs a card and an issuing CA; that test belongs to an environment that has them"
 fi
+
+# ============================================================ supply chain, cadence, clock
+# Batch 6. These four controls share a property the earlier batches did not: each is satisfied
+# by a RECORD as much as by a mechanism, so each assertion below is paired with proof that its
+# gate actually rejects — a gate that only ever passes is indistinguishable from no gate.
+say "SRG-APP-000131 — base images are pinned by digest, and the digest is recorded"
+
+bash "${PLATFORM}/ci/pin-base-images.sh" --check >/dev/null 2>&1 \
+    && ok "every external FROM names a digest matching ci/base-images.lock" \
+    || bad "a base image is pinned by tag, or disagrees with the lock — run ci/pin-base-images.sh --check"
+
+# A tag is a mutable pointer; the gate exists to refuse one. Proven by reverting a FROM to a
+# bare tag in a COPY of the tree, so the working tree is never left modified by a test.
+SCRATCH="$(mktemp -d)"
+cp -r "${PLATFORM}/ci" "${SCRATCH}/ci" 2>/dev/null
+mkdir -p "${SCRATCH}/ingest"
+sed 's|^FROM docker.io/library/alpine:3.24@sha256:.*|FROM docker.io/library/alpine:3.24|' \
+    "${PLATFORM}/ingest/Dockerfile" > "${SCRATCH}/ingest/Dockerfile" 2>/dev/null
+if IR_RUNTIME="${RUNTIME}" bash "${SCRATCH}/ci/pin-base-images.sh" --check >/dev/null 2>&1; then
+    bad "the pin check PASSES on a tree where a FROM was reverted to a bare tag — it proves nothing"
+else
+    ok "and the check REFUSES a FROM reverted to a bare tag, so the gate is real"
+fi
+rm -rf "${SCRATCH}"
+
+say "SRG-APP-000456 — the 30-day currency review is recorded, and going stale fails"
+
+bash "${PLATFORM}/ci/image-currency.sh" --age >/dev/null 2>&1 \
+    && ok "the image-currency review is on record and within its interval" \
+    || bad "no image-currency record, or it has passed the 30-day ceiling"
+
+REC="${PLATFORM}/ci/image-currency.record"
+if [[ -f "${REC}" ]]; then
+    cp "${REC}" "${REC}.uatbak"
+    # Backdated past the ceiling the control names. If this still passes, the cadence is
+    # decorative and "reviewed regularly" is unfalsifiable.
+    sed -i "s|^reviewed = .*|reviewed = \"$(date -u -d '400 days ago' '+%Y-%m-%dT%H:%M:%SZ')\"|" "${REC}"
+    bash "${PLATFORM}/ci/image-currency.sh" --age >/dev/null 2>&1 \
+        && bad "a review backdated 400 days still passes — the interval is not enforced" \
+        || ok "and a review backdated past the ceiling is REFUSED, so the cadence is enforced"
+    mv "${REC}.uatbak" "${REC}"
+else
+    bad "no image-currency record to test the interval against"
+fi
+
+say "SRG-APP-000835/000840 — the banned password list is enforced and reviewed"
+
+bash "${PLATFORM}/ci/password-blacklist-check.sh" >/dev/null 2>&1 \
+    && ok "the list is non-empty and lowercase, the realm policy names it, and the review is current" \
+    || bad "the banned password list is not proven — run ci/password-blacklist-check.sh"
+
+# The policy is inert unless Keycloak can actually read the file it names. Checked INSIDE the
+# running container, because the file being present in the tree proves nothing about the image.
+if [[ "$(${RUNTIME} inspect ir-enclave_keycloak_1 --format '{{.State.Status}}' 2>/dev/null)" == "running" ]]; then
+    KCLIST="$(${RUNTIME} exec ir-enclave_keycloak_1 sh -c \
+        'wc -l < /opt/keycloak/data/password-blacklists/dfir-platform.txt' 2>/dev/null | tr -d ' ')"
+    [[ "${KCLIST:-0}" -gt 0 ]] \
+        && ok "Keycloak can read the list it enforces (${KCLIST} lines in the running image)" \
+        || bad "the realm names a blacklist Keycloak cannot read — password SETTING would fail"
+else
+    info "Keycloak not running — the in-image blacklist was not evaluated"
+fi
+
+say "SRG-APP-000920/000925 — the enclave has a time authority, and containers inherit it"
+
+bash "${PLATFORM}/ci/clock-sync-check.sh" --quiet >/dev/null 2>&1 \
+    && ok "clock provenance established: host synchronized, containers agree, enclave serving" \
+    || bad "clock provenance NOT established — see ci/clock-sync-check.sh"
+
+if [[ "$(${RUNTIME} inspect ir-enclave_ntp_1 --format '{{.State.Status}}' 2>/dev/null)" == "running" ]]; then
+    NTP_STRAT="$(${RUNTIME} exec ir-enclave_ntp_1 chronyc -n tracking 2>/dev/null \
+                 | awk -F': *' '/^Stratum/ {print $2}')"
+    [[ -n "${NTP_STRAT}" ]] \
+        && ok "the enclave time service answers and is serving (stratum ${NTP_STRAT})" \
+        || bad "the enclave time service is running but does not answer chronyc"
+
+    # It must never touch a clock it does not own: containers inherit the host's, and a time
+    # service that tried to set it would fail and exit, leaving the enclave with no authority.
+    ${RUNTIME} logs ir-enclave_ntp_1 2>&1 | grep -qi 'Disabled control of system clock' \
+        && ok "and it runs without control of the system clock, as a container must" \
+        || bad "the time service did not disable clock control — it is trying to set a clock it does not own"
+
+    # Traceability is a deployment property and is REPORTED, not assumed. Stratum 10 is the
+    # local reference: the segment agrees with itself and is traceable to nothing.
+    if [[ "${NTP_STRAT}" == "10" ]]; then
+        info "serving from a LOCAL reference — internally consistent, NOT traceable to an authoritative source (IR_NTP_UPSTREAM unset)"
+    else
+        ok "disciplined by a traceable upstream (stratum ${NTP_STRAT})"
+    fi
+else
+    bad "no enclave time service — every host in a no-egress segment free-runs"
+fi
+
+say "The tracker states the same thing this suite just proved"
+python3 "${PLATFORM}/artifacts/gen_srg_tracker.py" --check >/dev/null 2>&1 \
+    && ok "the tracker, .ckl and srg_tracker.json are current with srg_status.yml" \
+    || bad "the SRG artifacts are STALE — regenerate with artifacts/gen_srg_tracker.py"
 
 # ============================================================ summary
 say "Result"

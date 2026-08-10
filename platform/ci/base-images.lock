@@ -1,0 +1,14 @@
+# Base image manifest — SRG-APP-000131-WSR-000051.
+# What each tag resolved to, and when. Regenerate with:
+#   ci/pin-base-images.sh --update && ci/pin-base-images.sh --apply
+# Resolved: 2026-08-07T20:18:38Z
+
+docker.io/library/alpine:3.24 sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b
+docker.io/library/debian:12 sha256:813017f3d62be4b5891a7acca6a01bdcd4b8513daa81b1ab99d3a50385b26931
+docker.io/library/debian:13 sha256:d63a99144861e4e460196ed93d07777490cbeab53ca660c434f2a589a6c50ea3
+docker.io/library/node:lts-slim sha256:235600a8101ab264e117b1768e925532262668dc9b581ef1dd7d96ced463b8e7
+docker.io/hashicorp/consul:2.0.2 sha256:076f8ec1f45bfe2cedb5767d0692b68d775f9f76aca2f4d82caaf61fc9e36e47
+docker.io/envoyproxy/envoy:v1.38.0 sha256:8146b97ee61a42cd216514709e4e3198af75f014974e3d9f310aef9c901fcbdf
+quay.io/keycloak/keycloak:26.7.0 sha256:0f198be292568439d700cdbfb893e69a6009bb43a94a06a945b1d3d506c76b13
+quay.io/podman/stable:latest sha256:663e0dbf407987b7db3f20d3588c283a8228db17b282d2029a482d4d47e36964
+docker.io/library/rust:1.97.1-alpine3.24 sha256:3c38f3f82c2f3d73da3b38e18d279393a04cb43ddded0e35088a8c3324d40900

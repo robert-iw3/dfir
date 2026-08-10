@@ -12,13 +12,38 @@ function headers(extra) {
   return h;
 }
 
+// One sign-in redirect per page load, however many calls get 401 at once.
+//
+// The app shell fires several API calls in parallel on load. Without this guard each 401
+// would start its own sign-in, and each sign-in mints a per-request CSRF cookie at the SSO
+// gate — four in one second, against a ceiling of three, evicting the cookie belonging to the
+// navigation the analyst actually made. They then complete a long flow (a forced password
+// change is the reliable way to see it) and the callback returns to a cookie that is gone:
+// "403 Forbidden" from the proxy, with Go Back as the only way through.
+//
+// So the redirect is single-flight. Paired with `--api-route` on the gate, which answers API
+// paths with 401 instead of redirecting them: navigation starts a flow, data calls never do.
+let signingIn = false;
+
+function toSignIn() {
+  if (signingIn) return;
+  signingIn = true;
+  const rd = window.location.pathname + window.location.search;
+  window.location.assign(`/oauth2/start?rd=${encodeURIComponent(rd)}`);
+}
+
 async function req(method, path, body) {
   const r = await fetch(`${BASE}${path}`, {
     method,
     headers: headers(),
     body: body === undefined ? undefined : JSON.stringify(body),
   });
-  if (r.status === 401) throw new Error("unauthorized");
+  if (r.status === 401) {
+    // A token-authenticated caller (the UAT harness, a script) gets the error and decides for
+    // itself; only a browser session is sent to sign in, because only it can complete one.
+    if (!getToken()) toSignIn();
+    throw new Error("unauthorized");
+  }
   if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
   return r.status === 204 ? null : r.json();
 }
@@ -38,6 +63,10 @@ export const api = {
     return r.json(); // { token }
   },
   me: () => get("/me/"),
+  // Records the sign-out before the gate clears the cookie; the browser still goes to the
+  // gate afterwards to end the cookie and the Keycloak session.
+  logout: () => post("/auth/logout/", {}),
+  ssoSessions: (limit = 100) => get(`/auth/sessions/?limit=${limit}`),
   // Admin operations. Mesh and remediation are admin-only; brokered sessions are also
   // readable by an auditor, because they ARE the access record for this platform.
   meshHealth: () => get("/admin/mesh-health/"),

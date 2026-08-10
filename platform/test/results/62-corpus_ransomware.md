@@ -2,7 +2,7 @@
 
 *What passing proves:* A ransomware event correlates as ONE campaign despite its signature being on most of the fleet, 13 members having no movement record, two never being encrypted and one only being destroyed — and the hosts whose logs the actor cleared report their compromise date as unanswered rather than guessing.
 
-- Run: `uat_corpus_ransomware.sh` — 2026-08-06 16:49:50Z
+- Run: `uat_corpus_ransomware.sh` — 2026-08-09 02:11:00Z
 
 **Preconditions**
 

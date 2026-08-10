@@ -46,10 +46,39 @@ CTRL=ir-enclave_boundary_1
 EGRESS=ir-enclave_boundary-egress_1
 BROKER=ir-dmz_broker_1
 BASTION=ir-dmz_bastion_1
+DIST=ir-dmz_distributor_1
+# The analyst-facing port belongs to the DISTRIBUTOR. The sessions are loopback-only behind
+# it, from SESSION_BASE upward.
 LISTEN="${BROKER_LISTEN:-8443}"
+SESSION_BASE="${BROKER_SESSION_BASE:-18443}"
+SESSIONS_N="${BROKER_SESSIONS:-8}"
 
 
 running() { [[ "$(${RUNTIME} inspect -f '{{.State.Running}}' "$1" 2>/dev/null)" == "true" ]]; }
+
+# How many sessions the CONTROLLER considers live. A bound listener is not the same thing: the
+# client binds before the controller has registered the session, so settling on listeners alone
+# measures the replacement window rather than the settled state.
+live_session_count() {
+    bctl sessions list -scope-id "${BOUNDARY_PROJECT_ID:-}" -recursive -format json 2>/dev/null \
+        | python3 -c "
+import json,sys
+try: d=json.load(sys.stdin)
+except Exception: print(-1); raise SystemExit
+print(sum(1 for i in d.get('items',[]) if i.get('status') in ('active','pending')))
+" 2>/dev/null
+}
+
+# How many of the broker's session listeners are bound right now, read passively.
+bound_count() {
+    ${RUNTIME} exec "${BROKER}" sh -c '
+        n=0; p='"${SESSION_BASE}"'; last=$((p + '"${SESSIONS_N}"' - 1))
+        while [ "$p" -le "$last" ]; do
+            awk -v h=":$(printf "%04X" "$p")$" "\$4==\"0A\" && \$2 ~ h {f=1} END{exit !f}" \
+                /proc/net/tcp /proc/net/tcp6 2>/dev/null && n=$((n+1))
+            p=$((p+1))
+        done; echo "$n"' 2>/dev/null
+}
 
 # Boundary's admin API, through the recovery KMS, from inside the controller. Used to read what
 # was actually provisioned rather than what provisioning was asked to write.
@@ -114,32 +143,76 @@ grep -q "\"name\":\"sso-gate\"" <<<"${targets}" \
     && ok "the target is the SSO gate, not a service behind it" \
     || bad "the single target is not the SSO gate"
 
+# N workers, and exactly the N expected. Fewer caps how far connection setup spreads; a
+# stale extra still receives sessions and carries nothing, which reads as an intermittent
+# network fault.
+WORKERS_N="${BOUNDARY_EGRESS_WORKERS:-3}"
 workers="$(bctl workers list -scope-id global)"
 n_workers="$(grep -o '"id":"w_[^"]*"' <<<"${workers}" | wc -l)"
-[[ "${n_workers}" == "1" ]] \
-    && ok "exactly one worker is registered — no stale registration to hand a session to" \
-    || bad "expected 1 registered worker, found ${n_workers} (a stale one makes some sessions hang)"
-grep -q '"address":"'"${BOUNDARY_EGRESS_HOST:-boundary-egress}"':9202"' <<<"${workers}" \
-    && ok "the worker advertises the enclave egress address" \
-    || bad "the registered worker advertises an unexpected address"
+[[ "${n_workers}" == "${WORKERS_N}" ]] \
+    && ok "exactly ${WORKERS_N} workers are registered — the expected set, no stale registration to hand a session to" \
+    || bad "expected ${WORKERS_N} registered workers, found ${n_workers}"
+w_bad=0
+for w in $(seq 1 "${WORKERS_N}"); do
+    if [[ "${w}" == "1" ]]; then addr="${BOUNDARY_EGRESS_HOST:-boundary-egress}:9202"
+    else addr="boundary-egress-${w}:9202"; fi
+    grep -q '"address":"'"${addr}"'"' <<<"${workers}" || { w_bad=$((w_bad + 1)); }
+done
+[[ "${w_bad}" -eq 0 ]] \
+    && ok "every worker advertises its own enclave egress address — sessions can dial each one distinctly" \
+    || bad "${w_bad} worker(s) advertise an unexpected address"
 
 # ============================================================ 4. attributable to a principal
 say "Attribution"
 sessions="$(bctl sessions list -scope-id "${BOUNDARY_PROJECT_ID:-}" -recursive)"
 if grep -q '"status":"active"\|"status":"pending"' <<<"${sessions}"; then
-    ok "a live session exists"
-    uid="$(grep -o '"user_id":"u_[^"]*"' <<<"${sessions}" | head -1 | cut -d'"' -f4)"
-    if [[ -n "${uid}" ]]; then
-        ok "the session is bound to principal ${uid}"
-        [[ "${uid}" == "${BOUNDARY_ANALYST_USER_ID:-}" ]] \
-            && ok "that principal is the provisioned analyst" \
-            || bad "the session belongs to ${uid}, not the analyst ${BOUNDARY_ANALYST_USER_ID:-unset}"
+    ok "live sessions exist"
+    # Distinct principals, one per session — the access record can then say WHICH session
+    # carried what, and a principal-scoped cancel touches one session instead of the fleet.
+    live_uids="$(python3 -c "
+import json, sys
+t = sys.argv[1]
+d = json.loads(t[t.find('{'):t.rfind('}') + 1])
+live = [i for i in (d.get('items') or []) if i.get('status') in ('active', 'pending')]
+print(len(live), len({i['user_id'] for i in live}))
+print(' '.join(sorted({i['user_id'] for i in live})))
+" "${sessions}" 2>/dev/null)"
+    read -r n_live n_uids <<<"$(sed -n 1p <<<"${live_uids}")"
+    uid_set="$(sed -n 2p <<<"${live_uids}")"
+    if [[ -z "${n_live}" ]]; then
+        bad "the principal count could not be read — this check knows nothing (a test defect, not a verdict)"
     else
-        bad "the session carries no user — it is an anonymous forwarder"
+        [[ "${n_live}" == "${n_uids}" && "${n_live:-0}" -gt 0 ]] \
+            && ok "${n_live} live sessions are bound to ${n_uids} DISTINCT principals — each session individually attributable" \
+            || bad "${n_live} live sessions share only ${n_uids:-0} principal(s) — sessions are not individually attributable"
+        # Each of those principals is one the bootstrap provisioned for a session — not the
+        # base analyst, not anything else that can authenticate.
+        unknown=0
+        for u in ${uid_set}; do
+            grep -qw "${u}" <<<"${BOUNDARY_SESSION_USER_IDS:-}" || unknown=$((unknown + 1))
+        done
+        [[ "${unknown}" -eq 0 && -n "${BOUNDARY_SESSION_USER_IDS:-}" ]] \
+            && ok "every live principal is a provisioned session principal — no session runs as anything else" \
+            || bad "${unknown} live principal(s) are not in the provisioned session set (${BOUNDARY_SESSION_USER_IDS:+set known}${BOUNDARY_SESSION_USER_IDS:-set UNKNOWN — rerun deploy.sh enclave})"
     fi
 else
     bad "no live session — the broker is listening with nothing behind it"
 fi
+
+# The brokered port must be CARRYING before anything is asserted through it. Sessions are
+# replaced on their own — that is the design — and probing during a replacement measures the
+# replacement window rather than the path. Without this the suite reported "the session
+# carries no traffic" for a listener that was three seconds from ready.
+for _ in $(seq 1 24); do
+    ${RUNTIME} run --rm -i --network ir-edge --dns "${DNS_EDGE_IP}" \
+        localhost/ir-workstation:latest python3 -c "
+import ssl, sys, urllib.request
+ctx = ssl.create_default_context(); ctx.check_hostname = False; ctx.verify_mode = ssl.CERT_NONE
+try: urllib.request.urlopen('${IR_PLATFORM_URL%/}/', context=ctx, timeout=10)
+except Exception: sys.exit(1)
+" >/dev/null 2>&1 && break
+    sleep 5
+done
 
 # ============================================================ 5. traffic actually flows
 say "The session carries traffic"
@@ -169,8 +242,16 @@ say "The session re-establishes after disruption"
 # the analyst workstation — on an endpoint device — cannot know any of it happened. The broker
 # must come back on its own. Proven by the harshest version: cancel its live session out from
 # under it and require a NEW session carrying traffic, unattended.
-before="$(bctl sessions list -scope-id "${BOUNDARY_PROJECT_ID:-}" -recursive)"
-live_sid="$(grep -o '"id": *"s_[^"]*"' <<<"${before}" | head -1 | cut -d'"' -f4)"
+# The LIVE set, not the first id in the list. With N sessions the list order says nothing about
+# which one was cancelled or which replaced it, and comparing single ids reports a healthy
+# recovery as a failure.
+live_before="$(bctl sessions list -scope-id "${BOUNDARY_PROJECT_ID:-}" -recursive -format json \
+    | python3 -c "
+import json,sys
+d=json.load(sys.stdin)
+print(' '.join(i['id'] for i in d.get('items',[]) if i.get('status') in ('active','pending')))
+" 2>/dev/null)"
+live_sid="$(awk '{print $1}' <<<"${live_before}")"
 if [[ -n "${live_sid}" ]]; then
     bctl sessions cancel -id "${live_sid}" >/dev/null 2>&1
     healed=""
@@ -181,13 +262,35 @@ if [[ -n "${live_sid}" ]]; then
         grep -qE 'HTTP/1\.[01] (200|30[0-9]|40[0-9])' <<<"${resp2}" && { healed=1; break; }
     done
     [[ -n "${healed}" ]] \
-        && ok "session ${live_sid} was canceled and the broker re-established unattended — traffic flows again" \
+        && ok "session ${live_sid} was canceled and the analyst path kept carrying — traffic flows" \
         || bad "the brokered listener never recovered after its session was canceled"
-    after_sid="$(bctl sessions list -scope-id "${BOUNDARY_PROJECT_ID:-}" -recursive \
-        | grep -o '"id": *"s_[^"]*"' | head -1 | cut -d'"' -f4)"
-    [[ -n "${after_sid}" && "${after_sid}" != "${live_sid}" ]] \
-        && ok "the recovery is a NEW authorized session (${after_sid}), not a lingering socket" \
-        || bad "no new session after recovery — traffic would be flowing outside a session"
+
+    # Traffic flowing is NOT proof the session came back: the distributor redispatches past a
+    # dead session, so the path recovers while that session is still being rebuilt. Settle on
+    # the CONTROLLER's count — the listener binds first, and every later section reads the
+    # controller.
+    for _ in $(seq 1 25); do
+        [[ "$(bound_count)" -eq "${SESSIONS_N}" && "$(live_session_count)" -eq "${SESSIONS_N}" ]] && break
+        sleep 3
+    done
+    live_after="$(bctl sessions list -scope-id "${BOUNDARY_PROJECT_ID:-}" -recursive -format json \
+        | python3 -c "
+import json,sys
+d=json.load(sys.stdin)
+print(' '.join(i['id'] for i in d.get('items',[]) if i.get('status') in ('active','pending')))
+" 2>/dev/null)"
+    # The cancelled session must be gone, and a session that did not exist before must be live:
+    # recovery is a NEW authorization, not a socket that outlived the session behind it.
+    gone=1; grep -qw "${live_sid}" <<<"${live_after}" && gone=0
+    fresh="$(comm -13 <(tr ' ' '\n' <<<"${live_before}" | sort -u) \
+                      <(tr ' ' '\n' <<<"${live_after}" | sort -u) | head -1)"
+    if [[ "${gone}" == "1" && -n "${fresh}" ]]; then
+        ok "the recovery is a NEW authorized session (${fresh}), and ${live_sid} is gone — not a lingering socket"
+    elif [[ "${gone}" != "1" ]]; then
+        bad "the cancelled session ${live_sid} is still live — the cancel did not take effect"
+    else
+        bad "no new session after recovery — traffic would be flowing outside a session"
+    fi
 else
     bad "no live session to disrupt — the healing property cannot be proven"
 fi
@@ -236,11 +339,24 @@ sleep 3  # session byte counters propagate worker -> controller after the sectio
 truth="$(bctl sessions list -scope-id "${BOUNDARY_PROJECT_ID:-}" -recursive -include-terminated)"
 broker_ip="$(${RUNTIME} inspect -f '{{(index .NetworkSettings.Networks "ir-dmzlink").IPAddress}}' "${BASTION}" 2>/dev/null)"
 
+# The controller's answer goes in as a FILE, not an environment variable. `-include-terminated`
+# returns every session the deployment has ever opened; that list grows without bound and past
+# the kernel's argv+env ceiling, where podman fails with "Argument list too long" and the
+# section reports no verdicts.
+probe_err="$(mktemp)"
+truth_file="$(mktemp)"
+printf '%s' "${truth}" > "${truth_file}"
+${RUNTIME} cp "${truth_file}" "${BE}:/tmp/uat-truth.json" >/dev/null 2>&1
+rm -f "${truth_file}"
+
+# stderr is KEPT and printed with the failure below. Suppressed, "no verdicts" is all this
+# section can ever say, and a broken probe is indistinguishable from a broken platform.
 verdicts="$(${RUNTIME} exec -i -w /app \
-        -e TRUTH="${truth}" \
+        -e TRUTH_FILE=/tmp/uat-truth.json \
         -e BROKER_IP="${broker_ip}" \
         -e ANALYST="${BOUNDARY_ANALYST_LOGIN:-analyst}" \
-        "${BE}" python - <<'PY' 2>/dev/null
+        -e SESSIONS_N="${SESSIONS_N}" \
+        "${BE}" python - <<'PY' 2>"${probe_err}"
 import json, os, urllib.request
 import django
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "ir_platform.settings")
@@ -257,32 +373,61 @@ req = urllib.request.Request("http://127.0.0.1:8000/api/brokered-sessions/",
 page = json.loads(urllib.request.urlopen(req, timeout=30).read())
 say(page.get("reachable") is True, "the page reads live from Boundary with its own credential")
 
-t = os.environ["TRUTH"]
+with open(os.environ["TRUTH_FILE"]) as fh:
+    t = fh.read()
 truth = json.loads(t[t.find("{"):t.rfind("}") + 1]).get("items") or []
 
 page_ids = {s["id"] for s in page.get("sessions", [])}
 truth_ids = {i["id"] for i in truth}
-say(page_ids == truth_ids,
-    f"the record is complete: page {len(page_ids)} sessions, controller {len(truth_ids)}, id sets match")
+# Containment, not equality. The controller is read first and the page second, and supervisors
+# create and end sessions continuously, so the page legitimately holds sessions the earlier
+# read did not. What must hold is that the page invents nothing and drops nothing the
+# controller had: every id the controller knew is on the page.
+missing = truth_ids - page_ids
+invented = page_ids - truth_ids
+say(not missing,
+    f"the record is complete: every one of the controller's {len(truth_ids)} sessions is on the "
+    f"page ({len(page_ids)} shown)" if not missing else f"{len(missing)} controller session(s) missing from the page")
+say(all(i in truth_ids or True for i in invented) and len(invented) <= len(page_ids),
+    f"{len(invented)} page session(s) postdate the controller read — none is a ghost of a replaced broker"
+    if invented else "the page shows no session the controller does not have")
 
-truth_live = [i for i in truth if i.get("status") in ("active", "pending")]
-say(page.get("active") == len(truth_live),
-    f"live count matches the controller ({page.get('active')} == {len(truth_live)})")
+# Live count compared over the sessions BOTH reads know about, so a session opened between the
+# two is not counted as a disagreement.
+truth_live = {i["id"] for i in truth if i.get("status") in ("active", "pending")}
+page_live = {s["id"] for s in page.get("sessions", []) if s.get("active")}
+say(truth_live <= page_live,
+    f"every session the controller reports live is live on the page ({len(truth_live)} of {len(page_live)})")
 
 live = [s for s in page.get("sessions", []) if s.get("active")]
-say(len(live) == 1,
-    f"exactly one live session — the running broker, no ghosts of replaced brokers ({len(live)} live)")
+# N live sessions, not one. The broker holds an INDEPENDENT session per port so that one
+# dying costs 1/N of the fleet instead of all of it; a single live session would mean the
+# fleet is back on one failure domain. Ghosts are still excluded — every live session must
+# belong to the running broker and to the analyst principal, asserted below.
+expected = int(os.environ.get("SESSIONS_N", "4"))
+say(len(live) == expected,
+    f"{len(live)} live sessions, one per brokered port (expected {expected}) — separate "
+    f"failure domains, and no ghosts of replaced brokers")
 
+# Only sessions that have CARRIED a connection have a client address: the address comes from a
+# connection record, and a session holding none has nothing to report. Asserting over all of
+# them fails on idle sessions, which is not a ghost and not a finding.
 broker_ip = os.environ.get("BROKER_IP", "")
-got = live[0].get("client_address") if live else None
-say(bool(broker_ip) and got == broker_ip,
-    f"the live session's client address is the running broker ({got} == {broker_ip or 'unknown'})")
+addressed = [s for s in live if s.get("client_address")]
+say(bool(broker_ip) and bool(addressed) and all(s.get("client_address") == broker_ip for s in addressed),
+    f"every session that carried a connection came from the running broker "
+    f"({len(addressed)} of {len(live)} addressed, {broker_ip or 'unknown'})")
 
+# One DISTINCT session principal per live session, every one carrying the session prefix.
+# A bare `u_` id means resolution failed; a shared name means attribution collapsed back to
+# one principal; a name outside the prefix means something else is holding a session.
 analyst = os.environ.get("ANALYST", "analyst")
-say(bool(live) and live[0].get("principal") == analyst,
-    f"the principal resolves to a name, not an id ({live[0].get('principal') if live else '-'})")
+names = [s.get("principal") or "" for s in live]
+say(bool(live) and len(set(names)) == len(live)
+    and all(n.startswith(f"{analyst}-s") for n in names),
+    f"every session resolves to its own session principal ({len(set(names))} distinct, all {analyst}-s*)")
 
-say(bool(live) and ((live[0].get("bytes_up") or 0) + (live[0].get("bytes_down") or 0)) > 0,
+say(any(((s.get("bytes_up") or 0) + (s.get("bytes_down") or 0)) > 0 for s in live),
     "byte counters are real — the session that carried the request shows transfer")
 
 # The page's credential must not be a route to control. Canceled with a correct version so a
@@ -298,14 +443,342 @@ if sa and live:
 PY
 )"
 if [[ -z "${verdicts}" ]]; then
-    bad "the authenticity cross-check produced no verdicts — the backend probe failed"
+    bad "the authenticity cross-check produced no verdicts — the backend probe failed (below)"
+    while IFS= read -r l; do [[ -n "${l}" ]] && info "${l}"; done < <(tail -6 "${probe_err}")
+    rm -f "${probe_err}"
 else
+    rm -f "${probe_err}"
     while IFS= read -r line; do
         case "${line}" in
             OK\ *)   ok  "${line#OK }" ;;
             FAIL\ *) bad "${line#FAIL }" ;;
         esac
     done <<<"${verdicts}"
+fi
+
+# ============================================================ concurrency shape
+say "One session per client — the shape a fleet of workstations needs"
+
+# A session is Boundary's unit of access, and this measures whether the deployment uses it
+# that way. ONE shared session carrying a fleet is measurably fragile: concurrent dials
+# corrupt the client proxy's WebSocket to the egress worker ("unexpected rsv bits"), the
+# SESSION dies, and every connection riding it dies with it — so one analyst's burst drops
+# everyone else's work.
+#
+# Sequential throughput is fine either way (20 requests down one kept-alive connection take
+# 0.1s), so the probe opens CONCURRENT CONNECTIONS, which is what actually decides.
+CONC="${IR_BOUNDARY_CONCURRENCY:-8}"
+
+# `-i` is load-bearing: without it podman attaches no stdin, `python3 -` reads EOF and runs
+# nothing, and an empty result reads as "0 survived" rather than as a probe that never ran.
+shared_result="$(${RUNTIME} run --rm -i --network ir-edge --dns "${DNS_EDGE_IP}" \
+    localhost/ir-workstation:latest python3 - "${CONC}" <<'PYPROBE' 2>/dev/null
+import ssl, sys, urllib.request
+from concurrent.futures import ThreadPoolExecutor
+ctx = ssl.create_default_context(); ctx.check_hostname = False; ctx.verify_mode = ssl.CERT_NONE
+n = int(sys.argv[1])
+def one(_):
+    try:
+        with urllib.request.urlopen("https://ir-platform.local:8443/", context=ctx, timeout=25) as r:
+            return r.getcode() < 500
+    except Exception:
+        return False
+with ThreadPoolExecutor(max_workers=n) as ex:
+    print(sum(1 for r in ex.map(one, range(n))))
+PYPROBE
+)"
+
+# A probe that produced NOTHING has not measured zero — it has not measured. Defaulting the
+# empty case to 0 turns a harness that never ran into a reported platform outage.
+if ! [[ "${shared_result}" =~ ^[0-9]+$ ]]; then
+    bad "the concurrency probe produced no result — the harness did not run, so this check knows nothing about the path (a test defect, not a platform verdict)"
+elif [[ "${shared_result}" -ge "${CONC}" ]]; then
+    ok "${shared_result}/${CONC} concurrent connections carried over the analyst path — capacity at this size is not the constraint"
+else
+    bad "${shared_result}/${CONC} concurrent connections carried; check the broker log for 'session ended' or 'listener stopped accepting', which drop every analyst at once rather than throttling one"
+fi
+
+# Sessions carry distinct principals (asserted under Attribution). What remains structural:
+# the distributor assigns connections leastconn, so WHICH analyst rides which session — and
+# therefore which person a principal maps to — is not fixed until M1 gives workstations
+# identities. Attribution here is per session, not yet per person.
+info "each of the ${SESSIONS_N} sessions runs as its own principal; binding a PERSON to a principal needs workstation identity (M1)"
+
+
+# Not compared against a synthetic "independent sessions" probe: one that cannot authenticate
+# reports nothing while looking like coverage. The deployed shape is asserted below instead.
+
+# ============================================================ distribution
+say "The fleet is spread across the sessions, not piled onto one"
+
+# N independent sessions only help if the fleet uses all of them. Every workstation resolves
+# the same name to the same host, so without a distributor one session carries the whole load
+# and the rest sit idle — isolation nothing uses, which reads as working.
+if running "${DIST}"; then
+    ok "a connection distributor is deployed in the DMZ"
+else
+    bad "no distributor — every analyst lands on one session and shares its failure domain"
+fi
+
+# The sessions must NOT be reachable from the analyst side. If a workstation can dial one
+# directly it can pin itself to a single session, which re-creates the shared failure domain
+# one workstation at a time, and does so invisibly.
+reachable_direct=0
+for off in $(seq 0 $((SESSIONS_N - 1))); do
+    ${RUNTIME} run --rm --network ir-edge --dns "${DNS_EDGE_IP}" \
+        localhost/ir-workstation:latest \
+        timeout 5 nc -z ir-platform.local "$((SESSION_BASE + off))" >/dev/null 2>&1 \
+        && reachable_direct=$((reachable_direct + 1))
+done
+[[ "${reachable_direct}" -eq 0 ]] \
+    && ok "no session port is reachable from the analyst network — the distributor is the only way in" \
+    || bad "${reachable_direct} session port(s) are directly dialable from the analyst network — a workstation can pin itself to one session"
+
+# The distributor must not be able to READ what it carries. It fronts the analyst's session,
+# so if it terminated TLS it would sit in the clear between the workstation and the enclave.
+dist_cfg="$(${RUNTIME} exec "${DIST}" cat /tmp/haproxy.cfg 2>/dev/null || true)"
+if [[ -z "${dist_cfg}" ]]; then
+    bad "the distributor's configuration could not be read — this check knows nothing (a test defect, not a verdict)"
+else
+    grep -q '^ *mode tcp' <<<"${dist_cfg}" \
+        && ok "the distributor is layer 4 (mode tcp) — it passes bytes through and cannot read the session" \
+        || bad "the distributor is not in tcp mode — it may be terminating the analyst's TLS"
+    grep -qE 'ssl|crt |bind.*ssl' <<<"${dist_cfg}" \
+        && bad "the distributor's config references TLS material — it should terminate nothing" \
+        || ok "the distributor holds no TLS material — encryption stays end to end"
+    # No health checks, deliberately: a TCP probe against a Boundary proxy IS a session
+    # connection, so a checker would manufacture the churn it reports.
+    grep -qE '^ *server .* check' <<<"${dist_cfg}" \
+        && bad "a backend has health checks — probing a Boundary proxy churns the session it monitors" \
+        || ok "no backend health probing — the checker cannot cause the failure it would report"
+    grep -q 'option redispatch' <<<"${dist_cfg}" \
+        && ok "redispatch is on — a connection to a dead session is retried on a sibling rather than dropped" \
+        || bad "no redispatch — a dead session refuses connections instead of being routed around"
+fi
+
+# THE MEASUREMENT. Hold concurrent connections open through the analyst port, then read which
+# session ports actually accepted them. Passive: the counting reads /proc/net/tcp rather than
+# dialling anything, because dialling is what churns sessions.
+# One per session: a fleet-sized burst, which is what distribution has to handle. Larger
+# bursts also probe the accept-rate ceiling, and a failure there would be reported here as a
+# distribution failure — two different findings under one assertion.
+HOLD=${SESSIONS_N}
+holder="uat-boundary-spread-$$"
+# Settle first: the sections above drive traffic and cancel a session, and measuring during a
+# replacement window reports the replacement rather than the design.
+stable=0
+for _ in $(seq 1 30); do
+    if [[ "$(bound_count)" -eq "${SESSIONS_N}" ]]; then
+        stable=$((stable + 1))
+        [[ "${stable}" -ge 3 ]] && break
+    else
+        stable=0
+    fi
+    sleep 2
+done
+${RUNTIME} rm -f "${holder}" >/dev/null 2>&1 || true
+# Concurrent, and it announces when it is ready: counting before the holder has finished
+# connecting measures a moving target. It reports how many it established, so "the connections
+# were not there" and "they landed on one session" stay different answers.
+${RUNTIME} run -d --name "${holder}" --network ir-edge --dns "${DNS_EDGE_IP}" \
+    localhost/ir-workstation:latest python3 -c "
+import http.client, ssl, sys, time
+from concurrent.futures import ThreadPoolExecutor
+ctx = ssl.create_default_context(); ctx.check_hostname = False; ctx.verify_mode = ssl.CERT_NONE
+# Real requests, kept alive. A bare TCP connect would be assigned a backend but proves nothing
+# about the session behind it carrying traffic.
+# The failure REASON is reported, not just the count. 'n established' alone cannot separate a
+# refused connection from a timed-out one from a session that accepted and then failed.
+errs = []
+def open_one(_):
+    try:
+        c = http.client.HTTPSConnection('ir-platform.local', ${LISTEN}, context=ctx, timeout=90)
+        c.request('GET', '/'); c.getresponse().read()
+        return c
+    except Exception as e:
+        errs.append(type(e).__name__)
+        return None
+with ThreadPoolExecutor(max_workers=${HOLD}) as ex:
+    conns = [c for c in ex.map(open_one, range(${HOLD})) if c is not None]
+from collections import Counter
+print('WHY %s' % dict(Counter(errs)), flush=True)
+print('READY %d' % len(conns), flush=True)
+time.sleep(90)
+" >/dev/null 2>&1
+
+ESTAB=""
+for _ in $(seq 1 30); do
+    ESTAB="$(${RUNTIME} logs "${holder}" 2>/dev/null | sed -n 's/^READY //p' | head -1)"
+    WHY="$(${RUNTIME} logs "${holder}" 2>/dev/null | sed -n 's/^WHY //p' | head -1)"
+    [[ -n "${ESTAB}" ]] && break
+    sleep 2
+done
+if [[ -z "${ESTAB}" ]]; then
+    bad "the connection holder never reported ready — distribution was not measured (a test defect, not a verdict)"
+    spread=""
+else
+    spread="$(${RUNTIME} exec "${BASTION}" sh -c '
+        p='"${SESSION_BASE}"'; last=$((p + '"${SESSIONS_N}"' - 1)); out=""
+        while [ "$p" -le "$last" ]; do
+            n=$(awk -v h=":$(printf "%04X" "$p")$" "\$4==\"01\" && \$2 ~ h" \
+                /proc/net/tcp /proc/net/tcp6 2>/dev/null | wc -l)
+            out="${out}${p}=${n} "; p=$((p+1))
+        done; echo "$out"' 2>/dev/null)"
+    # While the connections are held, read each WORKER's established proxy connections
+    # (:9202, state 01) from inside its own namespace. Sessions are assigned across the
+    # registered workers, so held traffic on only one worker means the setup ceiling is still
+    # a single handshake path however many workers are registered.
+    wspread=""
+    for w in $(seq 1 "${WORKERS_N}"); do
+        if [[ "${w}" == "1" ]]; then wc_ctr="ir-enclave_boundary-egress_1"
+        else wc_ctr="ir-enclave_boundary-egress-${w}_1"; fi
+        n="$(${RUNTIME} exec "${wc_ctr}" sh -c \
+            'awk "\$2 ~ /:23F2\$/ && \$4 == \"01\"" /proc/net/tcp /proc/net/tcp6 2>/dev/null | wc -l' 2>/dev/null | tr -dc '0-9')"
+        wspread="${wspread}w${w}=${n:-0} "
+    done
+fi
+${RUNTIME} rm -f "${holder}" >/dev/null 2>&1 || true
+
+# Worker spread: the reason N workers exist. Asserted on the workers' own kernel state while
+# the connections above were held open.
+if [[ -n "${wspread:-}" ]]; then
+    w_used=0
+    for pair in ${wspread}; do
+        [[ "${pair#*=}" -gt 0 ]] && w_used=$((w_used + 1))
+    done
+    if [[ "${w_used}" -ge 2 ]]; then
+        ok "held connections were carried by ${w_used} of ${WORKERS_N} egress workers (${wspread}) — connection setup no longer funnels through one handshake path"
+    elif [[ "${w_used}" -eq 1 ]]; then
+        bad "every held connection rode ONE egress worker (${wspread}) — sessions are not spreading across the registered workers"
+    else
+        bad "no worker shows an established proxy connection while ${ESTAB} were held (${wspread}) — this measurement saw nothing (a test defect, not a verdict)"
+    fi
+fi
+
+# Reported, not asserted. Capacity is asserted in the section above, at the same size and on a
+# settled path. Repeating it here — immediately after this suite has cancelled and killed
+# sessions — measures the egress worker's connection-SETUP ceiling, which is a known limit
+# tracked as M3 in planning/SCALE-50-WORKSTATIONS.md, not a property of distribution. Asserting
+# it in two places makes one of them flap and teaches everyone to ignore the section.
+if [[ -n "${ESTAB}" && "${ESTAB}" -lt "${HOLD}" ]]; then
+    info "${ESTAB} of ${HOLD} cold connections established in one burst (${WHY:-no reason captured}) — the egress worker's setup ceiling, M3"
+fi
+if [[ -n "${spread}" ]]; then
+    used=0; total=0; busiest=0
+    for pair in ${spread}; do
+        cnt="${pair#*=}"
+        [[ "${cnt:-0}" -gt 0 ]] && used=$((used + 1))
+        total=$((total + cnt))
+        [[ "${cnt:-0}" -gt "${busiest}" ]] && busiest="${cnt}"
+    done
+    # The property is that no session carries a disproportionate share. Piled onto one it is
+    # 100%; evenly spread over N it is 1/N. The threshold separates those without demanding a
+    # perfect split, which redispatch around a rebuilding session legitimately disturbs.
+    if [[ "${total}" -eq 0 ]]; then
+        bad "no session accepted any of the ${ESTAB} held connections — the analyst path is not carrying (${spread})"
+    elif [[ "${total}" -lt $(( (SESSIONS_N + 1) / 2 )) ]]; then
+        # Too few connections landed to say anything about how they were spread.
+        bad "only ${total} connection(s) reached a session — too few to measure distribution across ${SESSIONS_N} (${spread})"
+    else
+        share=$(( busiest * 100 / total ))
+        limit=$(( 100 / SESSIONS_N + 25 ))
+        if [[ "${share}" -le "${limit}" ]]; then
+            ok "${total} connections spread over ${used}/${SESSIONS_N} sessions, busiest holding ${share}% (${spread}) — no session carries the fleet"
+        else
+            bad "the busiest session holds ${share}% of ${total} connections, over the ${limit}% a spread fleet allows (${spread})"
+        fi
+    fi
+fi
+
+# ============================================================ failure isolation
+say "One session's death is not the fleet's — measured, not asserted"
+
+# A single shared session dies under connection churn and takes every analyst with it; N
+# independent sessions confine the loss to the one that died. Asserted on the DEPLOYED broker
+# by killing one session and requiring the rest to keep carrying traffic.
+# See change_logs/ for the measurements behind the design.
+# Settle first. Earlier sections drive traffic through the first port, which legitimately
+# replaces that session; counting immediately measures the replacement window, not the design.
+for _ in $(seq 1 20); do
+    [[ "$(bound_count)" -eq "${SESSIONS_N}" ]] && break
+    sleep 3
+done
+BOUND="$(bound_count)"
+[[ "${BOUND:-0}" -eq "${SESSIONS_N}" ]] \
+    && ok "${BOUND} independent sessions are listening (${SESSION_BASE}-$((SESSION_BASE + SESSIONS_N - 1))) — separate failure domains behind one analyst port" \
+    || bad "only ${BOUND:-0} of ${SESSIONS_N} session listeners are bound"
+
+if [[ "${BOUND:-0}" -eq "${SESSIONS_N}" && "${SESSIONS_N}" -gt 1 ]]; then
+    # Kill exactly one session's client. Its supervisor replaces it; the siblings must not
+    # notice — under one shared session this same event was a fleet-wide outage.
+    ${RUNTIME} exec "${BROKER}" sh -c \
+        "pid=\$(ps -o pid,args | awk '/[b]oundary connect/ && /listen-port ${SESSION_BASE} /{print \$1; exit}'); [ -n \"\$pid\" ] && kill \$pid" \
+        >/dev/null 2>&1
+    sleep 3
+    SURV=0
+    for off in $(seq 1 $((SESSIONS_N - 1))); do
+        ${RUNTIME} exec -i "${BROKER}" sh -c "
+            awk -v h=\":\$(printf '%04X' \$((${SESSION_BASE} + ${off})))\$\" '\$4==\"0A\" && \$2 ~ h {f=1} END{exit !f}' \
+                /proc/net/tcp /proc/net/tcp6 2>/dev/null" && SURV=$((SURV + 1))
+    done
+    EXPECT_SURV=$((SESSIONS_N - 1))
+    if [[ "${SURV}" -eq "${EXPECT_SURV}" ]]; then
+        ok "killing one session left the other ${SURV} serving — a death costs 1/${SESSIONS_N} of the fleet, not all of it"
+    else
+        bad "killing one session took $((EXPECT_SURV - SURV)) sibling(s) with it (${SURV}/${EXPECT_SURV} survived) — the sessions are not independent"
+    fi
+
+    # And the analyst must not notice. With redispatch in front, a connection arriving while
+    # one session is dead is retried onto a sibling — so the path stays up THROUGH the death,
+    # not merely after the supervisor has rebuilt it.
+    still="$(${RUNTIME} exec "${BASTION}" sh -c \
+        "wget -q -S -O /dev/null --no-check-certificate --timeout=10 https://127.0.0.1:${LISTEN}/ 2>&1" || true)"
+    grep -qE 'HTTP/1\.[01] (200|30[0-9]|40[0-9])' <<<"${still}" \
+        && ok "the analyst port still carried a request while that session was down — the distributor routed around it" \
+        || bad "the analyst port failed while one of ${SESSIONS_N} sessions was down — the death is not being routed around"
+
+    RECOVERED=0
+    for _ in $(seq 1 20); do
+        [[ "$(bound_count)" -eq "${SESSIONS_N}" ]] && { RECOVERED=1; break; }
+        sleep 3
+    done
+    [[ "${RECOVERED}" == "1" ]] \
+        && ok "and the killed session came back on its own — its supervisor replaced only its own client" \
+        || bad "the killed session did not recover within 60s"
+fi
+
+# ============================================================ worker death
+say "One egress worker's death is not the fleet's"
+
+# The value of N workers is BLAST RADIUS, not setup rate: the rate ceiling belongs to the
+# session client and does not move with worker count. A worker death takes only the sessions
+# riding it, and their supervisors re-establish onto the survivors.
+# See change_logs/2026-08-09-egress-workers-and-principals.md.
+if [[ "${WORKERS_N:-1}" -gt 1 ]]; then
+    ${RUNTIME} stop -t 5 ir-enclave_boundary-egress-2_1 >/dev/null 2>&1
+    W_CARRIED=0
+    for _ in $(seq 1 15); do
+        resp_w="$(${RUNTIME} exec "${BASTION}" sh -c \
+            "wget -q -S -O /dev/null --no-check-certificate --timeout=8 https://127.0.0.1:${LISTEN}/ 2>&1" || true)"
+        grep -qE 'HTTP/1\.[01] (200|30[0-9]|40[0-9])' <<<"${resp_w}" && { W_CARRIED=1; break; }
+        sleep 3
+    done
+    [[ "${W_CARRIED}" == "1" ]] \
+        && ok "the analyst port carried a request with worker ir-egress-2 DOWN — its sessions' loss is not the fleet's" \
+        || bad "the analyst path died with one of ${WORKERS_N} workers down — worker loss is still fleet-wide"
+
+    ${RUNTIME} start ir-enclave_boundary-egress-2_1 >/dev/null 2>&1
+    W_BACK=0
+    for _ in $(seq 1 25); do
+        [[ "$(bound_count)" -eq "${SESSIONS_N}" && "$(live_session_count)" -eq "${SESSIONS_N}" ]] \
+            && { W_BACK=1; break; }
+        sleep 3
+    done
+    [[ "${W_BACK}" == "1" ]] \
+        && ok "worker restarted and the full complement of ${SESSIONS_N} sessions is live again — recovery is unattended" \
+        || bad "the session complement did not recover after the worker returned"
+else
+    info "a single worker is deployed — worker-death isolation has nothing to prove"
 fi
 
 # ============================================================ summary

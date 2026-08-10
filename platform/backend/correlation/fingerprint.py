@@ -87,7 +87,7 @@ def _base_technique(tid):
     return (tid or "").split(".")[0].strip().upper()
 
 
-# Type suffixes kept verbatim regardless of length. Named rather than measured: a length
+# Type suffixes kept verbatim regardless of length. Named explicitly, because a length
 # threshold silently decides which platforms have legible tradecraft.
 KNOWN_SUFFIX = (
     r"\.(service|timer|socket|target|mount|path|slice|scope"     # systemd units
