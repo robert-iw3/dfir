@@ -2,7 +2,7 @@
 
 *What passing proves:* Identity and idempotency are refused at the store, not merely avoided by the application: a concurrent duplicate host is rejected, a re-posted collection cannot duplicate, and the queries the UI runs use the indexes built for them. Adjudication is held to the same standard — a re-analysis supersedes rather than deletes, and an automated pass cannot discard an analyst's verdict without recording that it disagreed.
 
-- Run: `uat_schema.sh` — 2026-08-06 16:27:15Z
+- Run: `uat_schema.sh` — 2026-08-09 14:36:55Z
 
 **Preconditions**
 
@@ -77,7 +77,7 @@
 | ✅ PASS | a finding the engine holds a verdict for exists to assert against |
 | ✅ PASS | an engine pass does NOT overwrite the analyst's verdict (kept True Positive; the engine said Indeterminate) |
 | ✅ PASS | the disagreement is RECORDED for review instead of applied (engine: Indeterminate) |
-| ✅ PASS | the conflict names the pass that disagreed (run 1248) |
+| ✅ PASS | the conflict names the pass that disagreed (run 1) |
 | ✅ PASS | a refused overwrite writes no history — nothing changed to record |
 | ✅ PASS | a verdict the ENGINE owns is still revised by a later pass (True Positive -> Indeterminate) |
 | ✅ PASS | the change of mind is history naming BOTH values (True Positive -> Indeterminate) |
@@ -110,10 +110,27 @@
 |---|---|
 | ✅ PASS | every assertion in the probe ran — no section was cut short |
 
+**The audit chain stays linear when writers collide**
+
+| Result | Assertion — with evidence |
+|---|---|
+| ✅ PASS | 24 concurrent appenders all wrote (24/24) — none lost to lock contention |
+| ✅ PASS | every racing row chained from a DIFFERENT predecessor (24/24 distinct) — the appenders serialized |
+| ✅ PASS | 24 simultaneous appends left the chain exactly as they found it (ok) — concurrency adds no break |
+
+**An acknowledged discontinuity is not a way to clear a real one**
+
+| Result | Assertion — with evidence |
+|---|---|
+| ✅ PASS | the chain verifies with 0 acknowledged discontinuit(ies) and no unexplained break |
+| ✅ PASS | editing a row still breaks the chain (detected at entry 1) — checkpoints do not blanket-forgive |
+| ✅ PASS | a checkpoint naming the wrong hashes did NOT clear the break (still 1) — an acknowledgement must match its gap |
+| ✅ PASS | the ledger is unchanged by this test (0 discontinuities, same as before) |
+
 **Result**
 
 | Result | Assertion — with evidence |
 |---|---|
 | ✅ PASS | the schema enforces its own invariants — the application no longer has to be careful |
 
-**Verdict: PROVEN** — 62 assertions passed, 0 failed.
+**Verdict: PROVEN** — 69 assertions passed, 0 failed.

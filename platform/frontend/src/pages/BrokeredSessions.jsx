@@ -35,6 +35,41 @@ function duration(a, b) {
   return m < 90 ? `${m}m` : `${Math.round(m / 60)}h`;
 }
 
+/**
+ * Who was signed on while a session was open.
+ *
+ * The strength of the claim is shown alongside the names. A single overlapping sign-on is an
+ * identification; several are candidates and are labeled as such, because presenting one of
+ * them as the user would put a name against activity on evidence that cannot carry it.
+ */
+function Attribution({ session }) {
+  const names = session.analysts || [];
+  const how = session.attribution;
+
+  if (how === "unknown") {
+    return <span className="muted" title="the session has no start time to correlate against">
+      not established
+    </span>;
+  }
+  if (!names.length) {
+    return <span className="muted" title="no platform sign-on overlaps this session">
+      no sign-on
+    </span>;
+  }
+  const ws = (session.workstations || []).join(", ");
+  const title = (how === "exact"
+    ? "one sign-on overlapped this session"
+    : `${names.length} analysts were signed on while this session was open — any of them could have used it`)
+    + (ws ? ` · workstation: ${ws}` : "");
+
+  return (
+    <span title={title}>
+      {how === "exact" ? names[0] : `${names[0]} +${names.length - 1}`}
+      {how !== "exact" && <span className="muted"> (overlapping)</span>}
+    </span>
+  );
+}
+
 function bytes(n) {
   if (!n) return "0 B";
   const u = ["B", "KB", "MB", "GB"];
@@ -103,14 +138,14 @@ export default function BrokeredSessions() {
       <table className="tbl">
         <thead>
           <tr>
-            <th>State</th><th>Principal</th><th>Reached</th><th>Endpoint</th>
+            <th>State</th><th>Principal</th><th>Signed on</th><th>Reached</th><th>Endpoint</th>
             <th>Client address</th><th>Started</th><th>Duration</th><th>Transferred</th>
             <th>Ended because</th><th>Session</th>
           </tr>
         </thead>
         <tbody>
           {rows.length === 0 && (
-            <tr><td colSpan={10} className="muted">No sessions recorded.</td></tr>
+            <tr><td colSpan={11} className="muted">No sessions recorded.</td></tr>
           )}
           {rows.map((s) => (
             <tr key={s.id}>
@@ -124,6 +159,11 @@ export default function BrokeredSessions() {
                   exercise handed to the reader; the id stays on hover for correlation with
                   Boundary's own logs. */}
               <td title={s.user_id || ""}>{s.principal || "—"}</td>
+              {/* Who was actually working. The principal is a pool identity and every session
+                  arrives from the distributor, so Boundary cannot name the person; the
+                  platform's sign-on record can. Qualified, because a time overlap does not
+                  single anyone out while several analysts are working at once. */}
+              <td><Attribution session={s} /></td>
               <td title={s.target_id || ""}>{s.target || "—"}</td>
               <td className="muted"><code>{s.endpoint || "—"}</code></td>
               {/* Absent unless the session was detailed — "not retrieved" is shown as such

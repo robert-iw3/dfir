@@ -15,7 +15,8 @@ from django.conf import settings
 from django.contrib.auth.models import Group, User
 from rest_framework import authentication, exceptions
 
-from .rbac import ROLES
+from . import authevents
+from .rbac import GRANT_GROUPS, ROLES
 
 
 def _header(request, name):
@@ -56,19 +57,34 @@ class SSOHeaderAuthentication(authentication.BaseAuthentication):
                       or _header(request, "Remote-Groups"))
         groups = [g.strip().lstrip("/") for g in raw_groups.split(",") if g.strip()]
         role = next((r for r in ("admin", "analyst", "auditor") if r in groups), None)
+        # Rights that compose with the role rather than replacing it. Read from the same
+        # claim, so Keycloak stays authoritative in BOTH directions: withdrawing the group
+        # there withdraws the right here on the next request.
+        grants = [g for g in GRANT_GROUPS if g in groups]
         if role:
-            _sync_role(user, role)
+            _sync_role(user, role, grants)
         elif not user.groups.exists():
             raise exceptions.AuthenticationFailed("SSO user has no platform role group")
+
+        # Attribute the request to a sign-on, opening one on first sight. Stateless auth has
+        # no login call to hook, so this is the point at which a login becomes observable.
+        authevents.note_request(request, user, role or "")
         return (user, None)
 
 
-def _sync_role(user, role):
+def _sync_role(user, role, grants=()):
+    """Reconcile the local groups to exactly what the claim carries.
+
+    The whole set is replaced rather than merged. A grant removed in Keycloak has to be
+    removed here, and a merge would leave it in place for the life of the account — which is
+    the failure mode that matters, since the reason a right gets withdrawn mid-incident is
+    usually that someone is under suspicion.
+    """
+    desired = {role, *grants}
     current = set(user.groups.values_list("name", flat=True))
-    if current == {role}:
+    if current == desired:
         return
-    grp, _ = Group.objects.get_or_create(name=role)
-    user.groups.set([grp])
+    user.groups.set([Group.objects.get_or_create(name=name)[0] for name in sorted(desired)])
     # admin role implies Django staff/superuser for the admin site + delete rights.
     is_admin = role == "admin"
     if user.is_superuser != is_admin or user.is_staff != is_admin:

@@ -42,21 +42,64 @@ def investigation_stats(request, investigation_id):
     if not inv:
         return Response({"detail": "not found"}, status=404)
 
-    findings = Finding.objects.filter(run__investigation=inv)
+    findings = Finding.objects.filter(run__investigation=inv).select_related("run__host")
     total = findings.count()
 
     by_verdict = Counter()
     by_tactic = Counter()
     by_source = Counter()
     by_day = Counter()
-    for f in findings.only("verdict", "raw", "severity", "created_at", "finding_type"):
-        by_verdict[_verdict_of(f) or "unset"] += 1
+    # V2 marks. Bucketed technique x day x host rather than one row per finding: the shape
+    # is bounded by what happened instead of by how much was collected, and each bucket
+    # drills to the findings table with params it accepts today (?technique=&host=&
+    # investigation=) — so the chart can never claim a set the table cannot reproduce.
+    killchain = {}
+    hosts = {}
+    # Every field named here must exist on Finding: `.only()` resolves them against the model
+    # and raises for one that does not, so a stray name takes the whole endpoint down rather
+    # than being ignored. Severity is not a Finding field — it lives on the analysis rows.
+    for f in findings.only("verdict", "raw", "created_at", "finding_type",
+                           "run__host__id", "run__host__hostname"):
+        verdict = _verdict_of(f) or "unset"
+        confirmed_one = verdict in CONFIRMING
+        by_verdict[verdict] += 1
         raw = f.raw or {}
         mitre = str(raw.get("MITRE") or "")
-        by_tactic[mitre.split(" ")[0] if mitre else "unmapped"] += 1
+        technique = mitre.split(" ")[0] if mitre else "unmapped"
+        by_tactic[technique] += 1
         by_source[str(raw.get("Source") or "collection")] += 1
         when = raw.get("Timestamp") or (f.created_at.isoformat() if f.created_at else "")
-        by_day[str(when)[:10] or "unknown"] += 1
+        day = str(when)[:10] or "unknown"
+        by_day[day] += 1
+
+        host = f.run.host
+        kc = killchain.setdefault((technique, day, host.id), {
+            "technique": technique, "day": day,
+            "host_id": host.id, "host": host.hostname,
+            "count": 0, "confirmed": 0,
+        })
+        kc["count"] += 1
+        kc["confirmed"] += 1 if confirmed_one else 0
+
+        h = hosts.setdefault(host.id, {
+            "host_id": host.id, "host": host.hostname,
+            "first_seen": day, "findings": 0, "confirmed": 0,
+        })
+        h["findings"] += 1
+        h["confirmed"] += 1 if confirmed_one else 0
+        # "unknown" sorts after every date, so a real day always wins it.
+        if day != "unknown" and (h["first_seen"] == "unknown" or day < h["first_seen"]):
+            h["first_seen"] = day
+
+    # Membership bands from the current correlation, joined by hostname because the
+    # correlation layer stores hostnames, not host rows. A host outside every campaign
+    # simply carries no band — absence of a claim, not a low one.
+    from correlation.models import CampaignHost, CorrelationRun
+    crun = CorrelationRun.objects.filter(investigation_id=inv.id, is_current=True).first()
+    bands = ({ch.hostname: ch.confidence_band
+              for ch in CampaignHost.objects.filter(campaign__run=crun)} if crun else {})
+    for h in hosts.values():
+        h["confidence_band"] = bands.get(h["host"], "")
 
     confirmed = sum(n for v, n in by_verdict.items() if v in CONFIRMING)
     return Response({
@@ -70,6 +113,9 @@ def investigation_stats(request, investigation_id):
         "by_tactic": dict(by_tactic.most_common(20)),
         "by_source": dict(by_source),
         "by_day": dict(sorted(by_day.items())),
+        "killchain": sorted(killchain.values(),
+                            key=lambda k: (k["day"], k["technique"], k["host"])),
+        "hosts": sorted(hosts.values(), key=lambda h: (h["first_seen"], h["host"])),
         "computed_over": total,      # the equality uat_ui.sh checks
     })
 
@@ -130,7 +176,10 @@ def run_timeline(request, run_id):
             "at": raw.get("Timestamp") or (f.created_at.isoformat() if f.created_at else None),
             "finding_id": f.id,
             "type": f.finding_type,
-            "severity": f.severity,
+            # Severity is not a Finding column — the analysis rows carry it, and the
+            # collector records it in `raw`. Reading it as an attribute raised on every
+            # request and took the whole timeline down.
+            "severity": str(raw.get("Severity") or raw.get("severity") or ""),
             "verdict": _verdict_of(f) or "unset",
             "source": str(raw.get("Source") or "collection"),
             "target": str(raw.get("Target") or "")[:200],

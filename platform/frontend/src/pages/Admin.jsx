@@ -284,6 +284,34 @@ export default function Admin() {
             <div className="lbl">First broken id</div>
           </div>
         )}
+        {/* The SIGNATURE is a second, key-bound layer, reported apart from the chain. Rows
+            signed under a key this deployment no longer holds cannot be verified and have
+            not been contradicted; showing that as BROKEN is a false accusation on the one
+            panel an incident lead trusts, and it makes a real break unreadable. */}
+        {data.audit.signatures && (
+          <>
+            <div className="card">
+              <div className="num">{data.audit.signatures.verified}</div>
+              <div className="lbl">Signatures verified</div>
+            </div>
+            {data.audit.signatures.unverifiable_superseded_key > 0 && (
+              <div className="card">
+                <div className="num" style={{ fontSize: 20 }}>
+                  {data.audit.signatures.unverifiable_superseded_key}
+                </div>
+                <div className="lbl">Unverifiable — key superseded, not tampering</div>
+              </div>
+            )}
+            {data.audit.signatures.invalid > 0 && (
+              <div className="card bad">
+                <div className="num" style={{ color: "var(--bad)" }}>
+                  {data.audit.signatures.invalid}
+                </div>
+                <div className="lbl">INVALID under the current key</div>
+              </div>
+            )}
+          </>
+        )}
       </div>
 
       <h2>Recent analyses</h2>

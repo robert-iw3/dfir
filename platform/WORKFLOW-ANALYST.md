@@ -8,7 +8,7 @@ Access is through one SSO-gated origin (`https://ir-platform.local:8443`). No ot
 reachable from the analyst side.
 
 Related: [`WORKFLOW-RE.md`](WORKFLOW-RE.md), [`WORKFLOW-ADMIN.md`](WORKFLOW-ADMIN.md),
-[`WORKFLOW-AUDITOR.md`](WORKFLOW-AUDITOR.md), [`UI_OVERVIEW.md`](UI_OVERVIEW.md).
+[`WORKFLOW-AUDITOR.md`](WORKFLOW-AUDITOR.md), [`UI_OVERVIEW.md`](../UI_OVERVIEW.md).
 
 ---
 

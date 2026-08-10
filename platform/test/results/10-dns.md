@@ -2,7 +2,7 @@
 
 *What passing proves:* Services address each other by dynamic name, and no tier can resolve anything outside its zone — closing DNS as an exfiltration channel from the tier that parses hostile memory.
 
-- Run: `uat_dns.sh` — 2026-08-06 16:25:40Z
+- Run: `uat_dns.sh` — 2026-08-09 01:43:01Z
 
 **Resolvers**
 
@@ -23,11 +23,11 @@
 
 | Result | Assertion — with evidence |
 |---|---|
-| ✅ PASS | ir-platform.local resolves to 10.89.30.37 from the analyst browser |
+| ✅ PASS | ir-platform.local resolves to 10.89.30.170 from the analyst browser |
 | ✅ PASS | the answer is the bastion's CURRENT address (resolved, not pinned) |
-| ✅ PASS | bastion resolves by name (10.89.0.10) |
-| ✅ PASS | headscale resolves by name (10.89.0.9) |
-| ✅ PASS | receiver resolves by name (10.89.0.8) |
+| ✅ PASS | bastion resolves by name (10.89.0.11) |
+| ✅ PASS | headscale resolves by name (10.89.0.10) |
+| ✅ PASS | receiver resolves by name (10.89.0.9) |
 
 **Enclave — services resolve each other by name**
 
@@ -45,7 +45,7 @@
 
 | Result | Assertion — with evidence |
 |---|---|
-| ✅ PASS | receiver resolves from the puller (10.89.0.8) — the evidence path inward |
+| ✅ PASS | receiver resolves from the puller (10.89.0.9) — the evidence path inward |
 | ✅ PASS | bastion is NOT resolvable from the enclave (only receiver is) |
 | ✅ PASS | headscale is NOT resolvable from the enclave (only receiver is) |
 

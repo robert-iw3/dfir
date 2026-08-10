@@ -25,36 +25,28 @@ SIZE=$(stat -c%s "${BUNDLE}")
 SHA=$(sha256sum "${BUNDLE}" | awk '{print $1}')
 echo "[ship] ${BUNDLE} (${SIZE} bytes, sha256=${SHA%"${SHA#????????????????}"}…) -> ${RECEIVER_URL}/ingest"
 
-# `-T` streams the file from disk. `--data-binary @file` reads all of it into memory first.
+# `-T` streams from disk; `--data-binary @file` buffers the whole bundle in memory. A bundle is
+# sized by the endpoint's RAM, so buffering OOM-kills curl with no output but `Killed`. `-T`
+# with an explicit `-X POST` streams the body and sets Content-Length from the file size.
 #
-# A bundle is sized by the endpoint's RAM, so buffering it needs about as much memory again as
-# the machine has. The kernel OOM-kills curl and the only output is `Killed` — which names
-# nothing, and reads as the receiver rejecting the upload rather than the client dying before
-# it sent anything. `-T` with an explicit `-X POST` streams the body and sets Content-Length
-# from the file size, which is what the receiver reads the request against.
-#
-# The timeout is hours, not one hour: the transfer is bounded by the size of a memory image
-# over whatever link the endpoint has, and a capture that ships at 10 Mb/s needs longer than
-# 3600s to move.
+# The timeout is hours: a memory image at 10 Mb/s needs longer than 3600s to move.
 set -- --fail --show-error --silent \
        --max-time "${SHIP_TIMEOUT:-14400}" \
        --retry "${SHIP_RETRIES:-3}" --retry-delay 10 --retry-connrefused \
        -X POST -T "${BUNDLE}" \
        -H "Content-Type: application/gzip"
 # ---- transport security ---------------------------------------------------
-# What goes up this connection is a memory image: every credential, key, token and open file
-# the host had in RAM. The custody seal proves the bundle was not ALTERED in transit; it does
-# nothing to stop it being READ. An endpoint under suspicion is usually on a segment the
-# responder neither controls nor trusts, which is the case this has to hold up in.
+# This carries a memory image: every credential, key, token and open file the host had in RAM.
+# The custody seal proves the bundle was not ALTERED; it does nothing to stop it being READ,
+# and the endpoint is usually on a segment the responder neither controls nor trusts.
 #
-# Server verification is what stops the collector handing the machine's memory to whoever
-# answers on that address. curl verifies by default; CA_BUNDLE points at the DMZ's CA when the
-# receiver uses an internal PKI rather than a publicly-trusted certificate.
+# Server verification stops the collector handing that to whoever answers on the address. curl
+# verifies by default; CA_BUNDLE points at the DMZ's CA for an internal PKI.
 [ -n "${CA_BUNDLE:-}" ] && set -- "$@" --cacert "${CA_BUNDLE}"
 
-# A client certificate, when the receiver requires one, keeps third parties from filling its
-# holding volume or planting bundles. It is NOT a defense against a hostile endpoint — this host
-# is presumed compromised, so a key stored on it is presumed readable by the adversary too.
+# A client certificate keeps third parties from filling the receiver's holding volume. NOT a
+# defense against a hostile endpoint: this host is presumed compromised, so a key stored on it
+# is presumed readable.
 [ -n "${CLIENT_CERT:-}" ] && set -- "$@" --cert "${CLIENT_CERT}"
 [ -n "${CLIENT_KEY:-}" ]  && set -- "$@" --key "${CLIENT_KEY}"
 

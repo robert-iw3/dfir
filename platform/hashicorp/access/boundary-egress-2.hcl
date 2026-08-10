@@ -1,0 +1,59 @@
+# Boundary egress worker — the process that actually carries an authorized session.
+#
+# Rendered by deploy.sh; do not edit the generated file.
+#
+# WHY IT IS IN THE ENCLAVE. A worker proxies to the target, so it must have a route to the target.
+# Putting it in the DMZ would mean a DMZ container with a route onto the enclave's internal
+# network — the exact reach the tier split exists to deny. Here it sits beside the ingress it
+# proxies to, and the DMZ keeps no route at all: the session client dials this worker's proxy port
+# across the link and the worker does the reaching.
+#
+# It holds no database, no grants and no recovery key. Compromising it yields the ability to
+# proxy sessions the controller has already authorized against the one target that exists.
+disable_mlock = true
+
+worker {
+  # Required for KMS-registered workers, and the name sessions are attributed to.
+  name        = "ir-egress-2"
+  description = "Carries authorized sessions to the enclave ingress"
+
+  initial_upstreams = ["boundary:9201"]
+
+  # What the controller hands the session client to dial. Resolved at deploy time: a worker
+  # advertising an address the client cannot reach establishes sessions that then carry nothing,
+  # and the failure surfaces as a hung connection rather than an error.
+  public_addr = "boundary-egress-2:9202"
+
+  tags {
+    tier = ["enclave"]
+    role = ["egress"]
+  }
+}
+
+# The session data path. No TLS settings, and none are missing: `proxy` negotiates its own
+# ephemeral TLS per session, keyed to that session's identity. `tls_disable` is silently IGNORED
+# on this purpose, so setting it would describe a cleartext channel that does not exist.
+listener "tcp" {
+  address = "0.0.0.0:9202"
+  purpose = "proxy"
+}
+
+# Health only, on loopback, read by this container's own probe. Separate from the proxy listener
+# so a health check never rides the path that carries sessions.
+listener "tcp" {
+  address     = "127.0.0.1:9203"
+  purpose     = "ops"
+  tls_disable = true
+}
+
+# The same key the controller holds. Matching worker-auth material IS the registration: the worker
+# authenticates with it and the controller admits it, with no approval step and no identity on
+# disk. That is appropriate only because both processes are inside the enclave — a worker in an
+# untrusted tier would have to register worker-led, so that no key capable of minting a worker
+# ever sits there.
+kms "aead" {
+  purpose   = "worker-auth"
+  aead_type = "aes-gcm"
+  key       = "/2TOz3xvz+4K7U8Zo2IqUiGkDuNwsdLsBptOlGtCeIQ="
+  key_id    = "global_worker-auth"
+}

@@ -18,9 +18,13 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import ssl
 import urllib.error
 import urllib.request
+from datetime import datetime
+
+from .models import SsoSession
 
 BOUNDARY_ADDR = os.environ.get("IR_BOUNDARY_ADDR", "https://boundary:9200")
 BOUNDARY_CACERT = os.environ.get("IR_BOUNDARY_CACERT") or None
@@ -28,6 +32,22 @@ LOGIN = os.environ.get("IR_BOUNDARY_SESSION_AUDITOR_LOGIN", "session-auditor")
 PASSWORD = os.environ.get("IR_BOUNDARY_SESSION_AUDITOR_PASSWORD", "")
 AUTH_METHOD_ID = os.environ.get("BOUNDARY_AUTH_METHOD_ID", "")
 SCOPE_ID = os.environ.get("BOUNDARY_PROJECT_ID", "")
+# How many recent sign-ons are considered when attributing a session to a person. Bounded so
+# an audit page reading a long history does not walk the whole table.
+ATTRIBUTION_LIMIT = 500
+# The configured workstation set, in the order the distributor's pinning map is rendered
+# from: the Nth workstation's connections land on session principal analyst-sN. One variable
+# on both sides, so the pairing cannot drift.
+WS_IDS = os.environ.get("IR_WS_IDS", "").split()
+
+
+def _principal_workstation(principal):
+    """Which workstation a pool principal carries, by configuration; '' when unpinned."""
+    m = re.match(r"analyst-s(\d+)$", principal or "")
+    if not m:
+        return ""
+    idx = int(m.group(1)) - 1
+    return WS_IDS[idx] if 0 <= idx < len(WS_IDS) else ""
 
 # Boundary's own vocabulary, kept rather than renamed: an operator reading this page and then
 # running `boundary sessions list` should see the same words.
@@ -156,6 +176,72 @@ def _shape(item, users, targets):
     }
 
 
+def _parse(ts):
+    if not ts:
+        return None
+    try:
+        return datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def _attribute(items):
+    """Name the people who were signed on while each session was open.
+
+    Boundary authenticates a POOL principal (analyst-s1..sN) and sees every connection arriving
+    from the distributor, so its own record cannot say which analyst used which session. The
+    person is known on the platform side instead, from the sign-on record.
+
+    The join is a time overlap, which does not produce a unique answer when several analysts
+    are working at once. `attribution` says which case each row is, so a session is never
+    presented as belonging to one person on evidence that cannot support it.
+    """
+    windows = [
+        (s.started_at, s.ended_at or s.last_seen_at, s.username, s.workstation)
+        for s in SsoSession.objects.filter(started_at__isnull=False)
+                                   .order_by("-started_at")[:ATTRIBUTION_LIMIT]
+    ]
+    for item in items:
+        opened = _parse(item.get("created_time"))
+        closed = _parse(item.get("ended_time"))
+        pinned_ws = _principal_workstation(item.get("principal"))
+        item["pinned_workstation"] = pinned_ws
+        if opened is None:
+            # No start time to compare against. Reported as unknown rather than as nobody:
+            # an empty analyst list would read as "no one used this session".
+            item["analysts"] = []
+            item["workstations"] = []
+            item["attribution"] = "unknown"
+            continue
+        matched = [w for w in windows if _overlaps(w, opened, closed)]
+        # The session's principal names a workstation by configuration (the distributor pins
+        # that workstation's connections to it), and a sign-on names its workstation from the
+        # kiosk's own statement. When both sides speak, the join narrows to the sign-ons from
+        # THAT workstation. When neither or only one does, the wide time-overlap stands —
+        # never narrowed on half the evidence.
+        if pinned_ws:
+            narrowed = [w for w in matched if w[3] == pinned_ws]
+            if narrowed:
+                matched = narrowed
+        item["analysts"] = sorted({user for (_s, _e, user, _ws) in matched})
+        item["workstations"] = sorted({ws for (_s, _e, _u, ws) in matched if ws})
+        item["attribution"] = ("none" if not matched
+                               else "exact" if len(item["analysts"]) == 1
+                               else "overlapping")
+
+
+def _overlaps(window, opened, closed):
+    """Whether a sign-on window overlaps a session window.
+
+    A session still open has no end, which is an open interval rather than a zero-length one —
+    treating a missing end as the start would exclude every session currently in use.
+    """
+    start, end, _user, _ws = window
+    if closed is not None and start > closed:
+        return False
+    return end is None or end >= opened
+
+
 def overview(include_terminated=True):
     """Every brokered session Boundary knows about, newest first."""
     if not AUTH_METHOD_ID:
@@ -190,6 +276,7 @@ def overview(include_terminated=True):
 
     users, targets = _names(token)
     items = [_shape(i, users, targets) for i in raw]
+    _attribute(items)
     return {
         "reachable": True,
         "sessions": items,

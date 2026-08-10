@@ -2,7 +2,7 @@
 
 *What passing proves:* 25 real collector runs — 16 compromised across two investigations, 9 clean, fleet-wide benign noise on all — ship, ingest, analyze and correlate through the production path; clean hosts classify clean and join no campaign.
 
-- Run: `uat_corpus.sh` — 2026-08-06 16:34:54Z
+- Run: `uat_corpus.sh` — 2026-08-09 01:55:16Z
 
 **Preconditions**
 

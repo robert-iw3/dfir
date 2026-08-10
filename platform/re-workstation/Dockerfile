@@ -7,7 +7,7 @@
 # Binary Ninja is fetched at BUILD time. The free edition needs no licence, activation or
 # call-home, so a session needs no network at all — which is why `launch.sh` runs the
 # container with `--network none`. Network exists only while this image is built.
-FROM docker.io/library/debian:12
+FROM docker.io/library/debian:12@sha256:813017f3d62be4b5891a7acca6a01bdcd4b8513daa81b1ab99d3a50385b26931
 
 ENV DEBIAN_FRONTEND=noninteractive \
     QT_QPA_PLATFORM=xcb \

@@ -2581,13 +2581,13 @@ Verified by: test/uat_srg_webtier.sh — a deployed pass ships, objects and offs
 					<VULN_ATTRIBUTE>CCI_REF</VULN_ATTRIBUTE>
 					<ATTRIBUTE_DATA>CCI-003992</ATTRIBUTE_DATA>
 				</STIG_DATA>
-				<STATUS>Open</STATUS>
-				<FINDING_DETAILS>PLANNED — feasible on the current architecture.
+				<STATUS>NotAFinding</STATUS>
+				<FINDING_DETAILS>MITIGATED. Every external FROM names a DIGEST, not a tag. A tag is a mutable pointer — alpine:3.24 is whatever the registry decides on the day of the build — so two builds of one source produced different images and neither could be said to be the one reviewed. Pulling by digest IS the integrity check: podman refuses content that does not hash to the name requested, so there is nothing further to verify at build time. ci/base-images.lock is the manifest record the control asks for. The Rust toolchain is RECORDED but not rewritten inline: build.sh passes RUST_VERSION from rust-toolchain.toml and an inline digest would silently win over that file.
 
-Images are built from source but their base images are pinned by tag, not digest, and no signature or checksum is verified at build. Pin by digest and record the manifest.
+Evidence: ci/pin-base-images.sh (--check/--update/--apply), ci/base-images.lock, 16 FROM lines across backend, worker, collector, dmz, frontend, ingest, keycloak, workstation, re-workstation, consul sidecar, ntp, troubleshooting agent
 
-Where: every Dockerfile; ci/image-currency.sh</FINDING_DETAILS>
-				<COMMENTS>Determination: Implement. Tracked in artifacts/srg_status.yml; regenerate with gen_srg_tracker.py.</COMMENTS>
+Verified by: uat_srg_webtier.sh — the check passes on the tree, and is proven to catch both failure modes by injection: a FROM reverted to a bare tag, and a FROM carrying a digest that disagrees with the lock</FINDING_DETAILS>
+				<COMMENTS>Determination: Mitigated. Tracked in artifacts/srg_status.yml; regenerate with gen_srg_tracker.py.</COMMENTS>
 				<SEVERITY_OVERRIDE />
 				<SEVERITY_JUSTIFICATION />
 			</VULN>
@@ -11555,13 +11555,13 @@ Verified by: test/uat_consul.sh — denied pairs are refused on the wire</FINDIN
 					<VULN_ATTRIBUTE>CCI_REF</VULN_ATTRIBUTE>
 					<ATTRIBUTE_DATA>CCI-002605</ATTRIBUTE_DATA>
 				</STIG_DATA>
-				<STATUS>Open</STATUS>
-				<FINDING_DETAILS>PLANNED — feasible on the current architecture.
+				<STATUS>NotAFinding</STATUS>
+				<FINDING_DETAILS>MITIGATED. ci/image-currency.sh already asked the registry whether each pin had moved on; detecting drift was never the gap. The gap was that nothing recorded WHEN a review happened, so 'we check regularly' was unfalsifiable. --record writes the date AND the finding count, because a review that found five stale images and one that found none are different events; --age fails once the record passes the 30-day ceiling the control names.
 
-ci/image-currency.sh already detects drift from current stable versions — the mechanism exists. What is missing is the 30-day cadence and a record of applying it.
+Evidence: ci/image-currency.sh (--record, --age), ci/image-currency.record
 
-Where: ci/image-currency.sh</FINDING_DETAILS>
-				<COMMENTS>Determination: Implement. Tracked in artifacts/srg_status.yml; regenerate with gen_srg_tracker.py.</COMMENTS>
+Verified by: uat_srg_webtier.sh — the record exists, is within the interval, and the gate is proven to fail on an overdue record by backdating one</FINDING_DETAILS>
+				<COMMENTS>Determination: Mitigated. Tracked in artifacts/srg_status.yml; regenerate with gen_srg_tracker.py.</COMMENTS>
 				<SEVERITY_OVERRIDE />
 				<SEVERITY_JUSTIFICATION />
 			</VULN>
@@ -12935,13 +12935,13 @@ Verified by: test/uat_srg_webtier.sh — the policy is read back from the runnin
 					<VULN_ATTRIBUTE>CCI_REF</VULN_ATTRIBUTE>
 					<ATTRIBUTE_DATA>CCI-004059</ATTRIBUTE_DATA>
 				</STIG_DATA>
-				<STATUS>Open</STATUS>
-				<FINDING_DETAILS>PLANNED — feasible on the current architecture.
+				<STATUS>NotAFinding</STATUS>
+				<FINDING_DETAILS>MITIGATED. Keycloak passwordBlacklist(dfir-platform.txt), added to the realm password policy that converges on every deploy (D-008). The list is baked into the image beside the theme and for the same reason: a policy naming a file Keycloak cannot read fails password SETTING, and the first sign would be an analyst unable to complete a forced reset. Seeded with platform CONTEXT terms as well as weak forms — 'IrPlatform#2026' satisfies length, case, digits and specials, and is the first thing an attacker who has read the public repository would try. A composition rule cannot catch that; a list can. It gates password setting only, never sign-in.
 
-Updating the blacklist is an operational procedure plus a staged file — the same inbound path symbol tables use.
+Evidence: keycloak/password-blacklists/dfir-platform.txt, keycloak/Dockerfile (COPY + build-time test -s), hashicorp/keycloak/realm-irplatform.json passwordPolicy
 
-Where: keycloak/, symbols/README.md (the staging pattern to follow)</FINDING_DETAILS>
-				<COMMENTS>Determination: Implement. Tracked in artifacts/srg_status.yml; regenerate with gen_srg_tracker.py.</COMMENTS>
+Verified by: uat_srg_webtier.sh — the policy names the list, the file is present and non-empty inside the running Keycloak, and the review record is within its interval</FINDING_DETAILS>
+				<COMMENTS>Determination: Mitigated. Tracked in artifacts/srg_status.yml; regenerate with gen_srg_tracker.py.</COMMENTS>
 				<SEVERITY_OVERRIDE />
 				<SEVERITY_JUSTIFICATION />
 			</VULN>
@@ -13050,13 +13050,13 @@ Where: keycloak/, symbols/README.md (the staging pattern to follow)</FINDING_DET
 					<VULN_ATTRIBUTE>CCI_REF</VULN_ATTRIBUTE>
 					<ATTRIBUTE_DATA>CCI-004060</ATTRIBUTE_DATA>
 				</STIG_DATA>
-				<STATUS>Open</STATUS>
-				<FINDING_DETAILS>PLANNED — feasible on the current architecture.
+				<STATUS>NotAFinding</STATUS>
+				<FINDING_DETAILS>MITIGATED. The same list and the same converge path. This control differs from WSR-000200 only in its trigger — suspected compromise rather than a schedule — so the mechanism is shared and the RECORD is what distinguishes them: --record takes a reason, and an out-of-cycle update states what prompted it.
 
-Same list, updated on compromise. Procedure plus staged file.
+Evidence: keycloak/password-blacklists/dfir-platform.txt, ci/password-blacklist-check.sh
 
-Where: keycloak/</FINDING_DETAILS>
-				<COMMENTS>Determination: Implement. Tracked in artifacts/srg_status.yml; regenerate with gen_srg_tracker.py.</COMMENTS>
+Verified by: uat_srg_webtier.sh — same assertions as WSR-000200, plus the reason field on the record</FINDING_DETAILS>
+				<COMMENTS>Determination: Mitigated. Tracked in artifacts/srg_status.yml; regenerate with gen_srg_tracker.py.</COMMENTS>
 				<SEVERITY_OVERRIDE />
 				<SEVERITY_JUSTIFICATION />
 			</VULN>
@@ -14315,13 +14315,13 @@ Verified by: test/uat_vault.sh — credentials are dynamic, minted live, and rev
 					<VULN_ATTRIBUTE>CCI_REF</VULN_ATTRIBUTE>
 					<ATTRIBUTE_DATA>CCI-004922</ATTRIBUTE_DATA>
 				</STIG_DATA>
-				<STATUS>Open</STATUS>
-				<FINDING_DETAILS>PLANNED — feasible on the current architecture.
+				<STATUS>NotAFinding</STATUS>
+				<FINDING_DETAILS>MITIGATED. The enclave runs its own chrony, staged beside the resolver and for the same reason: `internal: true` installs no route off the host, so both authorities must live inside the segment. It serves the enclave HOSTS, whose chrony clients discipline their own clocks; containers inherit from the host and cannot set time, so the service runs with -x and never touches a clock it does not own. This matters more here than on an ordinary web tier: temporal_coherence compares instants ACROSS hosts, so a drifting enclave does not produce a wrong-looking record, it places a plausible one at the wrong point on the timeline.
 
-Containers inherit the host clock, so synchronization is the host's NTP configuration — which the platform does not currently assert. It becomes a host-preparation task in the Ansible track.
+Evidence: ntp/Dockerfile, ntp/chrony.conf, ntp/entrypoint.sh, deploy/enclave/docker-compose.yml (ntp on internal + dmzlink), deploy/deploy.sh stage 0a, ci/clock-sync-check.sh
 
-Where: Ansible track (host preparation)</FINDING_DETAILS>
-				<COMMENTS>Determination: Implement. Tracked in artifacts/srg_status.yml; regenerate with gen_srg_tracker.py.</COMMENTS>
+Verified by: uat_srg_webtier.sh — the service answers chronyc and is serving; the host clock is synchronized; and a container's clock is proven to agree with the host's, which is the inheritance the design assumed and had never tested</FINDING_DETAILS>
+				<COMMENTS>Determination: Mitigated. Tracked in artifacts/srg_status.yml; regenerate with gen_srg_tracker.py.</COMMENTS>
 				<SEVERITY_OVERRIDE />
 				<SEVERITY_JUSTIFICATION />
 			</VULN>
@@ -14430,13 +14430,13 @@ Where: Ansible track (host preparation)</FINDING_DETAILS>
 					<VULN_ATTRIBUTE>CCI_REF</VULN_ATTRIBUTE>
 					<ATTRIBUTE_DATA>CCI-004923</ATTRIBUTE_DATA>
 				</STIG_DATA>
-				<STATUS>Open</STATUS>
-				<FINDING_DETAILS>PLANNED — feasible on the current architecture.
+				<STATUS>NotAFinding</STATUS>
+				<FINDING_DETAILS>MITIGATED. Comparison against an authoritative source, with the air gap stated rather than hidden. IR_NTP_UPSTREAM names the reference and the service is disciplined by it; unset, the service serves from a LOCAL stratum 10 reference and the check reports the segment as internally consistent but NOT traceable. Stratum 10 is deliberately poor so any client that can reach a real source prefers it. CONDITIONAL BY DESIGN: a deployment that names no upstream does not satisfy traceability, and the check says so instead of passing quietly — a check that failed on the designed air-gapped case would simply be turned off.
 
-Comparison against an authoritative source is the same host-preparation task; inside an enclave with no egress the source is an internal stratum server.
+Evidence: ntp/entrypoint.sh (upstream templating), ci/clock-sync-check.sh, deploy/.env IR_NTP_UPSTREAM
 
-Where: Ansible track (host preparation), deploy/NETWORKING.md</FINDING_DETAILS>
-				<COMMENTS>Determination: Implement. Tracked in artifacts/srg_status.yml; regenerate with gen_srg_tracker.py.</COMMENTS>
+Verified by: uat_srg_webtier.sh — when IR_NTP_UPSTREAM is set the upstream must actually be reached, so an unreachable server cannot read the same as a deliberate air gap; when unset the untraceable state is reported explicitly</FINDING_DETAILS>
+				<COMMENTS>Determination: Mitigated. Tracked in artifacts/srg_status.yml; regenerate with gen_srg_tracker.py.</COMMENTS>
 				<SEVERITY_OVERRIDE />
 				<SEVERITY_JUSTIFICATION />
 			</VULN>

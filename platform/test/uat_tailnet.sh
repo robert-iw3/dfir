@@ -19,6 +19,9 @@ PLATFORM="$(cd "${HERE}/.." && pwd)"
 report_begin 20 tailnet "Analyst tunnel — WireGuard reachability" \
     "An analyst workstation reaches the platform only over an authenticated WireGuard tunnel to the bastion, with no route to any internal host."
 RUNTIME="${IR_RUNTIME:-podman}"
+# The deployment's configuration, so IR_WS_IDS is the fleet this deployment actually issued
+# identities to rather than an unset variable falling back to a single default.
+set -a; . "${PLATFORM}/deploy/.env" 2>/dev/null || true; set +a
 
 
 # Count matches rather than trust grep's status: a quiet grep closes the pipe under its
@@ -185,11 +188,29 @@ for pair in "${BASTION}:bastion" "${ANALYST}:analyst"; do
     else
         bad "${label} relays through '${relay}' — not the embedded region; it reached the public fleet"
     fi
+    # Health warnings are CLASSIFIED, not counted. tailscaled cannot create its own iptables
+    # chains inside a rootless container when the host has not loaded the filter table, and it
+    # reports that forever while the tunnel works — WireGuard carries regardless, which the
+    # assertions above and below prove independently. Counting makes that host-state detail
+    # fail the platform; ignoring it would hide a real impairment. So it is named, and
+    # anything else still fails.
     health="$(${RUNTIME} exec -i "${c}" tailscale status --json 2>/dev/null \
-        | python3 -c "import json,sys; print(len(json.load(sys.stdin).get('Health') or []))" 2>/dev/null)"
-    [[ "${health:-0}" -eq 0 ]] \
-        && ok "${label} reports no tunnel health warnings" \
-        || bad "${label} reports ${health} health warning(s)"
+        | python3 -c "
+import json, sys
+warns = json.load(sys.stdin).get('Health') or []
+benign = [w for w in warns if 'iptables' in w or 'ip6tables' in w]
+print(len(warns), len(warns) - len(benign))
+" 2>/dev/null)"
+    read -r h_all h_real <<<"${health:-}"
+    if [[ -z "${h_all}" ]]; then
+        bad "${label}: tunnel health could not be read — this check knows nothing (a test defect, not a verdict)"
+    elif [[ "${h_real}" -eq 0 && "${h_all}" -eq 0 ]]; then
+        ok "${label} reports no tunnel health warnings"
+    elif [[ "${h_real}" -eq 0 ]]; then
+        ok "${label}: no impairment — ${h_all} warning(s), all the rootless-container netfilter limitation, which does not stop WireGuard carrying"
+    else
+        bad "${label} reports ${h_real} tunnel health warning(s) beyond the known netfilter limitation"
+    fi
 done
 
 # The control plane must be TLS, since that is the precondition for the relay above.
@@ -241,6 +262,87 @@ for target in db:5432 minio:9000 backend:8000 keycloak:8080; do
 done
 
 # ------------------------------------------------------------------ verdict
+# ============================================================ M1 — workstation identity
+say "Identity — a second workstation is a second node, not a collision"
+
+# The requirement is 50+ workstations. Two answering to one tailnet name are ONE node to the
+# control plane, and the tunnel then works for whichever registered last — which looks like an
+# intermittent VPN fault rather than a naming collision. Asserted on the CONTROL PLANE's own
+# record, because that is what decides which node a packet belongs to.
+WS_IDS="${IR_WS_IDS:-analyst}"
+NODES="$(${RUNTIME} exec ir-dmz_headscale_1 headscale nodes list -o json 2>/dev/null || echo '[]')"
+
+ws_seen=0; ws_missing=""
+for ws in ${WS_IDS}; do
+    if python3 -c "
+import json, sys
+try: nodes = json.loads(sys.argv[1])
+except Exception: sys.exit(2)
+sys.exit(0 if any(n.get('given_name') == sys.argv[2] or n.get('name') == sys.argv[2]
+                  for n in nodes) else 1)
+" "${NODES}" "${ws}" 2>/dev/null; then
+        ws_seen=$((ws_seen + 1))
+    else
+        ws_missing="${ws_missing} ${ws}"
+    fi
+done
+WS_N="$(wc -w <<<"${WS_IDS}")"
+[[ "${ws_seen}" -eq "${WS_N}" ]] \
+    && ok "every configured workstation is a distinct node on the control plane (${WS_N}: ${WS_IDS})" \
+    || bad "workstation(s) not registered as nodes:${ws_missing:- none} — a name collision, not a second workstation"
+
+# Distinct identity is more than a distinct name: two nodes sharing a machine key are the same
+# node re-registered, which is exactly what a shared state volume produces.
+if [[ "${WS_N}" -gt 1 ]]; then
+    KEYS="$(python3 -c "
+import json, sys
+try: nodes = json.loads(sys.argv[1])
+except Exception: raise SystemExit
+want = set(sys.argv[2].split())
+sel = [n for n in nodes if (n.get('given_name') or n.get('name')) in want]
+print(len(sel), len({n.get('machine_key') for n in sel}), len({tuple(n.get('ip_addresses') or []) for n in sel}))
+" "${NODES}" "${WS_IDS}" 2>/dev/null)"
+    read -r k_n k_keys k_ips <<<"${KEYS}"
+    if [[ -z "${k_n}" ]]; then
+        bad "the node records could not be read — this check knows nothing (a test defect, not a verdict)"
+    else
+        [[ "${k_n}" == "${k_keys}" && "${k_n}" == "${k_ips}" ]] \
+            && ok "${k_n} workstations hold ${k_keys} distinct machine keys and ${k_ips} distinct tailnet addresses" \
+            || bad "${k_n} workstations share only ${k_keys} machine key(s) / ${k_ips} address(es) — one identity, not several"
+    fi
+
+    # Each workstation's tailnet state is its own. A shared volume is how two nodes end up
+    # presenting one identity even when the names differ.
+    vols="$(${RUNTIME} volume ls -q 2>/dev/null | grep -c 'tailnet-state' || true)"
+    [[ "${vols}" -ge "${WS_N}" ]] \
+        && ok "${vols} separate tailnet state volumes — no workstation writes another's node identity" \
+        || bad "${vols} tailnet state volume(s) for ${WS_N} workstations — they share node state"
+
+    # And the second workstation must actually reach the platform through its OWN tunnel.
+    # Reachability for the first proves nothing about the second: that is the collision.
+    for ws in ${WS_IDS}; do
+        [[ "${ws}" == "analyst" ]] && continue
+        probe="ir-workstation-${ws}_probe_1"
+        if ! ${RUNTIME} inspect "${probe}" >/dev/null 2>&1; then
+            info "${ws}: no diagnostics probe deployed — start it with the diagnostics profile to assert its path"
+            continue
+        fi
+        code="$(${RUNTIME} exec "${probe}" python3 -c "
+import ssl, urllib.request, urllib.error
+ctx = ssl.create_default_context(); ctx.check_hostname = False; ctx.verify_mode = ssl.CERT_NONE
+try:
+    print(urllib.request.urlopen('${IR_PLATFORM_URL%/}/', context=ctx, timeout=25).getcode())
+except urllib.error.HTTPError as e:
+    print(e.code)
+except Exception:
+    print(0)
+" 2>/dev/null | tr -dc '0-9')"
+        [[ "${code:-0}" -ge 200 && "${code:-0}" -lt 500 ]] \
+            && ok "${ws} reached the platform through its own tunnel (HTTP ${code})" \
+            || bad "${ws} could not reach the platform through its own tunnel (got ${code:-nothing})"
+    done
+fi
+
 say "Tailnet"
 if (( FAILED )); then
     printf '  \033[1;31mTAILNET UAT FAILED\033[0m\n\n'

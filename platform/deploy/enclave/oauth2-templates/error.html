@@ -1,0 +1,53 @@
+{{/*
+Gate error page.
+
+A login that fails at the callback leaves the analyst on a 403 with no way forward. The
+common cause is the CSRF cookie: the gate issues one per login attempt and the callback needs
+the matching one back, so a cookie jar cleared mid-flow — a kiosk restart, an evicted
+attempt, a session resumed from before the browser closed — arrives with nothing to match and
+is rejected. The login itself is fine; only the attempt is unrecoverable.
+
+So the attempt is restarted rather than reported. One automatic retry, guarded by a flag in
+sessionStorage: a second failure means the cause is not a stale attempt, and retrying forever
+would turn a broken login into a redirect loop that never shows the reason. The manual button
+stays either way, so the page is never a dead end even with scripting off.
+*/}}
+<div class="page">
+  <h2>{{.Title}}</h2>
+  <p class="detail">{{.Message}}</p>
+
+  <p id="retrying" hidden>Signing you in again…</p>
+  <p><a class="button" href="{{.ProxyPrefix}}/start?rd=%2F">Sign in again</a></p>
+
+  <p class="quiet">
+    If this repeats, close every tab for this site and open it again — that clears the
+    half-finished login attempt this page is reporting.
+  </p>
+</div>
+
+<style>
+  .page { font-family: system-ui, sans-serif; max-width: 34rem; margin: 4rem auto; padding: 0 1rem; }
+  h2 { font-size: 1.25rem; margin-bottom: .5rem; }
+  .detail { color: #444; }
+  .quiet { color: #666; font-size: .875rem; margin-top: 2rem; }
+  .button { display: inline-block; padding: .5rem 1rem; border: 1px solid #444;
+            border-radius: .25rem; text-decoration: none; color: inherit; }
+</style>
+
+<script>
+  (function () {
+    var code = {{.StatusCode}};
+    // 403 is the CSRF/cookie rejection. Other codes are not retried: a 500 retried on a
+    // loop hides the fault instead of surfacing it.
+    if (code !== 403) return;
+    var KEY = "oauth2-retry";
+    try {
+      if (sessionStorage.getItem(KEY)) { sessionStorage.removeItem(KEY); return; }
+      sessionStorage.setItem(KEY, "1");
+    } catch (e) {
+      return;   // no sessionStorage means no way to bound the retry, so do not start one
+    }
+    document.getElementById("retrying").hidden = false;
+    window.location.replace({{.ProxyPrefix}} + "/start?rd=%2F");
+  })();
+</script>

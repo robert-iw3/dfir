@@ -62,6 +62,66 @@ grep -q '"initialized": *true' <<<"${vs}" && ok "initialized" || bad "not initia
 grep -q '"sealed": *false' <<<"${vs}" && ok "unsealed" \
     || bad "SEALED — it answers health checks and serves nothing; deploy.sh runs vault-unseal.sh"
 
+# Unsealed BECAUSE THE SERVER DOES IT, not because a deploy happened to run recently. Vault
+# seals on every restart by design, and restarts have causes a deploy never sees — a crash, an
+# operator, or the mesh repair recreating a sidecar and taking its service with it. Unsealing
+# only at deploy time leaves the platform answering health checks and serving nothing: no
+# dynamic database credential, no custody HMAC, no mesh authentication.
+#
+# Restarted here rather than read off the container's command, because a command that names
+# the unseal script proves it was configured, not that the unprivileged server can read the
+# key — which is exactly where this failed: root-owned 0600 state, server running as uid 65535.
+# The signing keys are IDENTITY FOR DATA AT REST, and the deploy must not touch them.
+# `vault kv put` replaces a whole secret and vault-setup runs every deploy, so generating
+# defaults inline minted a new audit HMAC, custody HMAC and Django secret on every bring-up:
+# every audit signature and every custody seal already written stopped verifying, and the
+# platform reported its own tamper-evidence as broken with nothing having tampered.
+#
+# Asserted by RUNNING the provisioning path again and comparing, not by reading the script:
+# the failure was a live overwrite, and only a live overwrite can prove it is gone.
+say "The signing keys survive provisioning — rotation is never a side effect of deploying"
+kv_fp() { ${RUNTIME} exec "$1" sh -c \
+    'printf "%s|%s" "${IR_AUDIT_HMAC_KEY}" "${IR_CUSTODY_HMAC_KEY}" | sha256sum | cut -c1-32' 2>/dev/null; }
+KV_BEFORE="$(kv_fp ir-enclave_backend_1)"
+if [[ -z "${KV_BEFORE}" || "${KV_BEFORE}" == "$(printf '|' | sha256sum | cut -c1-32)" ]]; then
+    bad "the backend holds no signing keys — the audit HMAC and custody seal are not in force"
+else
+    # Re-run the provisioning one-shot, which is what a deploy does, then compare.
+    ${RUNTIME} start ir-enclave_vault-setup_1 >/dev/null 2>&1
+    for _ in $(seq 1 45); do
+        [[ "$(${RUNTIME} inspect ir-enclave_vault-setup_1 --format '{{.State.Status}}' 2>/dev/null)" == "running" ]] || break
+        sleep 2
+    done
+    KV_AFTER="$(kv_fp ir-enclave_backend_1)"
+    [[ "${KV_BEFORE}" == "${KV_AFTER}" ]] \
+        && ok "re-running provisioning left the audit and custody signing keys UNCHANGED (${KV_AFTER:0:12}) — every signature and seal already written still verifies against them" \
+        || bad "provisioning ROTATED the signing keys (${KV_BEFORE:0:12} -> ${KV_AFTER:0:12}) — every audit signature and custody seal written before this deploy is now unverifiable"
+fi
+
+say "Vault recovers from a restart on its own"
+${RUNTIME} restart "${VAULT}" >/dev/null 2>&1
+rs=""
+for _ in $(seq 1 30); do
+    rs="$(${RUNTIME} exec -e VAULT_ADDR=https://127.0.0.1:8200 -e VAULT_CACERT=/certs/vault-ca.crt.pem \
+          "${VAULT}" vault status -format=json 2>/dev/null)"
+    grep -q '"sealed": *false' <<<"${rs}" && break
+    sleep 2
+done
+grep -q '"sealed": *false' <<<"${rs}" \
+    && ok "a restart nothing deploy-related caused came back UNSEALED — recovery is a property of the server, not of the deployment" \
+    || bad "SEALED after a plain restart — unsealing happens only at deploy time, so every other restart silently degrades the platform"
+
+# That restart gave Vault a new network namespace and stranded its mesh proxy. Repaired through
+# the deployment's own path: a test that leaves the mesh reporting healthy while carrying
+# nothing has traded one silent failure for another.
+bash "${HERE}/../deploy/deploy.sh" mesh >/dev/null 2>&1
+vpid="$(${RUNTIME} inspect "${VAULT}" --format '{{.State.Pid}}' 2>/dev/null)"
+spid="$(${RUNTIME} inspect ir-enclave_vault-sidecar_1 --format '{{.State.Pid}}' 2>/dev/null)"
+[[ -n "${vpid}" && -n "${spid}" \
+   && "$(readlink "/proc/${vpid}/ns/net" 2>/dev/null)" == "$(readlink "/proc/${spid}/ns/net" 2>/dev/null)" ]] \
+    && ok "and its mesh proxy was reattached to the new namespace, so the stack is left serving" \
+    || bad "vault-sidecar is stranded from Vault's namespace — the mesh reports healthy and carries nothing"
+
 # ============================================================ 3. vendor hardening
 say "Hardening — audit on, root revoked"
 # The audit device records every privileged operation against the store that holds the custody

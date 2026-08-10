@@ -111,28 +111,80 @@ identity is an unauthenticated forwarder with extra steps, which is what Boundar
 
 Attribution only matters if the record is honest, so the platform holds itself to that:
 
+- A **known break is declared, never repaired.** An `AuditCheckpoint` records the entry where
+  the chain restarts, the hashes on both sides of the gap, a required reason and who accepted
+  it, signed under the audit key. Verification then separates an acknowledged discontinuity
+  from an unexplained one, and only the second is evidence of tampering. Re-chaining rows so
+  verification passes is the act the ledger exists to detect, and is not available.
+- **Every process in a container signs with the same key.** Vault Agent renders the real
+  secrets into a file the entrypoint sources, so a process started any other way would inherit
+  the compose placeholder and write signatures the application reads as forgeries. Audit and
+  custody keys resolve through one function that prefers the rendered file.
 - The **Brokered Sessions** page is the access record — who connected, from where, to what, for
   how long, how much moved, why it ended. It reads Boundary live with its own credential, which
   can list and read sessions and **nothing else**: watching access is not a route to obtaining
   it.
 - The broker **cancels the sessions it abandons**. A replaced or killed session client leaves
   its session "active" until expiry, and an access record that over-counts live access is
-  wrong in the dangerous direction. The broker reaps its own stale sessions on start and cancels
-  on shutdown, so "active" means active.
-- The session is **supervised**: when it ends — controller rebuilt, worker recreated, expiry, a
-  fatal proxy error — the broker re-authenticates and re-establishes. Every re-establishment is
-  a new authorized, attributable session, never a lingering socket.
+  wrong in the dangerous direction. Each supervisor cancels its own session by id when it
+  replaces it; a principal-scoped reap runs only at startup, where it cannot take live
+  siblings with it. "Active" means active.
+- Each session is **supervised by its listener**, not by its process: a client can hold a
+  session and report a listening proxy with nothing bound. When one ends — controller rebuilt,
+  worker recreated, expiry, a fatal proxy error — its supervisor re-establishes. Every
+  re-establishment is a new authorized, attributable session, never a lingering socket.
+- Each session runs as its **own principal** (`analyst-s1..sN`), so the access record
+  distinguishes sessions rather than showing one shared identity, and a principal-scoped
+  cancel can only ever reach the one session that principal carries.
+- A principal is a pool identity, and every connection reaches Boundary from the distributor,
+  so **Boundary alone cannot name a person**. The platform's own sign-on record closes that by
+  time overlap, and each session says how strong the claim is: `exact` where one sign-on
+  overlapped, `overlapping` where several analysts were signed on and any could have used it,
+  `none`, or `unknown`. A session used by three analysts is never shown as one analyst's.
+  Narrowing `overlapping` to a single person needs workstation identity carried into session
+  selection, which is not yet done and is not claimed.
+- **Authentication is itself audited.** SSO is stateless — the identity arrives in headers and
+  every request is authenticated on its own — so there is no login to observe and, until an
+  `SsoSession` reconstructed one, the trail held no record of anyone arriving or leaving. A
+  sign-on is keyed by the identity provider's session id where the access token carries one,
+  and by a derived key otherwise; `key_source` records which, because a derived key cannot
+  separate two sign-ons from one browser and must not read as though it can. Sign-ons end by
+  sign-out, by idle expiry, or not at all — and the first two are recorded, so an "active"
+  list means something.
+- **Every successful write is recorded, instrumented or not.** Explicit call sites describe an
+  action in the vocabulary of the case; a middleware records anything they do not reach, so
+  coverage does not depend on someone remembering to instrument a new route. Field names are
+  captured, never values: case content belongs in the record it was written to, not in a table
+  exported to auditors who are not cleared for it.
+- Sessions are carried by **several egress workers**. That does not raise the connection-setup
+  rate — the ceiling belongs to the session client — but it bounds what one worker's loss
+  costs: the analyst path keeps carrying and the affected sessions re-establish on the others.
+- The bastion holds **several independent sessions** rather than one, on loopback behind a
+  layer-4 distributor. One shared session is a fleet-wide failure domain: when it ends, every
+  analyst on it drops together. The sessions are unreachable from any network, so no
+  workstation can pin itself to one; the distributor terminates no TLS and holds no
+  credentials, so the analyst's traffic stays encrypted through it.
 
 **Enforced by:** password auth method; the analyst user, its account, and the role binding it to
 `authorize-session` are provisioned and **verified** by `boundary_bootstrap.sh`; the
 session-auditor principal holds `list,read` on sessions (project scope) and users (org scope)
 and no other grant.
 
-**Proven by:** `platform/test/uat_boundary.sh` — the live session belongs to the provisioned analyst;
-the page's record matches the controller's own (read via a different authority), exactly one
-session is live, its client address is the running broker, and the auditor credential is
-refused when it attempts a cancel; a canceled session is replaced by a new authorized one,
-unattended.
+**Proven by:** `platform/test/uat_boundary.sh` — the live sessions belong to the provisioned
+analyst; the page's record matches the controller's own (read via a different authority), the
+live count is the configured number of sessions with no ghosts of replaced brokers, every
+session that carried a connection came from the running broker, and the auditor credential is
+refused when it attempts a cancel. A canceled session is replaced by a new authorized one
+unattended; killing one leaves the others serving and the analyst port still carrying; and the
+distributor is measured spreading connections rather than piling them on one session.
+
+`platform/test/uat_audit.sh` — a real OIDC sign-on produces exactly ONE `user.login` entry
+across a login and five further requests (not one per request), naming the person, their role,
+where they connected from, and how the session was identified; a write on a route with no
+`audit()` call of its own is recorded with its verb, route and outcome; an explicitly audited
+action is recorded once and not duplicated; sign-out closes an open sign-on and is recorded, an
+idle sign-on is closed as expired, the chain still verifies with all of it in place, and every
+brokered session carries an attribution verdict whose label matches the evidence behind it.
 
 ## P6 — No egress, and no DNS to tunnel over
 

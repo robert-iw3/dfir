@@ -9,9 +9,9 @@ additionally sees the reverse-engineering queue, `auditor` additionally sees the
 trail, and `admin` additionally sees user management and platform health. Controls a role
 cannot use are not rendered.
 
-Role workflows: [`WORKFLOW-ANALYST.md`](WORKFLOW-ANALYST.md),
-[`WORKFLOW-RE.md`](WORKFLOW-RE.md), [`WORKFLOW-ADMIN.md`](WORKFLOW-ADMIN.md),
-[`WORKFLOW-AUDITOR.md`](WORKFLOW-AUDITOR.md).
+Role workflows: [`WORKFLOW-ANALYST.md`](platform/WORKFLOW-ANALYST.md),
+[`WORKFLOW-RE.md`](platform/WORKFLOW-RE.md), [`WORKFLOW-ADMIN.md`](platform/WORKFLOW-ADMIN.md),
+[`WORKFLOW-AUDITOR.md`](platform/WORKFLOW-AUDITOR.md).
 
 ---
 
@@ -294,7 +294,7 @@ that fact usually settles whether a region is worth pursuing.
 
 Regions are not opened here. The workstation that opens them has no network namespace, so
 they are staged to it first by a mediator with object-store access; see
-[`WORKFLOW-RE.md`](WORKFLOW-RE.md).
+[`WORKFLOW-RE.md`](platform/WORKFLOW-RE.md).
 
 ![Carved regions in the host's own bucket](img/minio_carve.png)
 
@@ -504,6 +504,14 @@ Principals and targets are resolved to names, with the raw ids kept on hover for
 against Boundary's own logs. Terminated sessions stay listed — an access record that keeps
 only what is currently open answers the least interesting version of the question.
 
+**Signed on** names the person. The principal beside it (`analyst-s1`…`analyst-sN`) is a pool
+identity, and every connection reaches Boundary from the distributor, so Boundary's own record
+cannot tell one analyst from another. The column is filled from the platform's sign-on record
+instead, matched by time, and it says how strong the match is: a single overlapping sign-on is
+shown as a name, several are shown as `name +N (overlapping)` with all of them on hover, and
+where nothing overlaps or the session has no start time it says so. A session three analysts
+could have used is never shown as one analyst's.
+
 The page authenticates to Boundary with its own credential, which can list and read sessions
 and nothing else: watching access is not a route to obtaining it, and
 [`platform/test/uat_boundary.sh`](platform/test/uat_boundary.sh) proves both halves — that this page matches
@@ -582,7 +590,7 @@ its analysis results and custody record remain.
 ![Object browser showing a capture stored under incident and host](img/minio_object.png)
 
 The object store is not published; it is reachable only while an administrator has opened
-a management forwarder (see [`platform/admin/`](admin)).
+a management forwarder (see [`platform/admin/`](platform/admin)).
 
 ---
 

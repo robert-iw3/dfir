@@ -14,7 +14,7 @@ disable_mlock = true
 
 worker {
   # Required for KMS-registered workers, and the name sessions are attributed to.
-  name        = "ir-egress"
+  name        = "__WORKER_NAME__"
   description = "Carries authorized sessions to the enclave ingress"
 
   initial_upstreams = ["__BOUNDARY_CONTROLLER__:9201"]

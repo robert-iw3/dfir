@@ -2,7 +2,7 @@ from django.urls import include, path
 from rest_framework.authtoken.views import obtain_auth_token
 from rest_framework.routers import DefaultRouter
 
-from . import aggregates, reversing, triage, views
+from . import aggregates, authviews, reversing, triage, views
 
 router = DefaultRouter()
 router.register("investigations", views.InvestigationViewSet, basename="investigation")
@@ -30,8 +30,14 @@ urlpatterns = [
     path("captures/<int:capture_id>/legal-hold/", views.LegalHoldView.as_view()),
     path("rescans/", views.RescanRequestView.as_view()),
     path("ioc-search/", views.ioc_search),
+    # Sign-on lifecycle. Stateless SSO leaves no login or logout to observe, so both are
+    # recorded here rather than inferred from activity.
+    path("auth/logout/", authviews.SignOutView.as_view()),
+    path("auth/sessions/", authviews.SessionsView.as_view()),
     path("audit/", views.AuditLogView.as_view()),
     path("audit/export/", views.AuditExportView.as_view()),
+    # What has left the platform, as a table rather than as a filter over the audit chain.
+    path("exports/", views.ExportLedgerView.as_view()),
     path("admin/metrics/", views.PlatformMetricsView.as_view()),
     path("admin/component-health/", views.ComponentHealthView.as_view()),
     path("admin/mesh-health/", views.MeshHealthView.as_view()),

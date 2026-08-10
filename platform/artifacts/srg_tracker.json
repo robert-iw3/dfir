@@ -405,17 +405,18 @@
    ],
    "check": "Review the web server documentation and deployment configuration to determine if the web server validates files before the files are implemented into the running configuration. If the web server does not meet this requirement and an external facility is not available for use, this is a finding.",
    "discussion": "Being able to verify that a patch, upgrade, certificate, etc., being added to the web server is unchanged from the producer of the file is essential for file validation and nonrepudiation of the information. The web server or hosting system must have a mechanism to verify that files, before installation, are valid. Examples of validation methods are sha1 and md5 hashes and checksums.",
+   "evidence": "ci/pin-base-images.sh (--check/--update/--apply), ci/base-images.lock, 16 FROM lines across backend, worker, collector, dmz, frontend, ingest, keycloak, workstation, re-workstation, consul sidecar, ntp, troubleshooting agent",
    "fix": "Configure the web server to verify object integrity before becoming part of the production web server or utilize an external tool designed to meet this requirement.",
    "gtitle": "SRG-APP-000131",
-   "note": "Images are built from source but their base images are pinned by tag, not digest, and no signature or checksum is verified at build. Pin by digest and record the manifest.",
+   "mechanism": "Every external FROM names a DIGEST, not a tag. A tag is a mutable pointer \u2014 alpine:3.24 is whatever the registry decides on the day of the build \u2014 so two builds of one source produced different images and neither could be said to be the one reviewed. Pulling by digest IS the integrity check: podman refuses content that does not hash to the name requested, so there is nothing further to verify at build time. ci/base-images.lock is the manifest record the control asks for. The Rust toolchain is RECORDED but not rewritten inline: build.sh passes RUST_VERSION from rust-toolchain.toml and an inline digest would silently win over that file.",
    "rid": "SV-206372r984351_rule",
    "severity": "medium",
    "srg": "SRG-APP-000131-WSR-000051",
-   "status": "implement",
+   "status": "mitigated",
    "title": "All web server files must be verified for their integrity (e.g., checksums and hashes) before becoming part of the production web server.",
+   "verified": "uat_srg_webtier.sh \u2014 the check passes on the tree, and is proven to catch both failure modes by injection: a FROM reverted to a bare tag, and a FROM carrying a digest that disagrees with the lock",
    "vid": "V-206372",
-   "weight": "10.0",
-   "where": "every Dockerfile; ci/image-currency.sh"
+   "weight": "10.0"
   },
   {
    "ccis": [
@@ -1709,17 +1710,18 @@
    ],
    "check": "Verify the web server installs security-relevant software updates within 30 days unless the time period is directed by an authoritative source (e.g., IAVM, CTOs, DTMs, STIGs). If security-relevant software updates to the web server are not installed within 30 days, unless the time period is directed by an authoritative source, this is a finding.",
    "discussion": "Security flaws with software applications are discovered daily. Vendors are constantly updating and patching their products to address newly discovered security vulnerabilities. Organizations (including any contractor to the organization) are required to promptly install security-relevant software updates (e.g., patches, service packs, and hot fixes). Flaws discovered during security assessments, continuous monitoring, incident response activities, or information system error handling must also be addressed expeditiously. The web server will be configured to check for and install security-relevant software updates from an authoritative source within an identified time period from the availability of the update. By default, this time period will be every 24 hours.",
+   "evidence": "ci/image-currency.sh (--record, --age), ci/image-currency.record",
    "fix": "Install security-relevant web server updates within 30 days unless the time period is directed by an authoritative source (e.g., IAVM, CTOs, DTMs, STIGs).",
    "gtitle": "SRG-APP-000456",
-   "note": "ci/image-currency.sh already detects drift from current stable versions \u2014 the mechanism exists. What is missing is the 30-day cadence and a record of applying it.",
+   "mechanism": "ci/image-currency.sh already asked the registry whether each pin had moved on; detecting drift was never the gap. The gap was that nothing recorded WHEN a review happened, so 'we check regularly' was unfalsifiable. --record writes the date AND the finding count, because a review that found five stale images and one that found none are different events; --age fails once the record passes the 30-day ceiling the control names.",
    "rid": "SV-206443r1138080_rule",
    "severity": "medium",
    "srg": "SRG-APP-000456-WSR-000187",
-   "status": "implement",
+   "status": "mitigated",
    "title": "The web server must install security-relevant software updates within 30 days unless the time period is directed by an authoritative source (e.g., IAVM, CTOs, DTMs, STIGs).",
+   "verified": "uat_srg_webtier.sh \u2014 the record exists, is within the interval, and the gate is proven to fail on an overdue record by backdating one",
    "vid": "V-206443",
-   "weight": "10.0",
-   "where": "ci/image-currency.sh"
+   "weight": "10.0"
   },
   {
    "ccis": [
@@ -1947,17 +1949,18 @@
    ],
    "check": "Verify the web server is configured to update the list of passwords on an organization-defined frequency. If the web server is not configured to update the list of passwords on an organization-defined frequency, this is a finding.",
    "discussion": "Password-based authentication applies to passwords regardless of whether they are used in single-factor or multifactor authentication. Long passwords or passphrases are preferable over shorter passwords. Enforced composition rules provide marginal security benefits while decreasing usability. However, organizations may choose to establish certain rules for password generation (e.g., minimum character length for long passwords) under certain circumstances and can enforce this requirement in IA-5(1)(h). Account recovery can occur, for example, in situations when a password is forgotten. Cryptographically protected passwords include salted one-way cryptographic hashes of passwords. The list of commonly used, compromised, or expected passwords includes passwords obtained from previous breach corpuses, dictionary words, and repetitive or sequential characters. The list includes context-specific words, such as the name of the service, username, and derivatives thereof.",
+   "evidence": "keycloak/password-blacklists/dfir-platform.txt, keycloak/Dockerfile (COPY + build-time test -s), hashicorp/keycloak/realm-irplatform.json passwordPolicy",
    "fix": "Configure the web server to update the list of passwords on an organization-defined frequency.",
    "gtitle": "SRG-APP-000835",
-   "note": "Updating the blacklist is an operational procedure plus a staged file \u2014 the same inbound path symbol tables use.",
+   "mechanism": "Keycloak passwordBlacklist(dfir-platform.txt), added to the realm password policy that converges on every deploy (D-008). The list is baked into the image beside the theme and for the same reason: a policy naming a file Keycloak cannot read fails password SETTING, and the first sign would be an analyst unable to complete a forced reset. Seeded with platform CONTEXT terms as well as weak forms \u2014 'IrPlatform#2026' satisfies length, case, digits and specials, and is the first thing an attacker who has read the public repository would try. A composition rule cannot catch that; a list can. It gates password setting only, never sign-in.",
    "rid": "SV-264346r984383_rule",
    "severity": "medium",
    "srg": "SRG-APP-000835-WSR-000200",
-   "status": "implement",
+   "status": "mitigated",
    "title": "The web server must, for password-based authentication, update the list of passwords on an organization-defined frequency.",
+   "verified": "uat_srg_webtier.sh \u2014 the policy names the list, the file is present and non-empty inside the running Keycloak, and the review record is within its interval",
    "vid": "V-264346",
-   "weight": "10.0",
-   "where": "keycloak/, symbols/README.md (the staging pattern to follow)"
+   "weight": "10.0"
   },
   {
    "ccis": [
@@ -1965,17 +1968,18 @@
    ],
    "check": "Verify the web server is configured to update the list of passwords when organizational passwords are suspected to have been compromised directly or indirectly. If the web server is not configured to update the list of passwords when organizational passwords are suspected to have been compromised directly or indirectly, this is a finding.",
    "discussion": "Password-based authentication applies to passwords regardless of whether they are used in single-factor or multifactor authentication. Long passwords or passphrases are preferable over shorter passwords. Enforced composition rules provide marginal security benefits while decreasing usability. However, organizations may choose to establish certain rules for password generation (e.g., minimum character length for long passwords) under certain circumstances and can enforce this requirement in IA-5(1)(h). Account recovery can occur, for example, in situations when a password is forgotten. Cryptographically protected passwords include salted one-way cryptographic hashes of passwords. The list of commonly used, compromised, or expected passwords includes passwords obtained from previous breach corpuses, dictionary words, and repetitive or sequential characters. The list includes context-specific words, such as the name of the service, username, and derivatives thereof.",
+   "evidence": "keycloak/password-blacklists/dfir-platform.txt, ci/password-blacklist-check.sh",
    "fix": "Configure the web server to update the list of passwords when organizational passwords are suspected to have been compromised directly or indirectly.",
    "gtitle": "SRG-APP-000840",
-   "note": "Same list, updated on compromise. Procedure plus staged file.",
+   "mechanism": "The same list and the same converge path. This control differs from WSR-000200 only in its trigger \u2014 suspected compromise rather than a schedule \u2014 so the mechanism is shared and the RECORD is what distinguishes them: --record takes a reason, and an out-of-cycle update states what prompted it.",
    "rid": "SV-264347r984386_rule",
    "severity": "medium",
    "srg": "SRG-APP-000840-WSR-000210",
-   "status": "implement",
+   "status": "mitigated",
    "title": "The web server must, for password-based authentication, update the list of passwords when organizational passwords are suspected to have been compromised directly or indirectly.",
+   "verified": "uat_srg_webtier.sh \u2014 same assertions as WSR-000200, plus the reason field on the record",
    "vid": "V-264347",
-   "weight": "10.0",
-   "where": "keycloak/"
+   "weight": "10.0"
   },
   {
    "ccis": [
@@ -2172,17 +2176,18 @@
    ],
    "check": "Verify the web server is configured to synchronize system clocks within and between systems or system components. If the web server is not configured to synchronize system clocks within and between systems or system components, this is a finding.",
    "discussion": "Time synchronization of system clocks is essential for the correct execution of many system services, including identification and authentication processes that involve certificates and time-of-day restrictions as part of access control. Denial of service or failure to deny expired credentials may result without properly synchronized clocks within and between systems and system components. Time is commonly expressed in Coordinated Universal Time (UTC), a modern continuation of Greenwich Mean Time (GMT), or local time with an offset from UTC. The granularity of time measurements refers to the degree of synchronization between system clocks and reference clocks, such as clocks synchronizing within hundreds of milliseconds or tens of milliseconds. Organizations may define different time granularities for system components. Time service can be critical to other security capabilities such as access control and identification and authentication depending on the nature of the mechanisms used to support the capabilities.",
+   "evidence": "ntp/Dockerfile, ntp/chrony.conf, ntp/entrypoint.sh, deploy/enclave/docker-compose.yml (ntp on internal + dmzlink), deploy/deploy.sh stage 0a, ci/clock-sync-check.sh",
    "fix": "Configure the web server to synchronize system clocks within and between systems or system components.",
    "gtitle": "SRG-APP-000920",
-   "note": "Containers inherit the host clock, so synchronization is the host's NTP configuration \u2014 which the platform does not currently assert. It becomes a host-preparation task in the Ansible track.",
+   "mechanism": "The enclave runs its own chrony, staged beside the resolver and for the same reason: `internal: true` installs no route off the host, so both authorities must live inside the segment. It serves the enclave HOSTS, whose chrony clients discipline their own clocks; containers inherit from the host and cannot set time, so the service runs with -x and never touches a clock it does not own. This matters more here than on an ordinary web tier: temporal_coherence compares instants ACROSS hosts, so a drifting enclave does not produce a wrong-looking record, it places a plausible one at the wrong point on the timeline.",
    "rid": "SV-264358r984419_rule",
    "severity": "medium",
    "srg": "SRG-APP-000920-WSR-000320",
-   "status": "implement",
+   "status": "mitigated",
    "title": "The web server must synchronize system clocks within and between systems or system components.",
+   "verified": "uat_srg_webtier.sh \u2014 the service answers chronyc and is serving; the host clock is synchronized; and a container's clock is proven to agree with the host's, which is the inheritance the design assumed and had never tested",
    "vid": "V-264358",
-   "weight": "10.0",
-   "where": "Ansible track (host preparation)"
+   "weight": "10.0"
   },
   {
    "ccis": [
@@ -2190,17 +2195,18 @@
    ],
    "check": "Verify the web server is configured to compare the internal system clocks on an organization-defined frequency with organization-defined authoritative time source. If the web server is not configured to compare the internal system clocks on an organization-defined frequency with organization-defined authoritative time source, this is a finding.",
    "discussion": "Synchronization of internal system clocks with an authoritative source provides uniformity of time stamps for systems with multiple system clocks and systems connected over a network.",
+   "evidence": "ntp/entrypoint.sh (upstream templating), ci/clock-sync-check.sh, deploy/.env IR_NTP_UPSTREAM",
    "fix": "Configure the web server to compare the internal system clocks on an organization-defined frequency with organization-defined authoritative time source.",
    "gtitle": "SRG-APP-000925",
-   "note": "Comparison against an authoritative source is the same host-preparation task; inside an enclave with no egress the source is an internal stratum server.",
+   "mechanism": "Comparison against an authoritative source, with the air gap stated rather than hidden. IR_NTP_UPSTREAM names the reference and the service is disciplined by it; unset, the service serves from a LOCAL stratum 10 reference and the check reports the segment as internally consistent but NOT traceable. Stratum 10 is deliberately poor so any client that can reach a real source prefers it. CONDITIONAL BY DESIGN: a deployment that names no upstream does not satisfy traceability, and the check says so instead of passing quietly \u2014 a check that failed on the designed air-gapped case would simply be turned off.",
    "rid": "SV-264359r984422_rule",
    "severity": "medium",
    "srg": "SRG-APP-000925-WSR-000330",
-   "status": "implement",
+   "status": "mitigated",
    "title": "The web server must compare the internal system clocks on an organization-defined frequency with organization-defined authoritative time source.",
+   "verified": "uat_srg_webtier.sh \u2014 when IR_NTP_UPSTREAM is set the upstream must actually be reached, so an unreachable server cannot read the same as a deliberate air gap; when unset the untraceable state is reported explicitly",
    "vid": "V-264359",
-   "weight": "10.0",
-   "where": "Ansible track (host preparation), deploy/NETWORKING.md"
+   "weight": "10.0"
   },
   {
    "ccis": [

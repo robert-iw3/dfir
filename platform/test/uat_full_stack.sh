@@ -220,11 +220,9 @@ via_broker() {  # <driver.py> <args...>
 
 # THROWAWAY accounts, one per role, created and deleted here.
 #
-# This used to run `provision-demo-users.sh --force default-<role>`, which DELETES and
-# recreates the real account: every password an analyst had set was silently reset to the
-# .env default with a forced change pending, and the next sign-in failed for a reason that
-# looks exactly like the identity store having lost its data. A regression test must not
-# destroy the state the platform's own guarantee is that it keeps.
+# NOT `provision-demo-users.sh --force default-<role>`: that deletes and recreates the real
+# account, resetting every password an analyst set to the .env default with a forced change
+# pending. A regression test must not destroy the state the platform guarantees it keeps.
 kc() {
     ${RUNTIME} exec -i ir-enclave_keycloak_1 sh -c '
         /opt/keycloak/bin/kcadm.sh config credentials --server http://127.0.0.1:8080 \

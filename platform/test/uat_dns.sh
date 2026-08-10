@@ -113,8 +113,8 @@ else
     bad "${PLATFORM_HOST} did not resolve — the analyst browser cannot reach the platform"
 fi
 
-# The DMZ names the tunnel depends on. `headscale` failing to resolve is what previously forced
-# a pinned address into .env and made the deployment subnet-specific.
+# The DMZ names the tunnel depends on. `headscale` failing to resolve forces a pinned address
+# into .env, which makes the deployment subnet-specific.
 for n in bastion headscale receiver; do
     a="$(resolve_in ir-dmz_receiver_1 "${n}")"
     [[ -n "${a}" ]] && ok "${n} resolves by name (${a})" \

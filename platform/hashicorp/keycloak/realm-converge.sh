@@ -65,9 +65,15 @@ else
 fi
 
 # Groups: additive only.
+#
+# Captured, THEN matched. Piped into `grep -q` the existence check is a race it loses: grep
+# exits on the first match, the writer takes SIGPIPE, and under `set -o pipefail` the pipeline
+# reports 141 — indistinguishable from "not found". A group that exists is then created again,
+# Keycloak refuses the duplicate, and convergence reports a failure that is entirely its own.
 while IFS= read -r g; do
     [[ -n "${g}" ]] || continue
-    if ! kcadm get groups -r "${REALM}" -q "search=${g}" --fields name | grep -q "\"${g}\""; then
+    found="$(kcadm get groups -r "${REALM}" -q "search=${g}" --fields name 2>/dev/null)"
+    if [[ "$(grep -c "\"${g}\"" <<<"${found}")" -eq 0 ]]; then
         kcadm create groups -r "${REALM}" -s "name=${g}" >/dev/null \
             && echo "[realm-converge] created missing group ${g}" \
             || { echo "[realm-converge] FAILED to create group ${g}" >&2; rc=1; }

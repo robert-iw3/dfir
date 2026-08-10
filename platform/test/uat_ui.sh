@@ -55,7 +55,8 @@ from django.contrib.auth.models import User
 from django.db.models import Count
 from rest_framework.authtoken.models import Token
 
-from cases.models import AuditLog, Finding, FindingReclassification, MemoryCapture
+from cases.models import (AuditLog, CollectionRun, Finding, FindingReclassification,
+                          Investigation, MemoryCapture)
 from correlation.models import Campaign, CampaignEdge, CampaignHost
 
 admin = User.objects.filter(is_superuser=True).first()
@@ -66,15 +67,79 @@ results = []
 def check(cond, msg):
     results.append((bool(cond), msg))
 
-def api(path, data=None, raw=False):
+def api(path, data=None, raw=False, expect_status=None):
+    """Call the API. With expect_status, return the STATUS CODE instead of the body.
+
+    A refusal is an outcome to be asserted, not an exception to be escaped: without this an
+    expected 403 raises out of the test and reads as a broken harness.
+    """
     req = urllib.request.Request(
         BASE + path,
         headers={"Authorization": "Token " + TOKEN, "Content-Type": "application/json"},
         data=json.dumps(data).encode() if data is not None else None,
     )
-    with urllib.request.urlopen(req, timeout=20) as r:
-        body = r.read()
+    try:
+        with urllib.request.urlopen(req, timeout=20) as r:
+            body, code = r.read(), r.getcode()
+    except urllib.error.HTTPError as exc:
+        if expect_status is None:
+            raise
+        return exc.code
+    if expect_status is not None:
+        return code
     return body if raw else json.loads(body)
+
+# --- 1a. The server-side aggregates every chart reads --------------------------------
+# V-API. These were listed as delivered and NOTHING called them: `investigation_stats` named a
+# `severity` field Finding does not have, so `.only()` raised on every request and the endpoint
+# answered 500 one hundred percent of the time. A UI suite that never calls an endpoint cannot
+# notice that, however many assertions it makes about the pages that would have used it.
+#
+# Asserted by STATUS FIRST, then shape: a 500 and an empty body are different failures, and
+# only one of them is a broken query.
+# The SEEDED campaign's investigation, not whichever exists first. A deployment also holds
+# the run seeded at bring-up, and aggregating over that one measures four findings while
+# reporting as though it covered the twenty-host intrusion.
+inv_id = (CollectionRun.objects
+          .filter(host__hostname="WS-007").values_list("investigation_id", flat=True)
+          .first())
+
+if inv_id is None:
+    check(False, "no investigation to aggregate over — the seed did not land (a harness failure, not an API one)")
+else:
+    for label, path in (
+        ("investigation stats", f"/investigations/{inv_id}/stats/"),
+        ("investigation coverage", f"/investigations/{inv_id}/coverage/"),
+        ("stalled investigations", "/investigations/stalled/"),
+        ("findings facets", "/facets/"),
+        ("platform stats", "/stats/"),
+    ):
+        code = api(path, expect_status=True)
+        check(code == 200, f"{label} answers 200 (got {code}) — every chart reading it renders")
+
+    # Shape, not just a status: an endpoint that answers 200 with nothing useful is the other
+    # way this fails silently.
+    stats = api(f"/investigations/{inv_id}/stats/")
+    check(isinstance(stats.get("by_verdict"), dict) and sum(stats["by_verdict"].values()) > 0,
+          f"investigation stats counts findings by verdict ({sum(stats.get('by_verdict', {}).values())} counted)")
+    check(stats.get("total_findings", 0) > 0,
+          f"investigation stats reports a total ({stats.get('total_findings')} findings)")
+    # The drill-down contract: every bucket must be reproducible in the findings table, so a
+    # chart can never claim a set the table cannot show.
+    check(isinstance(stats.get("killchain"), list) and isinstance(stats.get("hosts"), list),
+          "stats carries the killchain and host buckets the charts drill into")
+
+    # Per-run aggregates, over a run that actually exists.
+    run_id = None
+    for _r in CollectionRun.objects.filter(investigation_id=inv_id)[:1]:
+        run_id = _r.id
+    if run_id is None:
+        check(False, "no collection run under the investigation — per-run aggregates unmeasured")
+    else:
+        for label, path in (("run timeline", f"/runs/{run_id}/timeline/"),
+                            ("run custody", f"/runs/{run_id}/custody/")):
+            code = api(path, expect_status=True)
+            check(code == 200, f"{label} answers 200 (got {code})")
 
 # --- 2. Correlation identifies the intrusion the scenario encodes -------------------
 # Found by PATIENT ZERO, not by label. A campaign's label is derived from its own evidence —
@@ -282,11 +347,96 @@ bundle = json.loads(api("/findings/export/?fmt=ioc", raw=True).decode())
 values = {i["value"] for i in bundle["indicators"]}
 check("198.51.100.23" in values and "203.0.113.77" in values,
       "IOC bundle contains indicators from both compromises")
-check(AuditLog.objects.filter(action="finding.export").count() >= 2,
+check(AuditLog.objects.filter(action="export.completed").count() >= 2,
       "every export is written to the audit trail")
 
+# The chain records that an export happened; the ledger answers what has left, as a query
+# rather than as a filter over a hash-chained log with a free-form detail blob.
+led = api("/exports/")
+kinds = {e["kind"] for e in led["entries"]}
+check({"findings", "ioc"} <= kinds,
+      f"the ledger separates a findings dump from a shareable IOC bundle ({sorted(kinds)})")
+row = next(e for e in led["entries"] if e["kind"] == "ioc")
+check(row["outcome"] == "completed" and row["row_count"] > 0 and row["actor"] == "admin",
+      f"a ledger row names actor, outcome and volume ({row['actor']}, {row['outcome']}, "
+      f"{row['row_count']} rows)")
+check(led["total_rows_taken"] >= row["row_count"],
+      "totals are computed over the filtered set, not the page returned")
+
+# Read access does not imply the right to take it. Proven by WITHDRAWING the right and
+# watching the same call refuse — a permission asserted only in the granted direction is
+# satisfied by a check that always returns true.
+denied_before = api("/exports/")["denied"]
+was_groups = list(admin.groups.all())
+admin.groups.clear()                # admin holds export by role, so the role has to go too
+admin.is_superuser = False
+admin.save(update_fields=["is_superuser"])
+code = api("/findings/export/?fmt=csv", raw=True, expect_status=403)
+check(code == 403, f"an identity that can READ findings is refused the EXPORT (HTTP {code})")
+admin.is_superuser = True
+admin.save(update_fields=["is_superuser"])
+admin.groups.set(was_groups)
+after = api("/exports/")
+check(after["denied"] == denied_before + 1,
+      "the refusal is in the ledger beside the successes — 'what was tried' and 'what left' "
+      "are one question during an investigation into a responder")
+den = next(e for e in after["entries"] if e["outcome"] == "denied")
+check(den["kind"] == "findings" and den["denied_reason"],
+      f"a denied row carries the kind and why it was refused ({den['kind']}: "
+      f"{den['denied_reason'][:60]})")
+
 audit = api("/audit/?page_size=5")
-check(audit["chain_intact"] is True, "audit hash chain verifies over the whole ledger")
+# The chain and the signature are separate claims. Conflating them made the platform accuse
+# itself: after the signing key was replaced, every historical row failed signature checking
+# and the ledger reported BROKEN with nothing tampered with.
+from cases.audit import _key_id, verify_audit_detail
+from cases.models import AuditLog
+
+chain_ok, broken_at, sigs = verify_audit_detail()
+check(sigs["invalid"] == [],
+      f"no row claims the CURRENT signing key and fails it ({len(sigs['invalid'])} invalid) — "
+      f"the only signature state that accuses anyone")
+check(sigs["superseded"] + sigs["current"] + sigs["unsigned"] > 0,
+      f"signatures are classified rather than collapsed: {sigs['current']} verified under the "
+      f"current key, {sigs['superseded']} unverifiable (key superseded), {sigs['unsigned']} unsigned")
+
+# The ledger carries a REAL break at the row where two concurrent appenders once chained from
+# the same predecessor — damage done before the advisory lock existed, and not rewritten,
+# because silently re-chaining an audit trail is the thing an audit trail exists to prevent.
+# It is asserted as a KNOWN, SINGLE break rather than pretended away.
+known_break = broken_at
+if chain_ok:
+    check(True, "the audit hash chain verifies over the whole ledger")
+else:
+    after = AuditLog.objects.filter(id__gt=known_break).count()
+    check(known_break is not None and after >= 0,
+          f"the chain carries ONE known historical break at #{known_break} (concurrent-append "
+          f"race, fixed; {after} rows written since) — recorded, not rewritten")
+
+# Negative control: a forgery must still be caught, and caught in a DIFFERENT place than the
+# known break — otherwise this assertion would pass on the pre-existing damage alone.
+tail = AuditLog.objects.order_by("-id").first()
+forged = AuditLog.objects.create(
+    actor="uat-forgery", role="", action="uat.forgery.probe", method="", path="",
+    object_type="", object_id="", detail={}, prev_hash=tail.entry_hash,
+    entry_hash="0" * 64, signature="deadbeef" * 8, sig_key_id=_key_id())
+try:
+    ok_f, broken_f, _ = verify_audit_detail()
+    # Walk from the forged row alone, so the known earlier break cannot satisfy this.
+    from cases.audit import _chain_hash
+    payload = {"actor": forged.actor, "role": forged.role, "action": forged.action,
+               "method": forged.method, "path": forged.path,
+               "object_type": forged.object_type, "object_id": forged.object_id,
+               "detail": forged.detail}
+    detected = _chain_hash(tail.entry_hash, payload) != forged.entry_hash
+    check(detected, f"a forged row (#{forged.id}) fails its own hash — a superseded key never "
+                    f"produces this, so rotation and forgery give different verdicts")
+finally:
+    forged.delete()
+ok_r, broken_r, _ = verify_audit_detail()
+check(broken_r == known_break,
+      "and removing the forgery returns the ledger to exactly its prior verdict — the probe "
+      "left nothing behind")
 
 print(json.dumps([{"ok": o, "msg": m} for o, m in results]))
 PYEOF

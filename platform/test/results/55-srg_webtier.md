@@ -2,7 +2,7 @@
 
 *What passing proves:* The ingress states its TLS floor, refuses weak and export ciphers, bounds request rate and concurrency, does not name itself, constrains the application as mobile code, and logs what the SRG requires it to log.
 
-- Run: `uat_srg_webtier.sh` — 2026-08-06 16:33:40Z
+- Run: `uat_srg_webtier.sh` — 2026-08-09 01:52:25Z
 
 **TLS — SRG-APP-000014-WSR-000006, SRG-APP-000439-WSR-000188**
 
@@ -70,13 +70,13 @@
 | ✅ PASS | log record establishes the source it came from (ClientHost) |
 | ✅ PASS | log record establishes the outcome (DownstreamStatus) |
 | ✅ PASS | SRG-APP-000098-WSR-000060: the ingress record carries the join keys (StartUTC, ClientHost) |
-| ✅ PASS | SRG-APP-000098-WSR-000060: the broker records the real client address (10.89.0.10) — the join completes |
+| ✅ PASS | SRG-APP-000098-WSR-000060: the broker records the real client address (10.89.0.11) — the join completes |
 
 **Log aggregation — SRG-APP-000125-WSR-000071, SRG-APP-000357-WSR-000150, SRG-APP-000358-WSR-000163, SRG-APP-000359-WSR-000065, SRG-APP-000108-WSR-000166**
 
 | Result | Assertion — with evidence |
 |---|---|
-| ✅ PASS | SRG-APP-000125-WSR-000071: the deployed shipper completes a pass (1 object(s) shipped) |
+| ✅ PASS | SRG-APP-000125-WSR-000071: the deployed shipper completes a pass (2 object(s) shipped) |
 | ✅ PASS | SRG-APP-000125-WSR-000071: ingress access records are held in the object store, off the web tier's filesystems |
 | ✅ PASS | SRG-APP-000125-WSR-000071: shipping state is in the bucket — a replaced shipper resumes, not re-uploads |
 | ✅ PASS | SRG-APP-000358-WSR-000163: shipped objects are whole structured records — a SIEM reads the bucket as-is |
@@ -85,7 +85,7 @@
 | ✅ PASS | the log sources are read-only to the shipper — the record cannot be altered by its own transport |
 | ✅ PASS | SRG-APP-000108-WSR-000166: the shipper self-reports to Component Health — going quiet or failing is surfaced, not silent |
 | ✅ PASS | SRG-APP-000357-WSR-000150: the report carries usage against the declared allocation |
-| ✅ PASS | SRG-APP-000108-WSR-000166: the shipper's report is CURRENT (129s old) — a stale row is a reporter that stopped, which the existence check cannot tell from one that never started |
+| ✅ PASS | SRG-APP-000108-WSR-000166: the shipper's report is CURRENT (138s old) — a stale row is a reporter that stopped, which the existence check cannot tell from one that never started |
 | ✅ PASS | SRG-APP-000359-WSR-000065: the warning fires at 75% of allocated log storage and not below it |
 | ✅ PASS | SRG-APP-000108-WSR-000166: a shipping failure becomes a Component Health alert |
 
@@ -97,14 +97,37 @@
 | ✅ PASS | SRG-APP-000439-WSR-000154: the session cookie is Secure |
 | ✅ PASS | SRG-APP-000295-WSR-000012: absolute session lifetime is 8h0m0s |
 | ✅ PASS | SRG-APP-000295-WSR-000134: the session is re-validated against the identity provider every 15m0s |
-| ✅ PASS | the SSO gate CAPS per-request CSRF cookies — accumulation cannot grow the header without bound |
+| ✅ PASS | the SSO gate caps per-request CSRF cookies at 6 — accumulation cannot grow the header without bound |
 | ✅ PASS | header buffers hold modest headroom (large_client_header_buffers416k;), not room for accumulation |
 | ✅ PASS | SRG-APP-000001-WSR-000002: the gate reached its Redis session store at startup |
 | ✅ PASS | default-admin re-provisioned to its deployed initial state |
 | ✅ PASS | the initial credential admits NO session — Keycloak demands a replacement first |
 | ✅ PASS | a real authorization-code login completed through the hardened ingress, forced password change included |
-| ✅ PASS | SRG-APP-000001-WSR-000002: the login created server-side session state in Redis database 1 (3 -> 4 keys) |
+| ✅ PASS | SRG-APP-000001-WSR-000002: the login created server-side session state in Redis database 1 (0 -> 1 keys) |
 | · | the intention check could not be read from inside Consul; the store is working regardless |
+
+**Login flow — a page load must not evict the attempt the analyst is standing in**
+
+| Result | Assertion — with evidence |
+|---|---|
+| ✅ PASS | the gate separates data calls from navigation (--api-route=^/(api/\|index\.html)) — only navigation starts an attempt |
+| ✅ PASS | default-admin re-armed with the forced change that holds a login flow open |
+| ✅ PASS | the analyst's navigation starts exactly one authentication attempt |
+| ✅ PASS | a page load's worth of data calls (6) was issued on top of the open flow |
+| ✅ PASS | every data call was ANSWERED 401 — the SPA turns that into one sign-in rather than 6 of them |
+| ✅ PASS | and it earned that 401 on the PATH: the probes sent Accept: */* like the app's fetch, not the application/json that would trigger the gate's AJAX shortcut |
+| ✅ PASS | no data call was sent to the identity provider, so none minted an attempt |
+| ✅ PASS | the page load minted NO additional CSRF cookies — the ceiling is never approached by data calls |
+| ✅ PASS | six polling cycles (three minutes of an open tab) minted NOTHING — waiting at a login page cannot exhaust the ceiling |
+| ✅ PASS | the navigation's own CSRF cookie was still present when the callback ran |
+| ✅ PASS | a login held open across a full page load completed through the callback, forced password change included |
+| ✅ PASS | the gate logged no CSRF failure for that flow |
+| ✅ PASS | the deployed bundle has ONE sign-in entry point |
+| ✅ PASS | that entry point is single-flight — the second and later 401s of a page load redirect nothing |
+| ✅ PASS | default-admin re-armed for the control run |
+| ✅ PASS | control: 7 unclassified path(s) redirected to the identity provider and minted 7 attempt(s) — the driver can see a mint, so the zero it reported above is a measurement |
+| ✅ PASS | control: those attempts evicted the analyst's own, oldest-first, exactly as the ceiling of 6 requires |
+| ✅ PASS | control: the flow ended in the reported 403 at the callback — the defect is reproducible, and --api-route is what the deployed gate uses to avoid it |
 | ✅ PASS | default-admin restored to provisioned state (initial password, change re-armed) |
 | ✅ PASS | a provisioned account carries the forced password change until its first login consumes it |
 
@@ -130,10 +153,46 @@
 | ✅ PASS | the plumbing is present and inert — enabling it is a flag and a staged CA, not a rebuild |
 | · | proving a CARD authenticates needs a card and an issuing CA; that test belongs to an environment that has them |
 
+**SRG-APP-000131 — base images are pinned by digest, and the digest is recorded**
+
+| Result | Assertion — with evidence |
+|---|---|
+| ✅ PASS | every external FROM names a digest matching ci/base-images.lock |
+| ✅ PASS | and the check REFUSES a FROM reverted to a bare tag, so the gate is real |
+
+**SRG-APP-000456 — the 30-day currency review is recorded, and going stale fails**
+
+| Result | Assertion — with evidence |
+|---|---|
+| ✅ PASS | the image-currency review is on record and within its interval |
+| ✅ PASS | and a review backdated past the ceiling is REFUSED, so the cadence is enforced |
+
+**SRG-APP-000835/000840 — the banned password list is enforced and reviewed**
+
+| Result | Assertion — with evidence |
+|---|---|
+| ✅ PASS | the list is non-empty and lowercase, the realm policy names it, and the review is current |
+| ✅ PASS | Keycloak can read the list it enforces (118 lines in the running image) |
+
+**SRG-APP-000920/000925 — the enclave has a time authority, and containers inherit it**
+
+| Result | Assertion — with evidence |
+|---|---|
+| ✅ PASS | clock provenance established: host synchronized, containers agree, enclave serving |
+| ✅ PASS | the enclave time service answers and is serving (stratum 10) |
+| ✅ PASS | and it runs without control of the system clock, as a container must |
+| · | serving from a LOCAL reference — internally consistent, NOT traceable to an authoritative source (IR_NTP_UPSTREAM unset) |
+
+**The tracker states the same thing this suite just proved**
+
+| Result | Assertion — with evidence |
+|---|---|
+| ✅ PASS | the tracker, .ckl and srg_tracker.json are current with srg_status.yml |
+
 **Result**
 
 | Result | Assertion — with evidence |
 |---|---|
 | ✅ PASS | the web tier holds: TLS floor enforced, weak ciphers refused, limits in place, identity withheld, mobile code constrained, and requests attributable |
 
-**Verdict: PROVEN** — 70 assertions passed, 0 failed.
+**Verdict: PROVEN** — 98 assertions passed, 0 failed.
