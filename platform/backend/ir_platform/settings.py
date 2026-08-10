@@ -63,6 +63,10 @@ MIDDLEWARE = [
     # exception escaping the view is captured with its traceback rather than only reaching
     # container stdout, where nobody reading the UI can get to it.
     "opslog.middleware.RequestLogMiddleware",
+    # Inside the request log so it sees the status the view returned. Records every successful
+    # write that no call site audited itself, which is what keeps coverage from depending on
+    # someone remembering to instrument a new route.
+    "cases.auditmiddleware.AuditWriteMiddleware",
 ]
 
 ROOT_URLCONF = "ir_platform.urls"
@@ -130,6 +134,11 @@ REST_FRAMEWORK = {
         "rest_framework.authentication.SessionAuthentication",
     ],
     "DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.IsAuthenticated"],
+    # Every access refusal becomes an audit row (SRG-APP-000805-WSR-000140). Set here rather
+    # than in each permission class: the next permission class added would not log, and the
+    # gap would be found by needing the record and not having it. DRF routes every refusal
+    # through this one handler, so it catches the ones nobody thought about.
+    "EXCEPTION_HANDLER": "cases.denials.audited_exception_handler",
 }
 
 # --- SSO (oauth2-proxy → Keycloak OIDC) -----------------------------------------

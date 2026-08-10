@@ -5,7 +5,8 @@
 #
 #   deploy.sh enclave       # internal enclave host
 #   deploy.sh dmz           # DMZ host
-#   deploy.sh workstation   # analyst machine
+#   deploy.sh workstation [id]   # analyst machine; `id` names this workstation's tailnet
+#                                # node and its compose project (default: analyst)
 #   deploy.sh all           # single-host validation (all tiers)
 #   deploy.sh status        # health of every stage
 #   deploy.sh down <tier|all> [--purge]   # --purge also deletes volumes:
@@ -34,7 +35,38 @@ ok()   { printf '    \033[1;32m✔\033[0m %s\n' "$*"; }
 warn() { printf '    \033[1;33m!\033[0m %s\n' "$*"; }
 die()  { printf '    \033[1;31m✘\033[0m %s\n' "$*"; exit 1; }
 
-proj() { case "$1" in enclave) echo ir-enclave;; dmz) echo ir-dmz;; workstation) echo ir-workstation;; agent) echo ir-agent;; esac; }
+# The compose PROJECT is what separates one workstation from another: containers and the
+# tailnet state volume are both namespaced by it, so nothing per-workstation has to be written
+# into the compose file. The default id keeps the historic project name, so a single-workstation
+# deployment — and every UAT that names `ir-workstation_tailnet_1` — is unchanged.
+proj() {
+    case "$1" in
+        enclave) echo ir-enclave;;
+        dmz) echo ir-dmz;;
+        workstation)
+            if [[ "${IR_WS_ID:-analyst}" == "analyst" ]]; then echo ir-workstation
+            else echo "ir-workstation-${IR_WS_ID}"; fi;;
+        agent) echo ir-agent;;
+    esac
+}
+
+# This workstation's own pre-auth key, from the per-id variable the tailnet bootstrap wrote.
+# Falls back to the default node's key, so `deploy.sh workstation` with no id behaves as before.
+ws_authkey() {
+    local id="${IR_WS_ID:-analyst}" var
+    # The keys live in .env.tailnet, which only dc() sources — and this runs BEFORE the first
+    # dc call of a standalone `deploy.sh workstation <id>`, so the variable would be unset and
+    # the node would start with no credential and retry on a backoff that reads as a broken
+    # kiosk. Sourced here rather than relying on a previous stage having done it.
+    if [[ -r "${HERE}/.env.tailnet" ]]; then
+        set -a; . "${HERE}/.env.tailnet"; set +a
+    fi
+    [[ "${id}" == "analyst" ]] && { echo "${TS_ANALYST_AUTHKEY:-}"; return; }
+    var="TS_WS_AUTHKEY_$(printf '%s' "${id}" | tr '[:lower:]' '[:upper:]' | tr -c '[:alnum:]\n' '_')"
+    # Falls back to the default node's key so a workstation listed after the last tailnet
+    # bootstrap still enrols; the node NAME is what distinguishes it either way.
+    echo "${!var:-${TS_ANALYST_AUTHKEY:-}}"
+}
 RECREATE_BLOCKED=""   # per-deploy decision, see recreate_if_stale
 COMPOSE_TIMEOUT="${IR_COMPOSE_TIMEOUT:-240}"
 # Tailnet pre-auth keys are minted per bring-up and live in a separate file so they are never
@@ -95,9 +127,8 @@ resolve_vault_config() {
 }
 
 # The Vault image, built from the same checkout as its config. The platform does not vendor it,
-# so it was previously a prerequisite nothing declared: absent, compose tries to PULL
-# localhost/vault and the failure reads as a registry error while the real cause is a missing
-# build. Built here so the deployment carries its own prerequisite.
+# so the deployment builds it rather than declaring it a prerequisite: absent, compose tries to
+# PULL localhost/vault and the failure reads as a registry error rather than a missing build.
 ensure_vault_image() {
     local tag; tag="$(sed -n 's/^[[:space:]]*image:[[:space:]]*\(localhost\/vault:[^[:space:]]*\).*/\1/p' \
         "$(compose_of enclave)" | head -1)"
@@ -224,6 +255,59 @@ cascade_reaches() { # proj  suffix  container...
 #
 # So drifted containers are removed by name and recreated on their own. Only stateless
 # services belong here — anything holding state must not be replaced this way.
+# A CHANGED DEFINITION THAT DID NOT REACH THE STACK IS SAID OUT LOUD.
+#
+# `recreate_if_stale` below compares IMAGE ids, for three locally-built services. It is blind to
+# everything else a compose file decides — command, environment, mounts, networks — and blind to
+# every other service. compose will not recreate a container that is already running, so editing
+# a service's command and redeploying reports success and changes nothing; the edit is picked up
+# only if that container happens to be replaced for some unrelated reason. A Vault whose command
+# gained a self-unseal step ran for two more deploys without it, and the deployment said `enclave
+# up` each time.
+#
+# Nothing is recreated from here. The stateful services are the ones this would most often catch,
+# and replacing them on a definition change is how evidence gets destroyed by a whitespace edit.
+# The operator is told precisely what is stale and what to run — a silent no-op becomes a
+# visible one, which is the whole of the fix.
+compose_fingerprint() { # tier -> hash of what its containers ought to have been built from
+    cat "${HERE}/$1/docker-compose.yml" "${HERE}/.env" 2>/dev/null \
+        | sha256sum | cut -d' ' -f1
+}
+
+compose_drift_check() { # tier
+    local tier="$1" rec="${HERE}/.compose-applied" now was proj_name c created
+    now="$(compose_fingerprint "${tier}")"
+    was="$(awk -v t="${tier}" '$1==t {print $2}' "${rec}" 2>/dev/null)"
+    # No record yet: this deploy establishes the baseline rather than crying drift at everyone
+    # who has ever run it before the check existed.
+    [[ -z "${was}" || "${was}" == "${now}" ]] && return 0
+
+    proj_name="$(proj "${tier}")"
+    local stale=() mtime
+    mtime="$(stat -c %Y "${HERE}/${tier}/docker-compose.yml" 2>/dev/null || echo 0)"
+    for c in $(${RUNTIME} ps --format '{{.Names}}' 2>/dev/null | grep "^${proj_name}_" || true); do
+        created="$(date -d "$(${RUNTIME} inspect "${c}" --format '{{.Created}}' 2>/dev/null)" +%s 2>/dev/null || echo 0)"
+        [[ "${created}" -lt "${mtime}" ]] && stale+=("${c}")
+    done
+    (( ${#stale[@]} )) || return 0
+
+    warn "${tier}: the compose definition changed and ${#stale[@]} running container(s) predate it"
+    # Named, but not all of them: a definition edit usually predates every container in the tier,
+    # and thirty lines of names buries the sentence that says what to do about it.
+    printf '      %s\n' "${stale[@]:0:6}"
+    (( ${#stale[@]} > 6 )) && printf '      ... and %d more\n' "$(( ${#stale[@]} - 6 ))"
+    warn "      compose does not recreate a running container, so their definitions are the OLD ones"
+    warn "      to apply: deploy.sh down ${tier} && deploy.sh ${tier}   (volumes are kept)"
+}
+
+compose_record_applied() { # tier — called only after the tier is up
+    local tier="$1" rec="${HERE}/.compose-applied" tmp
+    tmp="$(mktemp)"
+    awk -v t="${tier}" '$1!=t' "${rec}" 2>/dev/null > "${tmp}" || true
+    printf '%s %s\n' "${tier}" "$(compose_fingerprint "${tier}")" >> "${tmp}"
+    mv "${tmp}" "${rec}"
+}
+
 recreate_if_stale() { # tier  service...
     local tier="$1"; shift
     local proj; proj="$(proj "$tier")"
@@ -343,6 +427,41 @@ recreate_on_stale_credential() { # tier  service...
 #
 # `platform/.gitignore` keeps them out of git, but an ignored file is still a file on disk — the
 # guardrail stops them being published, not from being there.
+# Anonymous volumes left behind by container recreates.
+#
+# Six of the images this platform runs declare VOLUME — boundary (/boundary/), postgres
+# (/var/lib/postgresql, the PARENT of the path compose binds), vault, consul, minio and the
+# remediation agent. Every recreate that does not bind those exact paths mints a fresh
+# anonymous volume, and nothing ever removes it.
+#
+# Each volume holds one runtime lock, out of a fixed pool of 2048 shared with containers and
+# pods. Exhausting it stops the runtime creating ANY container: the platform keeps serving from
+# what is already up, while every restart, every redeploy and every test that spawns a
+# container fails with "allocation failed; exceeded num_locks".
+#
+# Only 64-hex names are touched — those are anonymous by construction. Named volumes hold the
+# database, the object store and the receiver's evidence, and are never candidates. `volume rm`
+# additionally refuses anything in use, so a volume attached to a running container survives
+# even if it were somehow named this way.
+prune_anonymous_volumes() {
+    local anon before
+    before="$(${RUNTIME} volume ls -q 2>/dev/null | wc -l)"
+    anon="$(${RUNTIME} volume ls -q 2>/dev/null | grep -cE '^[0-9a-f]{64}$' || true)"
+    [[ "${anon:-0}" -eq 0 ]] && return 0
+    ${RUNTIME} volume ls -q 2>/dev/null | grep -E '^[0-9a-f]{64}$' \
+        | xargs -r -n 200 ${RUNTIME} volume rm >/dev/null 2>&1 || true
+    local after
+    after="$(${RUNTIME} volume ls -q 2>/dev/null | wc -l)"
+    if [[ "${after}" -lt "${before}" ]]; then
+        ok "reclaimed $(( before - after )) unused anonymous volume(s) — $(( after )) remain"
+    fi
+    # The pool is shared with containers and pods; warn well before it is gone, because the
+    # failure it produces names locks and not volumes.
+    if [[ "${after}" -gt 1500 ]]; then
+        warn "${after} volumes against a 2048 runtime lock pool — container creation fails when it is exhausted"
+    fi
+}
+
 purge_re_sessions() {
     local re_dir="${HERE}/../re-workstation"
     local purged=0 dir
@@ -772,6 +891,22 @@ up_enclave() {
     wait_for ir-enclave_coredns_1 45 true || warn "enclave resolver slow to start"
     ok "enclave resolver up — in-zone via ${enc_dns}, receiver via ${dmz_dns}, all else REFUSED"
 
+    # Time, beside the resolver and for the same reason: the segment installs no route off the
+    # host, so both authorities have to live inside it. Brought up HERE, before anything that
+    # timestamps — a custody seal written by a host that has not yet found a time source is
+    # unanchored, and nothing downstream can tell that from a seal written correctly.
+    dc enclave up -d --build ntp >/dev/null 2>&1
+    wait_for ir-enclave_ntp_1 45 true || warn "enclave time service slow to start"
+    ntp_stratum="$(${RUNTIME} exec ir-enclave_ntp_1 chronyc -n tracking 2>/dev/null \
+                   | awk -F': *' '/^Stratum/ {print $2}')"
+    if [[ -z "${ntp_stratum}" ]]; then
+        warn "enclave time service is not answering — hosts have no authority to agree with"
+    elif [[ "${ntp_stratum}" == "10" ]]; then
+        ok "enclave time service up — serving from its LOCAL reference (set IR_NTP_UPSTREAM for a traceable source)"
+    else
+        ok "enclave time service up — stratum ${ntp_stratum}, disciplined by its upstream"
+    fi
+
     say "Enclave · stage 0b/4 — access broker"
     # The controller's API listener carries the analyst's password and the session token across
     # the DMZ link. It refuses to serve without a certificate, so one is generated here rather
@@ -791,10 +926,24 @@ up_enclave() {
     sed -e "s|__BOUNDARY_WORKER_AUTH_KEY__|${BOUNDARY_WORKER_AUTH_KEY}|" \
         -e "s|__BOUNDARY_CONTROLLER__|${BOUNDARY_HOST}|" \
         -e "s|__WORKER_PUBLIC_ADDR__|${BOUNDARY_EGRESS_HOST:-boundary-egress}:9202|" \
+        -e "s|__WORKER_NAME__|ir-egress|" \
         "${HERE}/../hashicorp/access/boundary-egress.hcl.tmpl" \
         > "${HERE}/../hashicorp/access/boundary-egress.hcl"
     chmod 600 "${HERE}/../hashicorp/access/boundary-egress.hcl"
-    ok "Boundary configs rendered (TLS on the API; egress advertises ${BOUNDARY_EGRESS_HOST:-boundary-egress}:9202)"
+    # One config per egress worker. Every session dials the worker it was assigned, and
+    # concurrent connection setups corrupt a single worker's handshake path — the ~8/s setup
+    # ceiling belongs to the worker, so capacity scales with workers, not with sessions.
+    local w
+    for w in $(seq 2 "${BOUNDARY_EGRESS_WORKERS:-3}"); do
+        sed -e "s|__BOUNDARY_CONTROLLER__|${BOUNDARY_HOST:-boundary}|" \
+            -e "s|__BOUNDARY_WORKER_AUTH_KEY__|${BOUNDARY_WORKER_AUTH_KEY}|" \
+            -e "s|__WORKER_PUBLIC_ADDR__|boundary-egress-${w}:9202|" \
+            -e "s|__WORKER_NAME__|ir-egress-${w}|" \
+            "${HERE}/../hashicorp/access/boundary-egress.hcl.tmpl" \
+            > "${HERE}/../hashicorp/access/boundary-egress-${w}.hcl"
+        chmod 600 "${HERE}/../hashicorp/access/boundary-egress-${w}.hcl"
+    done
+    ok "Boundary configs rendered (TLS on the API; ${BOUNDARY_EGRESS_WORKERS:-3} egress workers advertise their own names)"
 
     # Staged, like every other dependency here: the database is gated on accepting connections
     # before the controller is started against it.
@@ -805,7 +954,8 @@ up_enclave() {
     # Recreated so a re-rendered config is actually read. Its config is bind-mounted, and
     # `compose up` leaves a running container alone — so a changed listener or key silently keeps
     # the old value. The controller holds no state in the container; its database is separate.
-    ${RUNTIME} rm -f ir-enclave_boundary_1 ir-enclave_boundary-egress_1 >/dev/null 2>&1 || true
+    ${RUNTIME} rm -f ir-enclave_boundary_1 ir-enclave_boundary-egress_1 \
+        ir-enclave_boundary-egress-2_1 ir-enclave_boundary-egress-3_1 >/dev/null 2>&1 || true
     dc enclave up -d boundary >/dev/null 2>&1
     wait_for ir-enclave_boundary_1 150 \
         ${RUNTIME} exec ir-enclave_boundary_1 wget -q -O- http://127.0.0.1:9203/health \
@@ -828,20 +978,31 @@ up_enclave() {
         die "Boundary produced no target — the analyst path cannot be opened"
     fi
 
-    # The worker that actually carries the session, started after the controller so its first
-    # registration attempt has something to register with.
-    dc enclave up -d boundary-egress >/dev/null 2>&1
-    wait_for ir-enclave_boundary-egress_1 90 \
-        ${RUNTIME} exec ir-enclave_boundary-egress_1 wget -q -O- http://127.0.0.1:9203/health \
-        || die "the Boundary egress worker never became healthy"
+    # The workers that actually carry the sessions, started after the controller so their
+    # first registration attempt has something to register with. Several of them, because
+    # concurrent connection setups corrupt a single worker's handshake path — the controller
+    # spreads sessions across the registered set, so setup capacity scales here.
+    local nworkers wname wsvc wctr wnames=""
+    nworkers="${BOUNDARY_EGRESS_WORKERS:-3}"
+    for w in $(seq 1 "${nworkers}"); do
+        if [[ "${w}" == "1" ]]; then wsvc="boundary-egress"; wname="ir-egress"
+        else wsvc="boundary-egress-${w}"; wname="ir-egress-${w}"; fi
+        wctr="ir-enclave_${wsvc}_1"
+        dc enclave up -d "${wsvc}" >/dev/null 2>&1
+        wait_for "${wctr}" 90 \
+            ${RUNTIME} exec "${wctr}" wget -q -O- http://127.0.0.1:9203/health \
+            || die "Boundary egress worker ${wname} never became healthy"
+        wnames="${wnames} ${wname}"
+    done
     # Registration is its own gate. A target with no worker authorizes a session normally and
     # then carries nothing, and the failure surfaces at the far end of the path as a hung
     # connection — several tiers from the cause.
     # It also reaps registrations that no longer correspond to a running worker. Those keep
     # advertising an address nothing serves, and the controller still hands sessions to them —
     # so some sessions hang and the rest work, which reads as an intermittent network fault.
-    if ! bw="$(${RUNTIME} exec ir-enclave_boundary_1 sh /boundary/workers.sh ir-egress 2>&1)"; then
-        warn "no Boundary worker registered — sessions would be authorized and then carry nothing:"
+    # shellcheck disable=SC2086
+    if ! bw="$(${RUNTIME} exec ir-enclave_boundary_1 sh /boundary/workers.sh ${wnames} 2>&1)"; then
+        warn "Boundary worker registration incomplete — some sessions would be authorized and then carry nothing:"
         printf '%s\n' "${bw}" | tail -6 | sed 's/^/        /'
     else
         printf '%s\n' "${bw}" | while read -r line; do ok "Boundary: ${line}"; done
@@ -1267,12 +1428,27 @@ re-run deploy, or provision manually with hashicorp/keycloak/provision-demo-user
     if [[ "${IR_MESH:-1}" == "1" ]]; then
         bash "${HERE}/../hashicorp/consul/register-mesh.sh" >/dev/null 2>&1 || true
         dc enclave up -d oauth2-proxy-sidecar >/dev/null 2>&1
-        wait_for ir-enclave_oauth2-proxy-sidecar_1 60 true \
-            || warn "the SSO gate's proxy did not start — its session store will be unreachable"
+        # Gated on the REDIS LISTENER inside the sidecar's namespace, not on the container
+        # being up. The gate dials 127.0.0.1:6379 the moment it starts and exits when refused,
+        # so a sidecar that is running but not yet serving produces a dead SSO gate. Read
+        # passively from /proc: 0x18EB is 6379, state 0A is LISTEN.
+        wait_for ir-enclave_oauth2-proxy-sidecar_1 90 \
+            ${RUNTIME} exec ir-enclave_oauth2-proxy-sidecar_1 sh -c \
+            "awk '\$2 ~ /:18EB\$/ && \$4 == \"0A\" {f=1} END{exit !f}' /proc/net/tcp /proc/net/tcp6" \
+            || die "the SSO gate's session-store listener never came up — the gate would exit on start"
     fi
+    # An exited gate stays exited across `up -d`; it keeps reporting the failure it hit before
+    # the listener existed. Removed first so the start below is a fresh container.
+    ${RUNTIME} rm -f ir-enclave_oauth2-proxy_1 >/dev/null 2>&1 || true
     dc enclave up -d oauth2-proxy >/dev/null 2>&1
+    # die, not warn: the gate is the analyst path. An enclave reported up without it serves
+    # nobody, and the failure then surfaces as a browser error a tier away.
     wait_for ir-enclave_oauth2-proxy_1 120 logmatch ir-enclave_oauth2-proxy_1 "OAuthProxy configured" \
-        || warn "SSO gate did not report ready — check its OIDC settings and its session store"
+        || die "SSO gate did not report ready — check its OIDC settings and its session store"
+    # A traefik left in Created holds container ids from before any sidecar recreate in its
+    # dependency graph, and `start` then fails on a container that no longer exists. Removing
+    # it first makes `up` rebuild the graph against what is actually running.
+    ${RUNTIME} rm -f ir-enclave_traefik_1 >/dev/null 2>&1 || true
     dc enclave up -d --build traefik puller >/dev/null 2>&1
     # Before the shipper is brought up, not after: a container already running on a revoked
     # credential is not fixed by `up -d`, which leaves a running container alone.
@@ -1288,7 +1464,12 @@ re-run deploy, or provision manually with hashicorp/keycloak/provision-demo-user
     if [[ "${IR_MESH:-1}" == "1" ]]; then
         mesh_attach puller
     fi
-    wait_for ir-enclave_traefik_1 60 true || warn "ingress slow to start"
+    # die, not warn, and gated on the LISTENER: the ingress is the only thing the brokered
+    # session forwards to, so an enclave without it answers every analyst with a reset.
+    wait_for ir-enclave_traefik_1 90 \
+        ${RUNTIME} exec ir-enclave_traefik_1 sh -c \
+        "awk '\$2 ~ /:01BB\$/ && \$4 == \"0A\" {f=1} END{exit !f}' /proc/net/tcp /proc/net/tcp6" \
+        || die "ingress never bound :443 — the brokered session has nothing to forward to"
     ok "enclave up"
 }
 
@@ -1401,7 +1582,7 @@ up_dmz() {
     # keeps reporting the failure it hit before the fix — its bind-mounted script is current, but
     # nothing ever runs it again.
     ${RUNTIME} rm -f ir-dmz_broker_1 >/dev/null 2>&1 || true
-    dc dmz up -d --build bastion broker >/dev/null 2>&1
+    dc dmz up -d --build bastion broker distributor >/dev/null 2>&1
     # Probed over TLS, verifying against the same certificate collectors pin. A plain-HTTP probe
     # against a TLS socket fails in a way that reads as "the receiver never came up", which sent
     # the last deployment looking for a crashed service that was in fact serving correctly.
@@ -1416,24 +1597,58 @@ u.urlopen('https://localhost:8090/healthz',timeout=4,context=c)" \
     for c in ir-dmz_coredns_1 ir-dmz_headscale_1 ir-dmz_bastion_1; do
         wait_for "$c" 45 true || warn "$c slow to start"
     done
+    # The broker and the distributor are only sound in the bastion's CURRENT namespace. A
+    # recreated bastion gets a fresh one, and a namespace-sharer left running stays bound in
+    # the DEAD namespace: it reports Up, its listener shows bound from inside it, and nothing
+    # routes to it — the analyst path is gone while every container reads healthy. Same class
+    # as the enclave's sidecar orphans, repaired the same way: compare namespace inodes and
+    # recreate the sharers that do not match.
+    local ns_bastion ns_share svc
+    ns_bastion="$(netns_of ir-dmz_bastion_1)"
+    for c in ir-dmz_broker_1 ir-dmz_distributor_1; do
+        ns_share="$(netns_of "${c}")"
+        svc="${c#ir-dmz_}"; svc="${svc%_1}"
+        if [[ -n "${ns_bastion}" && -n "${ns_share}" && "${ns_share}" != "${ns_bastion}" ]]; then
+            warn "${svc} is orphaned in the bastion's previous namespace — recreating it"
+            ${RUNTIME} rm -f "${c}" >/dev/null 2>&1 || true
+            dc dmz up -d "${svc}" >/dev/null 2>&1
+        fi
+    done
+
     # The broker is checked by its LISTENER, not by its container being up. `true` as a readiness
     # check passes for any process that has not exited, and the broker's failure mode is exactly
     # that: it starts, logs its forwarding table, and forwards nothing. The analyst path is dead
     # while every gate reads green, which is worse than a container that simply crashed.
     #
-    # The listener lives in the bastion's namespace, since that is where the broker binds.
-    # Gated on an ESTABLISHED SESSION. The listener being bound is necessary and not sufficient:
-    # the point of replacing socat is that this hop is authenticated and authorized, so the check
-    # is that Boundary authorized it.
-    wait_for ir-dmz_broker_1 90 \
+    # The listeners live in the bastion's namespace, since that is where both the broker and
+    # the distributor bind. Gated on ESTABLISHED SESSIONS: a bound port is necessary and not
+    # sufficient, because the point of replacing socat is that this hop is authenticated and
+    # authorized, so the check is that Boundary authorized it.
+    #
+    # SESSIONS FIRST, THEN THE PORT IN FRONT OF THEM. The distributor binds ${BROKER_LISTEN}
+    # whether or not anything is behind it, so checking that alone would pass a DMZ holding no
+    # brokered session at all — the same green-gates-dead-path failure described above, moved
+    # one layer up.
+    local want_sessions="${BROKER_SESSIONS:-8}" base="${BROKER_SESSION_BASE:-18443}"
+    wait_for ir-dmz_broker_1 120 \
+        ${RUNTIME} exec ir-dmz_bastion_1 sh -c \
+        "n=0; p=${base}; last=\$((${base} + ${want_sessions} - 1))
+         while [ \"\$p\" -le \"\$last\" ]; do
+             awk -v h=\":\$(printf '%04X' \"\$p\")\$\" '\$4==\"0A\" && \$2 ~ h {f=1} END{exit !f}' \
+                 /proc/net/tcp /proc/net/tcp6 2>/dev/null && n=\$((n+1))
+             p=\$((p+1))
+         done; [ \"\$n\" -eq ${want_sessions} ]" \
+        || die "fewer than ${want_sessions} brokered sessions came up — the fleet has no path, or an incomplete one"
+    if [[ "$(${RUNTIME} logs ir-dmz_broker_1 2>&1 | grep -c 'authenticated as')" -gt 0 ]]; then
+        ok "${want_sessions} independent Boundary sessions authenticated on ${base}-$((base + want_sessions - 1))"
+    else
+        warn "the sessions are listening but the broker has not reported authenticating"
+    fi
+    wait_for ir-dmz_distributor_1 60 \
         ${RUNTIME} exec ir-dmz_bastion_1 sh -c \
         "netstat -ltn 2>/dev/null | grep -q ':${BROKER_LISTEN}' || ss -ltn 2>/dev/null | grep -q ':${BROKER_LISTEN}'" \
         || die "no listener on ${BROKER_LISTEN} — analysts have no path to the platform"
-    if [[ "$(${RUNTIME} logs ir-dmz_broker_1 2>&1 | grep -c 'authenticated as')" -gt 0 ]]; then
-        ok "Boundary session broker authenticated and listening on ${BROKER_LISTEN}"
-    else
-        warn "the broker is listening but has not reported an authenticated session"
-    fi
+    ok "connection distributor on ${BROKER_LISTEN} — the fleet is spread across ${want_sessions} sessions"
     # The tunnel is the analyst's only intended route, so its absence is reported here rather
     # than discovered as a browser that cannot reach the platform.
     local ts_ip
@@ -1489,7 +1704,17 @@ resolve_export_dir() {
 }
 
 up_workstation() {
-    say "Workstation · analyst browser"
+    local wsid="${IR_WS_ID:-analyst}" wsproj tn br
+    wsproj="$(proj workstation)"; tn="${wsproj}_tailnet_1"; br="${wsproj}_browser_1"
+    say "Workstation · analyst browser (${wsid})"
+    # Its own key, and the deploy refuses to start a node that has none: without one the
+    # daemon comes up, fails to authenticate and retries on a backoff, which reads as a broken
+    # kiosk rather than a workstation that was never issued a credential.
+    TS_WS_AUTHKEY="$(ws_authkey)"; export TS_WS_AUTHKEY IR_WS_ID
+    if [[ -z "${TS_WS_AUTHKEY}" ]]; then
+        warn "no pre-auth key for workstation '${wsid}' — it will not join the tailnet"
+        warn "  add '${wsid}' to IR_WS_IDS in deploy/.env, then run deploy.sh dmz to mint one"
+    fi
     resolve_export_dir
     [[ -w "${IR_EXPORT_DIR}" ]] \
         && ok "exports land on this host at ${IR_EXPORT_DIR}" \
@@ -1519,27 +1744,63 @@ up_workstation() {
     # retries on a backoff that outlives the check below, so the node reads as unenrolled long
     # after a fresh key is staged. Recreate the pair instead — browser first, since it shares
     # the node's namespace and removing the owner before the sharer wedges the runtime.
-    if ${RUNTIME} inspect ir-workstation_tailnet_1 >/dev/null 2>&1 && \
-       ! { ts_out="$(${RUNTIME} exec ir-workstation_tailnet_1 tailscale ip -4 2>/dev/null || true)"
+    if ${RUNTIME} inspect "${tn}" >/dev/null 2>&1 && \
+       ! { ts_out="$(${RUNTIME} exec "${tn}" tailscale ip -4 2>/dev/null || true)"
             case "${ts_out}" in 100.*) true ;; *) false ;; esac; }; then
         warn "tailnet node is up but unenrolled — recreating it to read the current pre-auth key"
-        ${RUNTIME} rm -f ir-workstation_browser_1 >/dev/null 2>&1
-        ${RUNTIME} rm -f ir-workstation_tailnet_1 >/dev/null 2>&1
+        ${RUNTIME} rm -f "${br}" >/dev/null 2>&1
+        ${RUNTIME} rm -f "${tn}" >/dev/null 2>&1
     fi
     dc workstation up -d --build tailnet >/dev/null 2>&1
-    wait_for ir-workstation_tailnet_1 60 true || warn "tailnet node did not start"
+    wait_for "${tn}" 60 true || warn "tailnet node did not start"
     local ts_ip="" waited_ts=0
-    ts_ip="$(wait_tailnet_ip ir-workstation_tailnet_1 90)"
+    ts_ip="$(wait_tailnet_ip "${tn}" 90)"
     if [[ -n "${ts_ip}" ]]; then
-        ok "analyst joined the tailnet at ${ts_ip} (traffic leaves over WireGuard)"
+        ok "${wsid} joined the tailnet at ${ts_ip} (traffic leaves over WireGuard)"
     else
-        warn "analyst has NOT joined the tailnet — the browser will have no route to the platform"
+        warn "${wsid} has NOT joined the tailnet — the browser will have no route to the platform"
         warn "re-run 'deploy.sh dmz' to re-issue a pre-auth key, then this tier again"
     fi
 
     dc workstation up -d --build >/dev/null 2>&1
-    wait_for ir-workstation_browser_1 90 true || warn "browser did not start (is DISPLAY set?)"
-    ok "workstation up"
+    wait_for "${br}" 90 true || warn "browser did not start (is DISPLAY set?)"
+    render_ws_map
+    ok "workstation ${wsid} up"
+}
+
+# The distributor's workstation-pinning map: `<ws-id> <tailnet-addr>` per line, in IR_WS_IDS
+# order — the line's ordinal chooses the session, and the enclave derives the same pairing
+# from the same variable, so there is one source of truth and nothing to drift.
+#
+# Rendered from headscale's own record because only headscale knows the address, and rendered
+# to a FILE because the distributor is up before any workstation registers. The distributor's
+# watcher reloads gracefully when this changes; established connections drain, never drop.
+render_ws_map() {
+    local map="${HERE}/dmz/rendered/ws-map" hs="ir-dmz_headscale_1" nodes rendered
+    ${RUNTIME} inspect "${hs}" >/dev/null 2>&1 || return 0
+    nodes="$(${RUNTIME} exec "${hs}" headscale nodes list -o json 2>/dev/null || echo '[]')"
+    rendered="$(python3 - "${map}" "${IR_WS_IDS:-analyst}" <<'PYEOF' "${nodes}"
+import json, sys
+map_path, ws_ids, raw = sys.argv[1], sys.argv[2].split(), sys.argv[3]
+try:
+    nodes = json.loads(raw)
+except ValueError:
+    nodes = []
+addr = {}
+for n in nodes:
+    name = n.get("given_name") or n.get("name") or ""
+    ips = [ip for ip in (n.get("ip_addresses") or []) if "." in ip]
+    if name and ips:
+        addr[name] = ips[0]
+# Every configured workstation keeps its line, "-" when unregistered: the ordinal IS
+# the session assignment, and it must match the enclave's IR_WS_IDS-derived pairing.
+lines = [f"{ws} {addr.get(ws, '-')}" for ws in ws_ids]
+with open(map_path, "w") as f:
+    f.write("\n".join(lines) + ("\n" if lines else ""))
+print(f"{len(lines)}/{len(ws_ids)}")
+PYEOF
+)" || { warn "workstation pinning map not rendered"; return 0; }
+    ok "workstation pinning map rendered (${rendered} workstations mapped to sessions)"
 }
 
 # Gate: the whole SSO chain must answer before the analyst browser is started, so the
@@ -1652,15 +1913,29 @@ status() {
 
 case "${TIER}" in
     enclave|dmz|workstation|agent)
+        # `deploy.sh workstation <id>` names this workstation. Everything downstream —
+        # compose project, container names, state volume, tailnet node name, pre-auth key —
+        # derives from it, so a second workstation is a second identity rather than a
+        # collision with the first.
+        if [[ "${TIER}" == "workstation" && -n "${2:-}" ]]; then
+            IR_WS_ID="$2"; export IR_WS_ID
+        fi
         bash "${HERE}/../traefik/gen-cert.sh" >/dev/null 2>&1 || true
-        ensure_build_images; ensure_networks; "up_${TIER}" ;;
+        # Before anything is created: this deployment recreates containers, and a lock pool
+        # already exhausted by previous recreates fails every one of them.
+        prune_anonymous_volumes
+        compose_drift_check "${TIER}"
+        ensure_build_images; ensure_networks; "up_${TIER}"
+        compose_record_applied "${TIER}" ;;
     all)
         bash "${HERE}/../traefik/gen-cert.sh" >/dev/null 2>&1 || true
+        prune_anonymous_volumes
         ensure_build_images
         ensure_networks
         # Enclave first: it holds the Boundary controller, and the DMZ's session client cannot
         # open the analyst path without the target the controller provisions. The puller polls
         # the DMZ receiver on a retry loop, so it tolerates the DMZ arriving second.
+        for t in enclave dmz agent workstation; do compose_drift_check "$t"; done
         up_enclave; up_dmz
         # After the enclave: the agent polls through the backend, and starting it earlier
         # would just have it waiting. Before the workstation, so repairs are available the
@@ -1668,23 +1943,28 @@ case "${TIER}" in
         up_agent
         verify_sso || warn "continuing, but the browser may show an SSO error"
         seed_evidence
-        up_workstation ;;
+        up_workstation
+        for t in enclave dmz agent workstation; do compose_record_applied "$t"; done ;;
+    mesh)
+        # Reattach any sidecar that lost its service's namespace, without a full bring-up.
+        #
+        # A service restarted on its own — by an operator, a crash, or a compose recreate — gets
+        # a new namespace and strands the proxy that was serving it. The mesh then reports
+        # healthy while a consumer's traffic reaches nothing. Redeploying the tier repairs it
+        # and does much else besides; this is the repair alone, which is also what a test can
+        # call after restarting a service deliberately.
+        mesh_orphan_check db minio redis vault backend worker frontend puller \
+                          oauth2-proxy log-shipper keycloak
+        ok "mesh proxies reconciled with their services" ;;
     status) status ;;
     down)
-        # Teardown reports what actually happened. It used to discard compose's output and print
-        # "torn down" unconditionally, so a compose file that failed to parse left every
-        # container running behind a success message — and the next bring-up then inherited
-        # containers built from the previous configuration.
-        # VOLUMES ARE KEPT unless --purge is given.
+        # Teardown reports compose's actual result. A success message over a compose file that
+        # failed to parse leaves every container running, and the next bring-up inherits them.
         #
-        # This used to pass -v unconditionally, so tearing a tier down to restart a service also
-        # deleted the database, the object store and the receiver's holding area — every
-        # collected capture, its custody record and its analysis, with no warning and no
-        # confirmation. On a forensic platform that is evidence destruction: the bundles are
-        # gone, and the endpoints they came from have usually been rebuilt by then.
-        #
-        # Keeping them makes `down` a restart rather than a reset, which is what it is used for
-        # nine times in ten. Discarding state is now something the operator has to ask for.
+        # VOLUMES ARE KEPT unless --purge is given. The volumes hold every collected capture,
+        # its custody record and its analysis; deleting them to restart a service is evidence
+        # destruction. `down` is a restart, and discarding state is something the operator has
+        # to ask for.
         PURGE=0
         for arg in "$@"; do [[ "${arg}" == "--purge" ]] && PURGE=1; done
         vol_flag=()
@@ -1698,9 +1978,17 @@ case "${TIER}" in
         # while another container still holds its network namespace DEADLOCKS podman — the call
         # hangs holding the storage lock and every subsequent podman command blocks behind it,
         # which looks like the whole host has seized rather than like a teardown ordering bug.
-        for c in $(${RUNTIME} ps -a --format '{{.Names}}' 2>/dev/null \
-                   | grep -E '(-sidecar_|^ir-dmz_broker_)' || true); do
-            ${RUNTIME} rm -f "${c}" >/dev/null 2>&1 || true
+        #
+        # Scoped to the tiers actually being torn down. Unscoped, `down enclave` also removed
+        # `ir-dmz_broker_1` and every DMZ sidecar — a tier nobody asked to stop — and the DMZ
+        # then sat there with the analyst path gone while the command reported success for the
+        # enclave. A teardown must not reach into a tier it was not given.
+        for t in agent workstation enclave dmz; do
+            [[ "${2:-all}" == "all" || "${2:-}" == "$t" ]] || continue
+            for c in $(${RUNTIME} ps -a --format '{{.Names}}' 2>/dev/null \
+                       | grep -E "^$(proj "$t")_(.*-sidecar_|broker_)" || true); do
+                ${RUNTIME} rm -f "${c}" >/dev/null 2>&1 || true
+            done
         done
         # The agent first: stop the executor before tearing down anything it might be repairing.
         for t in agent workstation enclave dmz; do
@@ -1720,11 +2008,24 @@ case "${TIER}" in
             done
         fi
         purge_re_sessions
-        # The verdict is drawn from the runtime, not from having reached the end of the function.
-        left="$(${RUNTIME} ps --format '{{.Names}}' 2>/dev/null | grep -c '^ir-' || true)"
+        # After the containers are gone, so the volumes their recreates left behind are
+        # unused and removable.
+        prune_anonymous_volumes
+        # The verdict is drawn from the runtime, not from having reached the end of the function,
+        # and it is SCOPED TO THE TIERS ASKED FOR. Counting every `ir-` container made
+        # `down enclave` report failure and exit 1 because the DMZ and the workstation were
+        # still up — which is the correct outcome for a single-tier teardown. A teardown that
+        # fails when it succeeded trains everyone to ignore its exit status, and the run where
+        # it means something is the one nobody reads.
+        if [[ "${2:-all}" == "all" ]]; then
+            scope='^ir-'
+        else
+            scope="^$(proj "${2}")_"
+        fi
+        left="$(${RUNTIME} ps --format '{{.Names}}' 2>/dev/null | grep -c "${scope}" || true)"
         if [[ "${left:-0}" -gt 0 ]]; then
-            warn "${left} container(s) still running — NOT fully torn down"
-            ${RUNTIME} ps --format '  {{.Names}}' | grep '^  ir-'
+            warn "${left} ${2:-all} container(s) still running — NOT fully torn down"
+            ${RUNTIME} ps --format '  {{.Names}}' | grep "  ${scope#^}"
             exit 1
         fi
         echo "torn down" ;;

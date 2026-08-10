@@ -2,7 +2,7 @@
 
 *What passing proves:* The deployed platform serves its API behind the SSO gate, with identity enforced rather than assumed.
 
-- Run: `uat_baseline.sh` — 2026-08-06 16:32:08Z
+- Run: `uat_baseline.sh` — 2026-08-09 01:50:52Z
 
 **Components — every tier answers**
 
@@ -15,7 +15,7 @@
 | ✅ PASS | ir-enclave_worker_1 running |
 | ✅ PASS | ir-enclave_puller_1 running |
 | ✅ PASS | ir-dmz_receiver_1 running |
-| ✅ PASS | receiver resolves by name (receiver -> 10.89.0.8) |
+| ✅ PASS | receiver resolves by name (receiver -> 10.89.0.9) |
 
 **Collector — identity is the machine's, not the container's**
 
@@ -62,7 +62,7 @@
 
 | Result | Assertion — with evidence |
 |---|---|
-| · | collection runs currently recorded: 129 |
+| · | collection runs currently recorded: 161 |
 | ✅ PASS | no machine-id maps to two host records |
 
 **Analysis — the parser gate holds on real evidence**
@@ -76,9 +76,9 @@
 
 | Result | Assertion — with evidence |
 |---|---|
-| ✅ PASS | 10 component(s) reporting resources |
-| · | stale reporters: worker (2a2599b5628b),worker (aee3514b00f1),worker (c59d83bba11e) (expected shortly after a restart) |
-| · | open capacity/resource alerts: 13 |
+| ✅ PASS | 9 component(s) reporting resources |
+| · | stale reporters: worker (cca8c1cee979),worker (f4b35a9e08b3) (expected shortly after a restart) |
+| · | open capacity/resource alerts: 10 |
 
 **Login branding — the custom theme is actually served**
 
@@ -93,10 +93,13 @@
 | Result | Assertion — with evidence |
 |---|---|
 | ✅ PASS | the code graph matches the tree — services, scripts, routes and their UATs are current |
+| ✅ PASS | every documented link resolves, and every document is in the change-management inventory |
+| ✅ PASS | no narrative comments, and no file is majority prose |
+| ✅ PASS | runtime locks: 98 of 2048 in use (54 volumes, 44 containers) — room to create containers |
 
 **Baseline**
 
 | Result | Assertion — with evidence |
 |---|---|
 
-**Verdict: PROVEN** — 31 assertions passed, 0 failed.
+**Verdict: PROVEN** — 34 assertions passed, 0 failed.

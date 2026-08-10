@@ -130,9 +130,36 @@ U="$(ensure users -scope-id "${ORG}" "${ANALYST_LOGIN}" -scope-id "${ORG}" -name
 # grant below is inert. It authenticates and is then refused at authorize-session.
 must "binding the ${ANALYST_LOGIN} account to its user" users set-accounts -id "${U}" -account "${ACCT}"
 
+# One principal PER BROKER SESSION, beside the base analyst. A single shared principal makes
+# every session indistinguishable in the access record and makes any principal-scoped cancel
+# fleet-wide; distinct principals give each supervisor a reap that can only touch its own
+# session. They share the base password until M1 distributes per-workstation credentials —
+# the attribution unit here is the principal, not the secret.
+SESSIONS_N="${BOUNDARY_SESSION_PRINCIPALS:-8}"
+export SESS_PW="${ANALYST_PASSWORD}"
+SESSION_USERS=""
+i=1
+while [ "${i}" -le "${SESSIONS_N}" ]; do
+    SLOGIN="${ANALYST_LOGIN}-s${i}"
+    SACCT="$(b accounts list -auth-method-id "${AM}" \
+            -filter "\"/item/attributes/login_name\"==\"${SLOGIN}\"" 2>/dev/null | jget)"
+    [ -n "${SACCT}" ] || SACCT="$(b accounts create password -auth-method-id "${AM}" \
+             -login-name "${SLOGIN}" -password "env://SESS_PW" | jget)"
+    SU="$(ensure users -scope-id "${ORG}" "${SLOGIN}" -scope-id "${ORG}" -name "${SLOGIN}")"
+    [ -n "${SACCT}" ] || { echo "[boundary] no account for ${SLOGIN}" >&2; exit 1; }
+    must "binding ${SLOGIN} to its user" users set-accounts -id "${SU}" -account "${SACCT}"
+    SESSION_USERS="${SESSION_USERS} ${SU}"
+    i=$((i + 1))
+done
+
 echo "[boundary] role — authorize-session on that target and nothing else"
 R="$(ensure roles -scope-id "${PROJ}" analyst-session -scope-id "${PROJ}" -name analyst-session)"
-must "adding ${ANALYST_LOGIN} to the role" roles set-principals -id "${R}" -principal "${U}"
+# set-principals REPLACES the set, so every principal goes in one call: the base analyst and
+# each session principal.
+_principals="-principal ${U}"
+for _su in ${SESSION_USERS}; do _principals="${_principals} -principal ${_su}"; done
+# shellcheck disable=SC2086
+must "adding the analyst principals to the role" roles set-principals -id "${R}" ${_principals}
 # Scoped to the one target. A grant of `type=target;actions=authorize-session` without an id
 # would authorize every target that ever gets created in this project.
 #
@@ -220,6 +247,7 @@ BOUNDARY_PROJECT_ID=${PROJ}
 BOUNDARY_TARGET_ID=${T}
 BOUNDARY_AUTH_METHOD_ID=${AM}
 BOUNDARY_ANALYST_USER_ID=${U}
+BOUNDARY_SESSION_USER_IDS="$(echo ${SESSION_USERS})"
 BOUNDARY_SESSION_AUDITOR_LOGIN=${SA_LOGIN}
 EOF
 echo "[boundary] provisioned — target ${T} -> ${TARGET_HOST}:${TARGET_PORT}"

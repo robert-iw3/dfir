@@ -387,10 +387,15 @@ class IndicatorSighting(TimeStamped):
     class Meta:
         ordering = ["ioc_type", "value", "hostname"]
         indexes = [
+            # Named to match what the migration created. Left unnamed, Django derives a name
+            # from the field list, disagrees with the migration's, and proposes a RENAME on
+            # every makemigrations — noise that eventually gets committed as a real one.
+            #
             # The cross-case pivot: everywhere this indicator has ever been seen.
-            models.Index(fields=["ioc_type", "value"]),
+            models.Index(fields=["ioc_type", "value"], name="cases_indic_ioc_typ_pivot_idx"),
             # And the per-case read, for the investigation's own indicator index.
-            models.Index(fields=["investigation_id", "ioc_type"]),
+            models.Index(fields=["investigation_id", "ioc_type"],
+                         name="cases_indic_inv_type_idx"),
         ]
         constraints = [models.UniqueConstraint(
             fields=["ioc_type", "value", "host_id", "investigation_id"],
@@ -513,10 +518,12 @@ class ProcessVerdict(TimeStamped):
     class Meta:
         ordering = ["-positive_weight", "pid"]
         indexes = [
-            models.Index(fields=["run", "verdict"]),
+            # Named for the same reason as IndicatorSighting's: the migration named it, so
+            # the model has to, or the autodetector proposes a rename forever.
+            models.Index(fields=["run", "verdict"], name="cases_proce_run_id_04a726_idx"),
             # Every read path wants the live set; without this the filter scans history that
             # grows with each re-analysis.
-            models.Index(fields=["run", "is_current"]),
+            models.Index(fields=["run", "is_current"], name="cases_proce_run_id_5c9a54_idx"),
         ]
 
     def __str__(self):
@@ -565,6 +572,9 @@ class CustodyEvent(TimeStamped):
     detail = models.JSONField(default=dict, blank=True)
     prev_hash = models.CharField(max_length=64, blank=True)
     entry_hash = models.CharField(max_length=64, blank=True)
+    # The custody key in force when this seal was written. Same reasoning as AuditLog: a seal
+    # seals under a key, and which key must travel with it or the seal cannot be evaluated.
+    sig_key_id = models.CharField(max_length=16, blank=True)
 
     class Meta:
         ordering = ["created_at"]
@@ -725,9 +735,140 @@ class AuditLog(TimeStamped):
     prev_hash = models.CharField(max_length=64, blank=True)
     entry_hash = models.CharField(max_length=64, db_index=True)
     signature = models.CharField(max_length=128, blank=True)  # HMAC-SHA256 when IR_AUDIT_HMAC_KEY set
+    # WHICH key signed this row — a digest of it, never the key. Without this, a signature
+    # written under a previous key is indistinguishable from a forged one, and the platform
+    # reports its own trail as tampered every time a key is replaced.
+    sig_key_id = models.CharField(max_length=16, blank=True, db_index=True)
 
     class Meta:
         ordering = ["id"]  # insertion order == chain order
+
+
+class SsoSession(TimeStamped):
+    """One analyst's sign-on, from login to sign-out.
+
+    SSO authentication is stateless: every request carries the identity in headers and is
+    authenticated on its own. That leaves no login and no logout to observe, so a sign-on has
+    to be reconstructed from the identity the gate forwards. This row is that reconstruction —
+    the span a set of requests belongs to, and the record a brokered session is attributed
+    through.
+    """
+
+    # Keycloak's session id when the access token carries one; a derived key otherwise.
+    # `key_source` says which, so a correlation is never read as stronger than its evidence.
+    session_key = models.CharField(max_length=128, unique=True)
+    key_source = models.CharField(max_length=16, default="derived")   # oidc | derived
+
+    # SET_NULL, not CASCADE: deleting an account must not delete the record of what it did.
+    user = models.ForeignKey("auth.User", null=True, blank=True, on_delete=models.SET_NULL,
+                             related_name="sso_sessions")
+    username = models.CharField(max_length=150, db_index=True)
+    role = models.CharField(max_length=32, blank=True)
+
+    started_at = models.DateTimeField(default=timezone.now, db_index=True)
+    last_seen_at = models.DateTimeField(default=timezone.now, db_index=True)
+    ended_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    end_reason = models.CharField(max_length=32, blank=True)  # signout | expired | superseded
+
+    client_address = models.CharField(max_length=64, blank=True)
+    user_agent = models.CharField(max_length=256, blank=True)
+    # Which workstation the sign-on came from, when the tunnel makes that knowable.
+    workstation = models.CharField(max_length=64, blank=True, db_index=True)
+
+    request_count = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        ordering = ["-started_at"]
+        indexes = [models.Index(fields=["username", "started_at"])]
+
+    @property
+    def active(self):
+        return self.ended_at is None
+
+
+class AuditCheckpoint(TimeStamped):
+    """An acknowledged discontinuity in the audit chain, recorded rather than repaired.
+
+    A hash chain that breaks stays broken: re-chaining the rows so verification passes is
+    precisely the act a tamper-evident ledger exists to detect, and a ledger that quietly
+    heals itself proves nothing afterwards.
+
+    So a known break is DECLARED instead. The checkpoint names the row where the chain
+    restarts, the hashes on both sides of the gap, and why. Verification then reports two
+    different things — an acknowledged discontinuity and an unexplained one — and only the
+    second is evidence of tampering. It still fails.
+
+    Recording one is an audited, admin-only act, and the checkpoint carries its own signature
+    so a forged acknowledgement cannot be used to cover a real break.
+    """
+
+    at_entry_id = models.BigIntegerField(db_index=True, unique=True)
+    # What the walk computed on arriving at that row, and what the row itself claims. Keeping
+    # both makes the gap reviewable: an acknowledgement whose hashes do not match the break it
+    # claims to cover proves nothing.
+    observed_prev_hash = models.CharField(max_length=64, blank=True)
+    declared_prev_hash = models.CharField(max_length=64, blank=True)
+    reason = models.TextField()
+    recorded_by = models.CharField(max_length=128)
+    signature = models.CharField(max_length=128, blank=True)
+    sig_key_id = models.CharField(max_length=16, blank=True)
+
+    class Meta:
+        ordering = ["at_entry_id"]
+
+
+class ExportLedger(TimeStamped):
+    """What left the platform, when, and who took it — answerable from one query.
+
+    Every export already wrote an audit row, and an audit row is the right place for "this
+    happened". It is the wrong place for "what has left": answering that meant reading a
+    hash-chained log designed to be walked in order, filtering by an action name, and
+    unpacking a free-form JSON detail whose shape each call site chose for itself. The
+    question an incident lead actually asks after a case turns adversarial — what has already
+    gone out of this platform — was reconstructible rather than answerable.
+
+    So the ledger is a table with columns, and the audit trail keeps recording the act. The
+    two do not compete: the chain proves nothing was removed, the ledger says what to look at.
+
+    A DENIED export is recorded here too. An attempt that was refused belongs in the same
+    place as one that succeeded — an export ledger showing only successes answers "what left"
+    and cannot answer "what was tried", and those are the same question during an
+    investigation into the responder.
+    """
+
+    OUTCOMES = (("completed", "completed"), ("denied", "denied"))
+
+    actor = models.CharField(max_length=128, db_index=True)
+    role = models.CharField(max_length=32, blank=True)
+    # What was exported, not which endpoint served it: `findings`, `audit`, `ioc`,
+    # `symbol_requisites`. The endpoint is an implementation detail that will move.
+    kind = models.CharField(max_length=32, db_index=True)
+    fmt = models.CharField(max_length=16, blank=True)
+    # The filter set as applied, so the export can be reproduced or bounded later. An export
+    # whose scope cannot be restated is a row count with no meaning.
+    filters = models.JSONField(default=dict, blank=True)
+    row_count = models.IntegerField(default=0)
+    # Where it went. Today every export is a browser download over the brokered session, so
+    # this is the destination as the platform can honestly describe it — not a guess at what
+    # the analyst did with the file afterwards.
+    destination = models.CharField(max_length=255, blank=True)
+    outcome = models.CharField(max_length=16, choices=OUTCOMES, default="completed",
+                               db_index=True)
+    # Populated on a denial: which permission refused, so a pattern of refusals is legible
+    # without re-deriving it from the role and the path.
+    denied_reason = models.CharField(max_length=255, blank=True)
+    path = models.CharField(max_length=512, blank=True)
+
+    class Meta:
+        ordering = ["-id"]
+        indexes = [
+            models.Index(fields=["actor", "-id"]),
+            models.Index(fields=["kind", "-id"]),
+            models.Index(fields=["outcome", "-id"]),
+        ]
+
+    def __str__(self):
+        return f"{self.actor} {self.outcome} {self.kind} ({self.row_count} rows)"
 
 
 class SymbolRequest(TimeStamped):

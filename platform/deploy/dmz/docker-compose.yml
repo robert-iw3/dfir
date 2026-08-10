@@ -129,12 +129,56 @@ services:
       BOUNDARY_PROJECT_ID: ${BOUNDARY_PROJECT_ID:-}
       BOUNDARY_ANALYST_LOGIN: ${BOUNDARY_ANALYST_LOGIN:-analyst}
       BOUNDARY_ANALYST_PASSWORD: ${BOUNDARY_ANALYST_PASSWORD}
-      BROKER_LISTEN: ${BROKER_LISTEN}
+      # Independent sessions on LOOPBACK ports, one each. One shared session is a fleet-wide
+      # failure domain: it dies under connection churn and drops every analyst together. The
+      # distributor beside this container owns the analyst-facing port and spreads the fleet
+      # over these. See planning/SCALE-50-WORKSTATIONS.md.
+      BROKER_SESSION_BASE: ${BROKER_SESSION_BASE}
+      BROKER_SESSIONS: ${BROKER_SESSIONS}
     volumes:
       - ../../hashicorp/access/boundary_session.sh:/session.sh:ro,z
       # The certificate only. The key stays in the enclave, on the controller.
       - ../../hashicorp/access/certs/boundary.crt:/boundary/certs/boundary.crt:ro,z
     entrypoint: ["/bin/sh", "/session.sh"]
+    # The analyst path IS this container. When the session client reaches a state it cannot
+    # recover in place — a listener that stopped accepting while the process stayed alive —
+    # it exits, and recovery is a fresh container rather than in-script repair, which was
+    # shown to stall holding no listener at all.
+    restart: unless-stopped
+
+  # The analyst-facing port, and the only way to a brokered session.
+  #
+  # The broker holds N independent sessions so one dying costs a share of the fleet rather than
+  # all of it, but every workstation resolves the same name to the same port. This spreads new
+  # connections across the sessions and redispatches past one that has died. It also bounds the
+  # rate of new connections: concurrent setups corrupt a session client's WebSocket.
+  #
+  # Holds no credentials and terminates no TLS: mode tcp, byte-for-byte pass-through, so the
+  # analyst's connection stays encrypted from the workstation to the enclave's SSO ingress
+  # and this process cannot read a byte of it. It shares the bastion's namespace and reaches
+  # the sessions over loopback — it gains no route the broker did not already have.
+  distributor:
+    image: docker.io/library/haproxy:3.4.3-alpine
+    network_mode: "service:bastion"
+    depends_on: [bastion]
+    # haproxy's own entrypoint expects a config file; this one is generated from
+    # BROKER_SESSIONS, which decides how many backends there are.
+    entrypoint: ["/bin/sh", "/distributor.sh"]
+    environment:
+      BROKER_LISTEN: ${BROKER_LISTEN}
+      BROKER_SESSION_BASE: ${BROKER_SESSION_BASE}
+      BROKER_SESSIONS: ${BROKER_SESSIONS}
+      BROKER_ACCEPT_RATE: ${BROKER_ACCEPT_RATE}
+      BOUNDARY_EGRESS_WORKERS: ${BOUNDARY_EGRESS_WORKERS}
+    volumes:
+      - ../../hashicorp/access/broker_distributor.sh:/distributor.sh:ro,z
+      # Workstation pinning map (`<ws-id> <tailnet-addr>` per line), written by
+      # `deploy.sh workstation` after the node registers and re-read on a graceful reload
+      # (SIGUSR2). Empty or absent means no pinning: every source spreads leastconn.
+      - ./rendered:/distributor-map:z
+    # The analyst-facing listener. If it is gone there is no path at all, and unlike a
+    # session there is nothing here to re-establish — a restart is the whole recovery.
+    restart: unless-stopped
 
   headscale:
     image: docker.io/headscale/headscale:v0.29.3

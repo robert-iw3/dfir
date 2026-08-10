@@ -15,7 +15,7 @@
 # headless environment", which reads as a missing X socket and sends you looking at the host.
 # Headless analysis (analyzeHeadless) works fine either way, so the import step gives no warning
 # that the interactive half of the tool is missing.
-FROM docker.io/library/debian:13
+FROM docker.io/library/debian:13@sha256:d63a99144861e4e460196ed93d07777490cbeab53ca660c434f2a589a6c50ea3
 
 ENV DEBIAN_FRONTEND=noninteractive
 

@@ -38,9 +38,21 @@ def build_opener():
     ), jar
 
 
-def main(sso_base, app_url, user, password, rotate_to=None):
+def login(sso_base, app_url, user, password, rotate_to=None, ws_id=None):
+    """Walk the flow. Returns (code, message, opener, jar).
+
+    The opener is returned still holding the session, so a caller can keep going as the same
+    signed-in analyst — a test that has to observe what a session DOES cannot start over,
+    because a second login is a second session.
+
+    `ws_id` appends the kiosk's workstation token to the UA, the same way launch.sh does, so
+    a test can present as a specific workstation for attribution assertions.
+    """
     op, jar = build_opener()
-    op.addheaders = [("User-Agent", "Mozilla/5.0 (X11; Linux x86_64) Firefox/140.0")]
+    ua = "Mozilla/5.0 (X11; Linux x86_64) Firefox/140.0"
+    if ws_id:
+        ua += f" IR-WS/{ws_id}"
+    op.addheaders = [("User-Agent", ua)]
 
     # 1. Ask oauth2-proxy where to send the browser (the Keycloak authorize URL).
 
@@ -51,8 +63,7 @@ def main(sso_base, app_url, user, password, rotate_to=None):
         page = r.read().decode("utf-8", "replace")
     m = re.search(r'action="([^"]+)"', page)
     if not m:
-        print("FAIL: no login form on the Keycloak page")
-        return 1
+        return 1, "FAIL: no login form on the Keycloak page", op, jar
     action = m.group(1).replace("&amp;", "&")
 
     # 3. Submit credentials. The resulting redirect chain runs the callback.
@@ -62,26 +73,21 @@ def main(sso_base, app_url, user, password, rotate_to=None):
         with op.open(urllib.request.Request(action, data=data), timeout=25) as r:
             final_url, body = r.geturl(), r.read().decode("utf-8", "replace")
     except urllib.error.HTTPError as exc:
-        print(f"FAIL: login POST -> HTTP {exc.code}")
-        return 1
+        return 1, f"FAIL: login POST -> HTTP {exc.code}", op, jar
 
     if "/error" in final_url:
-        print(f"FAIL: callback errored (landed on {final_url})")
-        return 1
+        return 1, f"FAIL: callback errored (landed on {final_url})", op, jar
     if "Invalid username or password" in body:
-        print("FAIL: credentials rejected by Keycloak")
-        return 1
+        return 1, "FAIL: credentials rejected by Keycloak", op, jar
 
     # Forced first-login password update. The form's field names are Keycloak's own
     # (password-new / password-confirm); its presence IS the enforcement.
     if "password-new" in body:
         if not rotate_to:
-            print("UPDATE_REQUIRED: Keycloak demands a password change before any session")
-            return 3
+            return 3, "UPDATE_REQUIRED: Keycloak demands a password change before any session", op, jar
         m = re.search(r'action="([^"]+)"', body)
         if not m:
-            print("FAIL: update-password page carries no form action")
-            return 1
+            return 1, "FAIL: update-password page carries no form action", op, jar
         data = urllib.parse.urlencode({"password-new": rotate_to,
                                        "password-confirm": rotate_to}).encode()
         try:
@@ -89,11 +95,9 @@ def main(sso_base, app_url, user, password, rotate_to=None):
                          timeout=25) as r:
                 final_url, body = r.geturl(), r.read().decode("utf-8", "replace")
         except urllib.error.HTTPError as exc:
-            print(f"FAIL: password update POST -> HTTP {exc.code}")
-            return 1
+            return 1, f"FAIL: password update POST -> HTTP {exc.code}", op, jar
         if "password-new" in body or "/error" in final_url:
-            print("FAIL: the new password was refused (policy?) — still on the update form")
-            return 1
+            return 1, "FAIL: the new password was refused (policy?) — still on the update form", op, jar
 
     # 4. The session must now authenticate against the protected app.
     try:
@@ -102,12 +106,16 @@ def main(sso_base, app_url, user, password, rotate_to=None):
     except urllib.error.HTTPError as exc:
         code = exc.code
     if code != 200:
-        print(f"FAIL: app returned {code} after login (session not accepted)")
-        return 1
+        return 1, f"FAIL: app returned {code} after login (session not accepted)", op, jar
 
     cookies = ",".join(sorted({c.name for c in jar}))
-    print(f"OK: {user} completed the browser OIDC flow (app 200; cookies: {cookies})")
-    return 0
+    return 0, f"OK: {user} completed the browser OIDC flow (app 200; cookies: {cookies})", op, jar
+
+
+def main(sso_base, app_url, user, password, rotate_to=None):
+    code, message, _op, _jar = login(sso_base, app_url, user, password, rotate_to)
+    print(message)
+    return code
 
 
 if __name__ == "__main__":

@@ -347,6 +347,47 @@ else
     bad "the code graph is STALE — run gen_code_graph.py (a service, script, route or UAT changed)"
 fi
 
+# The documentation is a manifest too, and it drifts the same way — silently, because a dead
+# link and a stale diagram both render perfectly. Three links in the documentation index
+# pointed at files a tree move had relocated, and stayed broken because nothing asserted them.
+#
+# Read-only: it resolves links and checks inventory coverage, and writes nothing.
+DOCS_CHECK="${PLATFORM}/ci/docs-check.sh"
+if [[ ! -f "${DOCS_CHECK}" ]]; then
+    bad "ci/docs-check.sh not found — documentation integrity cannot be verified"
+elif docs_out="$(bash "${DOCS_CHECK}" --strict 2>&1)"; then
+    ok "every documented link resolves, and every document is in the change-management inventory"
+else
+    bad "documentation drift: $(grep -cE 'BROKEN|UNLISTED' <<<"${docs_out}") finding(s) — run ci/docs-check.sh"
+    while IFS= read -r l; do info "${l}"; done < <(grep -E 'BROKEN|UNLISTED' <<<"${docs_out}" | head -5)
+fi
+
+# Comments state what the code does; history and measurements belong in change_logs/.
+# Narrative comments age into descriptions of a system that no longer exists.
+STYLE_CHECK="${PLATFORM}/ci/comment-style-check.sh"
+if [[ ! -f "${STYLE_CHECK}" ]]; then
+    bad "ci/comment-style-check.sh not found — comment style cannot be verified"
+elif bash "${STYLE_CHECK}" --strict >/dev/null 2>&1; then
+    ok "no narrative comments, and no file is majority prose"
+else
+    bad "comment style: narrative comments or over-dense files — run ci/comment-style-check.sh"
+fi
+
+# The runtime's lock pool. Volumes, containers and pods draw from one fixed allocation of
+# 2048; six of this platform's images declare VOLUME, so every container recreate that does
+# not bind those paths mints an anonymous volume that nothing removes. Exhausting the pool
+# stops the runtime creating ANY container while everything already running keeps serving —
+# the platform reads healthy and every redeploy, restart and test fails at once.
+LOCK_POOL="${IR_RUNTIME_LOCK_POOL:-2048}"
+vols="$(${RUNTIME} volume ls -q 2>/dev/null | wc -l)"
+ctrs="$(${RUNTIME} ps -aq 2>/dev/null | wc -l)"
+used=$(( vols + ctrs ))
+if [[ "${used}" -lt $(( LOCK_POOL * 3 / 4 )) ]]; then
+    ok "runtime locks: ${used} of ${LOCK_POOL} in use (${vols} volumes, ${ctrs} containers) — room to create containers"
+else
+    bad "runtime locks: ${used} of ${LOCK_POOL} in use (${vols} volumes, ${ctrs} containers) — container creation fails when this is exhausted; deploy.sh prunes anonymous volumes"
+fi
+
 # ------------------------------------------------------------------------ verdict
 say "Baseline"
 if (( FAILED )); then

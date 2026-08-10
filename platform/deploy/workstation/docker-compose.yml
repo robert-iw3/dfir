@@ -28,14 +28,22 @@ services:
   # precisely the hole this design exists to close, so the node refuses to install any.
   tailnet:
     image: docker.io/tailscale/tailscale:v1.98.10
-    hostname: analyst
+    # This workstation's tailnet NODE NAME. Two workstations answering to one name are one
+    # node to the control plane, and the tunnel then works for whichever registered last.
+    # deploy.sh also names the compose PROJECT after this, so each workstation gets its own
+    # containers and its own state volume without either being written down here.
+    hostname: ${IR_WS_ID:-analyst}
     environment:
       # Pins the control plane's certificate as this process's ENTIRE trust pool. Go honors
       # SSL_CERT_FILE, so tailscaled will verify headscale and nothing else — which is all it
       # should ever connect to, and it is what lets the embedded DERP relay be used at all.
       SSL_CERT_FILE: /certs/headscale.crt
-      TS_AUTHKEY: "${TS_ANALYST_AUTHKEY:-}"
-      TS_EXTRA_ARGS: "--login-server=${HEADSCALE_LOGIN_URL} --hostname=analyst --accept-routes=false"
+      # This workstation's OWN pre-auth key, so revoking one workstation does not unenroll
+      # the fleet. A PLAIN variable with no nested default: podman-compose does not expand
+      # ${A:-${B}} and passes the literal through, which the daemon then presents as a key.
+      # deploy.sh resolves the per-id key and exports this before the tier starts.
+      TS_AUTHKEY: "${TS_WS_AUTHKEY:-}"
+      TS_EXTRA_ARGS: "--login-server=${HEADSCALE_LOGIN_URL} --hostname=${IR_WS_ID:-analyst} --accept-routes=false"
       TS_STATE_DIR: /var/lib/tailscale
       TS_USERSPACE: "false"
       # Off, so the DMZ resolver stays the workstation's only resolver — the
@@ -63,6 +71,10 @@ services:
       XDG_RUNTIME_DIR: ${XDG_RUNTIME_DIR:-/run/user/1000}
       IR_PLATFORM_URL: ${IR_PLATFORM_URL}
       IR_BROWSER_KIOSK: "1"
+      # Which workstation this kiosk is. The browser appends it to its User-Agent so the
+      # platform can attribute a sign-on to the workstation that carried it — nothing on
+      # the L4 path between them can say.
+      IR_WS_ID: ${IR_WS_ID:-analyst}
     # Shares the tailnet node's namespace: the browser reaches the platform over WireGuard,
     # through the same interface and the same ACL, rather than beside the tunnel on the edge
     # network. DNS and the network position come from that namespace, not from here.

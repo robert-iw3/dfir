@@ -35,9 +35,8 @@ be() { ${RUNTIME} exec -i "${BE}" "$@"; }
 
 # ---------------------------------------------------------------- preconditions
 # Every service here is load-bearing: without the receiver the 25 ships go nowhere, without
-# the worker nothing is analyzed. A missing one is ABORTED rather than recorded, because the
-# alternative is a 20-minute run that reports 25 failures all restating the same fact —
-# noise that buries whatever the corpus was meant to measure.
+# the worker nothing is analyzed. A missing one ABORTS rather than being recorded, because the
+# alternative is a 20-minute run whose every failure restates the same fact.
 say "Preconditions"
 MISSING=()
 for svc in ir-dmz_receiver_1 ir-enclave_puller_1 ir-enclave_backend_1 ir-enclave_worker_1; do
@@ -76,11 +75,9 @@ fi
 
 # The collector must run the FULL forensics collection, not the inline snapshot.
 #
-# Asserted on the source rather than the output because the difference is invisible in a
-# passing corpus: the endpoint lab measured that without --deep, four of nine artifacts
-# planted for a low-sophistication intrusion come back — and a corpus whose scenarios do not
-# happen to plant an authorized_keys backdoor stays green while the gap is wide open.
-# toolkit/test/lab/linux measures the cost; this is what stops it being dropped again.
+# Asserted on the source rather than the output, because the difference is invisible in a
+# passing corpus: a corpus whose scenarios do not happen to plant an authorized_keys backdoor
+# stays green while the gap is wide open. toolkit/test/lab/linux quantifies the cost.
 grep -q -- '--deep' "${PLATFORM}/collector/collect.sh" \
     && ok "the collector runs the full forensics collection (--deep)" \
     || bad "collect.sh no longer passes --deep — SUID, authorized_keys, shell-init persistence and running-binary hashes will not be collected"

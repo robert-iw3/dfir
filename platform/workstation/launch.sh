@@ -55,9 +55,28 @@ fi
 # the browser returns to the platform root with a clean slate. SanitizeOnShutdown in the
 # policy covers a clean exit; this covers the crash and the wedge, which are the cases that
 # actually strand someone.
+# The workstation announces itself in the User-Agent: every hop between this browser and the
+# enclave ingress is L4 under end-to-end TLS, so nothing on the path can say which
+# workstation carried a request — only the kiosk itself can. The platform reads the token
+# into the sign-on record for attribution. It is a client-side statement, evidence rather
+# than a security boundary.
+#
+# The override is the REAL UA with the token appended, never a replacement: the SSO gate's
+# checks expect a genuine browser UA, and the version is read from the installed binary so
+# an image update cannot leave a stale one pinned.
+ua_override() {
+    [ -n "${IR_WS_ID:-}" ] || return 0
+    ver="$(firefox-esr --version 2>/dev/null | sed -n 's/.* \([0-9][0-9]*\)\..*/\1/p')"
+    [ -n "$ver" ] || ver=140
+    printf 'user_pref("general.useragent.override", "Mozilla/5.0 (X11; Linux x86_64; rv:%s.0) Gecko/20100101 Firefox/%s.0 IR-WS/%s");\n' \
+        "$ver" "$ver" "${IR_WS_ID}" > "$PROFILE/user.js"
+    echo "[browser] User-Agent announces workstation ${IR_WS_ID}"
+}
+
 while :; do
     rm -rf "$PROFILE"
     mkdir -p "$PROFILE"
+    ua_override
     echo "[browser] clean profile — opening ${URL}"
     firefox-esr \
         --profile "$PROFILE" \

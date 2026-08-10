@@ -16,7 +16,10 @@
 # grants in boundary_bootstrap.sh, this converges on the intended set rather than accumulating.
 set -eu
 
-EXPECT="${1:-${BOUNDARY_EGRESS_WORKER_NAME:-ir-egress}}"
+# All expected worker names, as arguments. The registry converges on exactly this set: a
+# stale extra row hands sessions to an address nothing serves, and a missing one caps how many
+# workers spread connection setup.
+EXPECT="${*:-${BOUNDARY_EGRESS_WORKER_NAME:-ir-egress}}"
 : "${BOUNDARY_RECOVERY_KEY:?BOUNDARY_RECOVERY_KEY is required}"
 export BOUNDARY_ADDR="${BOUNDARY_ADDR:-https://127.0.0.1:9200}"
 export BOUNDARY_CACERT="${BOUNDARY_CACERT:-/boundary/certs/boundary.crt}"
@@ -35,17 +38,27 @@ EOF
 b() { boundary "$@" -recovery-config "${RECOVERY}" -format json; }
 
 # Worker ids carry a `w_` prefix, which is what makes them safe to pull out of the raw response.
-# The image has no jq, and a bare "name" match would also take the scope's name nested inside
-# every item — that is how an empty registry once read as a registered worker.
+# The image has no jq, and a bare "name" match also takes the scope's name nested inside every
+# item, so an empty registry reads as a registered worker.
 ids() { grep -o '"id":"w_[^"]*"' | cut -d'"' -f4; }
 
 all="$(b workers list -scope-id global 2>&1)" || { echo "${all}" >&2; exit 2; }
 
-keep="$(b workers list -scope-id global \
-        -filter "\"/item/name\"==\"${EXPECT}\"" 2>/dev/null | ids | head -1)"
+keep=""
+missing=""
+for name in ${EXPECT}; do
+    id="$(b workers list -scope-id global \
+        -filter "\"/item/name\"==\"${name}\"" 2>/dev/null | ids | head -1)"
+    if [ -n "${id}" ]; then
+        keep="${keep} ${id}"
+        echo "${name} (${id})"
+    else
+        missing="${missing} ${name}"
+    fi
+done
 
 for w in $(printf '%s' "${all}" | ids); do
-    [ "${w}" = "${keep}" ] && continue
+    case " ${keep} " in *" ${w} "*) continue ;; esac
     if b workers delete -id "${w}" >/dev/null 2>&1; then
         echo "removed stale worker registration ${w}"
     else
@@ -53,5 +66,4 @@ for w in $(printf '%s' "${all}" | ids); do
     fi
 done
 
-[ -n "${keep}" ] || { echo "worker ${EXPECT} is not registered" >&2; exit 1; }
-echo "${EXPECT} (${keep})"
+[ -z "${missing}" ] || { echo "worker(s) not registered:${missing}" >&2; exit 1; }

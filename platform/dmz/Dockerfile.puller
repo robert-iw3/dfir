@@ -1,7 +1,7 @@
 # ir-ingest PULLER (enclave). Holds the internal creds; bridges DMZ→internal by pulling.
 # Build with the platform/ dir as context (needs ingest/ir_ingest.py + shared/custody.py):
 #   podman build -f platform/dmz/Dockerfile.puller -t ir-puller platform/
-FROM docker.io/library/alpine:3.24
+FROM docker.io/library/alpine:3.24@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b
 ENV PYTHONUNBUFFERED=1 PATH="/venv/bin:$PATH"
 RUN apk add --no-cache python3 py3-pip ca-certificates \
     && python3 -m venv /venv \

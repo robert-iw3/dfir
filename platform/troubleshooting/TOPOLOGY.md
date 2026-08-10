@@ -30,7 +30,8 @@ flowchart TB
 
   subgraph DMZ["DMZ — holds nothing, reaches nothing inward"]
     RCV["receiver :8090 HTTPS<br/>pinned cert"]
-    BRK["broker :8443<br/>Boundary session"]
+    DST["distributor :8443<br/>L4, 8 conn/s accept"]
+    BRK["broker 127.0.0.1:18443-18450<br/>8 sessions, 8 principals"]
     HS["headscale :8081"]
     CDNS["coredns :53"]
     BAS["bastion"]
@@ -54,8 +55,9 @@ flowchart TB
 
   SHIP -- "POST /ingest, TLS pinned" --> RCV
   TN -- "WireGuard" --> HS
-  BR -- "HTTPS :8443 via broker" --> BRK
-  BRK -- "TCP hop" --> TR
+  BR -- "HTTPS :8443" --> DST
+  DST -- "leastconn + redispatch" --> BRK
+  BRK -- "TCP hop, one session each" --> TR
   TR --> O2 --> FE
   FE -- "API + X-Proxy-Auth" --> BE
   O2 -. "OIDC redirect" .-> KC
@@ -84,6 +86,7 @@ The path most failures land on. Each arrow is a place a request can die.
 ```mermaid
 sequenceDiagram
   participant B as kiosk browser
+  participant D as distributor :8443
   participant K as broker (Boundary)
   participant T as traefik :8443
   participant O as oauth2-proxy
@@ -92,8 +95,9 @@ sequenceDiagram
   participant F as frontend nginx
   participant A as backend :8000
 
-  B->>K: HTTPS ir-platform.local:8443
-  K->>T: TCP hop (one session, supervised)
+  B->>D: HTTPS ir-platform.local:8443
+  D->>K: one of 8 sessions (leastconn, redispatch past a dead one)
+  K->>T: TCP hop (that session, supervised)
   T->>O: forward (TLS terminated here)
   O-->>B: 302 to Keycloak (no session)
   B->>KC: login form
@@ -179,7 +183,9 @@ Ordered by how often it is the answer.
 |---|---|
 | Is the tier even up? | `podman ps --format '{{.Names}} {{.Status}}'` |
 | Did a UAT tear it down? | `uat_full_stack.sh` runs `down all` unless **`KEEP_UP=1`** |
-| Broker session alive? | `podman logs ir-dmz_broker_1 \| grep -E "Session ID\|re-establish"` |
+| Broker sessions alive? | `podman logs ir-dmz_broker_1 \| grep -E "listening on session\|re-establish"` |
+| All session listeners bound? | `podman exec ir-dmz_bastion_1 sh -c 'netstat -ltn \| grep -c ":184"'` — expect `BROKER_SESSIONS` |
+| Distributor carrying? | `podman logs --tail 20 ir-dmz_distributor_1` — one line per connection, `brokered/sN` names the session |
 | Accounts exist? | `admin/kc-userctl.sh status default-admin` |
 | Keycloak's credential rendered? | `podman exec ir-enclave_kc-vault-agent_1 grep -c KC_DB_PASSWORD /vault/secrets/kc-db.env` |
 | Keycloak on its store? | `psql -U ir_platform -c "SELECT usename FROM pg_stat_activity WHERE datname='keycloak'"` in the db container |

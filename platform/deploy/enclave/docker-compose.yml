@@ -76,6 +76,9 @@ services:
       BOUNDARY_RECOVERY_KEY: ${BOUNDARY_RECOVERY_KEY}
       BOUNDARY_ANALYST_PASSWORD: ${BOUNDARY_ANALYST_PASSWORD}
       ANALYST_PW: ${BOUNDARY_ANALYST_PASSWORD}
+      # One principal per broker session, provisioned by the bootstrap. Sessions are then
+      # attributable individually and a principal-scoped reap touches one session, not the fleet.
+      BOUNDARY_SESSION_PRINCIPALS: ${BROKER_SESSIONS}
       IR_ENCLAVE_INGRESS_HOST: ${IR_ENCLAVE_INGRESS_HOST:-traefik}
       IR_ENCLAVE_INGRESS_PORT: ${IR_ENCLAVE_INGRESS_PORT:-443}
     volumes:
@@ -138,6 +141,50 @@ services:
         exec boundary server -config /boundary/worker.hcl
     networks: [internal, dmzlink]
 
+  boundary-egress-2:
+    dns: ["${ENCLAVE_DNS_IP}"]
+    dns_search: ["${RUNTIME_DNS_ZONE}"]
+    image: docker.io/hashicorp/boundary:0.21.3
+    depends_on: [boundary]
+    environment:
+      SKIP_CHOWN: "true"
+      SKIP_SETCAP: "true"
+    volumes:
+      - ../../hashicorp/access/boundary-egress-2.hcl:/boundary/worker.hcl:ro,z
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        for i in $(seq 1 90); do
+          nc -z boundary 9201 2>/dev/null && break
+          [ "$i" = 90 ] && { echo "boundary cluster port never accepted connections" >&2; exit 1; }
+          sleep 2
+        done
+        exec boundary server -config /boundary/worker.hcl
+    networks: [internal, dmzlink]
+
+  boundary-egress-3:
+    dns: ["${ENCLAVE_DNS_IP}"]
+    dns_search: ["${RUNTIME_DNS_ZONE}"]
+    image: docker.io/hashicorp/boundary:0.21.3
+    depends_on: [boundary]
+    environment:
+      SKIP_CHOWN: "true"
+      SKIP_SETCAP: "true"
+    volumes:
+      - ../../hashicorp/access/boundary-egress-3.hcl:/boundary/worker.hcl:ro,z
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        for i in $(seq 1 90); do
+          nc -z boundary 9201 2>/dev/null && break
+          [ "$i" = 90 ] && { echo "boundary cluster port never accepted connections" >&2; exit 1; }
+          sleep 2
+        done
+        exec boundary server -config /boundary/worker.hcl
+    networks: [internal, dmzlink]
+
   # The enclave's ONLY resolver. Replaces the container runtime's resolver for every service
   # below, so the policy in Corefile.enclave is the actual reachable name space rather than
   # advice sitting beside a resolver that would answer anything.
@@ -155,6 +202,27 @@ services:
       internal:
         ipv4_address: ${ENCLAVE_DNS_IP}
       dmzlink:
+  # Enclave time. Same shape as the resolver above and for the same reason: the segment needs
+  # an authority for something it cannot reach off-host, and both serve `internal` while
+  # reaching a source through `dmzlink`.
+  #
+  # It serves the enclave HOSTS, whose chrony clients then discipline their own clocks;
+  # containers inherit from the host and cannot set time themselves. Correlation is what makes
+  # this load-bearing — `temporal_coherence` compares instants ACROSS hosts, so a drifting
+  # enclave misplaces evidence on the timeline rather than looking obviously broken.
+  ntp:
+    build:
+      context: ../..
+      dockerfile: ntp/Dockerfile
+    image: localhost/ir-ntp:latest
+    environment:
+      IR_NTP_UPSTREAM: ${IR_NTP_UPSTREAM:-}
+    restart: unless-stopped
+    networks:
+      internal:
+        ipv4_address: ${IR_IP_NTP}
+      dmzlink:
+
   # ---------- secrets ---------------------------------------------------
   #
   # Vault issues the application tier its Postgres credentials and its secrets, so the platform
@@ -196,7 +264,16 @@ services:
       # drops to an unprivileged user, so without this the audit device cannot be written — and
       # Vault treats an unwritable audit device as fatal, which is correct and would otherwise
       # look like a startup fault with no obvious cause.
-      - "mkdir -p /vault/logs && chown -R vault:vault /vault/logs 2>/dev/null || true; while [ ! -s /certs/vault-0.crt.pem ]; do echo 'waiting for TLS certs...'; sleep 1; done; exec vault server -config=/vault/config/vault-server.hcl"
+      # Unsealing belongs to the SERVER's lifecycle, not the deployment's. Vault seals itself on
+      # every restart by design, and a restart has causes a deploy never sees: the mesh repair in
+      # deploy.sh recreates a sidecar, which can recreate the service with it (see mesh_attach),
+      # and the platform is then left answering health checks while serving nothing — no dynamic
+      # database credentials, no custody HMAC, no mesh auth. Run from here, any restart recovers.
+      #
+      # Backgrounded rather than exec'd so the unseal can follow it, with TERM forwarded so a
+      # stop is still a clean raft shutdown. Unseal failure is not fatal: on a first deploy Vault
+      # is not yet initialized, and vault-setup-ir.sh is what runs next.
+      - "mkdir -p /vault/logs && chown -R vault:vault /vault/logs 2>/dev/null || true; while [ ! -s /certs/vault-0.crt.pem ]; do echo 'waiting for TLS certs...'; sleep 1; done; vault server -config=/vault/config/vault-server.hcl & SRV=$$!; trap 'kill -TERM $$SRV 2>/dev/null' TERM INT; sh /opt/vault-unseal.sh || echo 'vault-unseal: not applied at start (see above)'; wait $$SRV"
     environment:
       VAULT_ADDR: "https://127.0.0.1:8200"
       VAULT_CACERT: "/certs/vault-ca.crt.pem"
@@ -588,6 +665,30 @@ services:
       #
       # Per-request cookies scope each attempt to its own state value, so a stale flow cannot
       # invalidate a fresh one.
+      # API paths answer 401 instead of redirecting to the IdP.
+      #
+      # With --skip-provider-button every unauthenticated request 302s straight to Keycloak,
+      # and each 302 mints a per-request CSRF cookie. The app shell fires several API calls in
+      # parallel on load, so a single page view produced FOUR auth starts in one second —
+      # against the ceiling below, which evicted the oldest. The oldest is the navigation the
+      # analyst actually made, and it is that state the callback comes back with, so the flow
+      # ended in "403 Forbidden: CSRF cookie not found" after a long login. A forced password
+      # change is the reliable way to see it, because the flow stays open long enough for the
+      # rest of the shell to pile up behind it.
+      #
+      # Navigation starts a flow; data calls never do. The SPA turns the 401 into one
+      # sign-in (frontend/src/api.js), so a browser still lands on the login page.
+      #
+      # `index.html` is here because DeployWatch re-fetches it every 30 seconds to notice a
+      # redeploy, and it is not under /api/. Left redirecting, one unauthenticated tab mints
+      # an attempt every 30s and exhausts the ceiling in a minute and a half — measured, and
+      # it is why a forced password change (which always takes longer than that) ended in
+      # "403 ... CSRF cookie was not found" even after data calls stopped minting.
+      #
+      # The rule this encodes: a path the app POLLS is a data call however it is served.
+      # Authenticated requests are unaffected — this changes only what an unauthenticated one
+      # is answered with.
+      - --api-route=^/(api/|index\.html)
       - --cookie-csrf-per-request=true
       # Per-request cookies without a ceiling ACCUMULATE: every abandoned or interrupted login
       # leaves one for its expiry window, they all travel in a single Cookie header, and that
@@ -602,10 +703,21 @@ services:
       # individually. Enlarging that memory to accommodate a fixable defect would trade a
       # resource control (SRG-APP-000001-WSR-000001) for a workaround.
       #
-      # Three is beyond what any real flow needs; the oldest is discarded, so a fresh attempt
-      # always has room and a stale one cannot displace the flow in progress — which is the
-      # property --cookie-csrf-per-request was set for in the first place.
-      - --cookie-csrf-per-request-limit=3
+      # Eviction is oldest-first, and the flow in progress IS the oldest — so attempts piling
+      # up behind it displace exactly the one that has to survive. The ceiling bounds the
+      # cookie header; it is not what protects the flow, and it never was. --api-route is.
+      #
+      # Six rather than three. Three was set on the belief that no real flow needs more, which
+      # a live trace disproved: four top-level navigations inside three minutes, each a
+      # legitimate one, evicted a login that was still being completed. A person retries, a
+      # kiosk reopens, a tab is restored — re-navigation is normal, and a ceiling that treats
+      # the fourth as an attack breaks the fourth honest attempt instead.
+      #
+      # Still a bound, and still a small one: each cookie is ~130 bytes, so six is under a
+      # kilobyte against the 16k header buffer asserted in test/uat_srg_webtier.sh. The point
+      # of the cap is that abandoned flows cannot accumulate without limit, and six caps that
+      # exactly as three did.
+      - --cookie-csrf-per-request-limit=6
       # Long enough that a login interrupted by a password manager or an MFA prompt still
       # completes; short enough that an abandoned flow does not leave a usable cookie behind.
       - --cookie-csrf-expire=15m
@@ -634,6 +746,11 @@ services:
       - --redis-connection-url=redis://127.0.0.1:6379/1
       - --ssl-insecure-skip-verify=true
       - --whitelist-domain=ir-platform.local:8443
+      # Replaces the built-in error page, which ends a failed callback with a 403 and no way
+      # forward. See oauth2-templates/error.html for what it does instead.
+      - --custom-templates-dir=/templates
+    volumes:
+      - ./oauth2-templates:/templates:ro,z
     # No network of its own: it lives in its sidecar's namespace (see below).
     network_mode: "service:oauth2-proxy-sidecar"
     depends_on: [oauth2-proxy-sidecar]
@@ -786,6 +903,11 @@ services:
     env_file: ../.env
     environment:
       POSTGRES_HOST: ${IR_DB_HOST_APP:-db}
+      # Sync workers, so each holds exactly one in-flight request: this count IS the app
+      # tier's concurrency. Three put the measured error-rate knee at 30-50 concurrent
+      # analysts — below the 50-analyst requirement. Sized to (2 x cores) + 1 on the
+      # 8-core reference host; override per deployment through deploy/.env.
+      GUNICORN_WORKERS: ${IR_GUNICORN_WORKERS:-17}
       # Celery URLs come from settings defaults: redis://127.0.0.1:6379/0 — the ir-redis
       # upstream bound by this service's own sidecar.
       S3_ENDPOINT_URL: ${IR_MINIO_ENDPOINT_APP:-http://minio:9000}
@@ -808,6 +930,10 @@ services:
       BOUNDARY_PROJECT_ID: ${BOUNDARY_PROJECT_ID:-}
       # Resolves user ids to login names on the sessions page — an id is not an audit record.
       BOUNDARY_ORG_ID: ${BOUNDARY_ORG_ID:-}
+      # The same variable the distributor's pinning map is rendered from, in the same order:
+      # the Nth workstation is pinned to session principal analyst-sN, so the sessions page
+      # can attribute a session to a workstation from configuration alone.
+      IR_WS_IDS: ${IR_WS_IDS:-analyst}
       KEYCLOAK_URL: "http://keycloak:8080"
       KEYCLOAK_REALM: "irplatform"
       # Source the Vault-rendered secrets instead of the environment. The entrypoint reads

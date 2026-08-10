@@ -2,7 +2,7 @@
 
 *What passing proves:* A Linux-native intrusion correlates through the production path on the Linux hunts' own vocabulary and verdict ceiling: persistence names reach the graph, two hosts reached without any movement record join on tradecraft alone, an unrelated compromise on the same fleet stays separate, and the estate's own units and accounts bind nothing.
 
-- Run: `uat_corpus_linux.sh` — 2026-08-06 16:42:52Z
+- Run: `uat_corpus_linux.sh` — 2026-08-09 02:03:37Z
 
 **Preconditions**
 

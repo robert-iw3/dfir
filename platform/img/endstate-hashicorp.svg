@@ -125,7 +125,7 @@
   <text class="rS" x="738" y="509">workstations enroll against a pinned control plane ·</text>
   <text class="rS" x="738" y="522">DERP relay over TLS · no subnet routes advertised —</text>
   <text class="rS" x="738" y="535">"cannot address an internal host" is a routing fact ·</text>
-  <text class="rS" x="738" y="548">the bastion is a broker, not a router</text>
+  <text class="rS" x="738" y="548">the bastion distributes across N sessions; a broker, not a router</text>
 
   <rect class="box" x="1047" y="476" width="317" height="82"/>
   <text class="rT" x="1059" y="494">Remediation agent (ir-agent)</text>

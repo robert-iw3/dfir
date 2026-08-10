@@ -293,15 +293,30 @@ for c in ir-dmz_bastion_1 ir-workstation_tailnet_1; do
 done
 
 # A broker that starts and carries nothing: every health check reads green while the analyst
-# path is dead.
+# path is dead. Both layers are checked, because they fail differently: the distributor owns
+# the analyst-facing port and binds it whether or not a session is behind it.
 if have ir-dmz_bastion_1 && running ir-dmz_bastion_1; then
-    cx ir-dmz_bastion_1 sh -c "netstat -ltn 2>/dev/null | grep -q ':8443' || ss -ltn 2>/dev/null | grep -q ':8443'" \
-        && good "broker is listening on the brokered port" \
-        || { fail "nothing listening on the brokered port inside the bastion"
-             note "the broker is a Boundary session CLIENT and opens this listener only once it"
-             note "holds a session, so an absent listener means an earlier step failed:"
-             note "  podman logs ir-dmz_broker_1     names which one"
-             note "authentication, the target id and worker registration are the usual three"; }
+    _want="${BROKER_SESSIONS:-8}"; _base="${BROKER_SESSION_BASE:-18443}"
+    cx ir-dmz_bastion_1 sh -c "netstat -ltn 2>/dev/null | grep -q ':${BROKER_LISTEN:-8443}' || ss -ltn 2>/dev/null | grep -q ':${BROKER_LISTEN:-8443}'" \
+        && good "distributor is listening on the analyst-facing port" \
+        || { fail "nothing listening on the analyst-facing port inside the bastion"
+             note "  podman logs ir-dmz_distributor_1"; }
+    _n="$(cx ir-dmz_bastion_1 sh -c "
+        n=0; p=${_base}; last=\$((${_base} + ${_want} - 1))
+        while [ \"\$p\" -le \"\$last\" ]; do
+            { netstat -ltn 2>/dev/null || ss -ltn 2>/dev/null; } | grep -q \":\$p \" && n=\$((n+1))
+            p=\$((p+1))
+        done; echo \$n" 2>/dev/null | tr -dc '0-9')"
+    if [ "${_n:-0}" -ge "${_want}" ]; then
+        good "${_n} brokered session listener(s) bound (want ${_want})"
+    else
+        fail "only ${_n:-0} of ${_want} brokered session listeners are bound"
+        note "a session client opens its listener only once it holds a session, so an absent"
+        note "one means an earlier step failed:"
+        note "  podman logs ir-dmz_broker_1              names which one"
+        note "  podman exec ir-dmz_broker_1 cat /tmp/broker-<port>.log   that session's own error"
+        note "authentication, the target id and worker registration are the usual three"
+    fi
 fi
 
 # The links behind a session, checked where each one lives.

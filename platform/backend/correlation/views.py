@@ -234,11 +234,9 @@ def campaign_timeline(request, campaign_id):
                 "finding_id": f.id,
             })
 
-    # Ordered as instants, not as text. Campaign rows carry datetimes and a finding's time
-    # arrives as an ISO string, which `str()` renders differently — "2026-07-20 08:14:00+00:00"
-    # against "2026-07-20T08:14:00" — and a space sorts before "T", so every finding landed
-    # after every movement regardless of when it happened. The result read as an ordered
-    # timeline while telling the wrong story about the intrusion.
+    # Ordered as instants, not as text. Campaign rows carry datetimes while a finding's time
+    # arrives as an ISO string; `str()` renders the two differently and a space sorts before
+    # "T", which orders every finding after every movement regardless of when it happened.
     events.sort(key=lambda e: e["at"])
     return Response({"campaign": _campaign_payload(campaign), "events": events})
 

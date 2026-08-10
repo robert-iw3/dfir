@@ -1,0 +1,118 @@
+# Banned password list — SRG-APP-000835-WSR-000200, SRG-APP-000840-WSR-000210.
+#
+# Keycloak reads this from ${kc.home.dir}/data/password-blacklists/ and refuses any password
+# whose lowercase form appears here, at SET time. It does not affect sign-in, so it costs an
+# analyst nothing until they choose a password this list already knows.
+#
+# Two kinds of entry, and both matter:
+#
+#   Context terms — the platform, the tier and the role names. These are the passwords people
+#   actually choose under a composition policy: `IrPlatform#2026` satisfies length, case,
+#   digits and specials, and is the first thing an attacker who has read the public repository
+#   would try. A composition rule cannot catch it; a list can.
+#
+#   Known-weak forms — the small head of the distribution that survives any policy once a
+#   digit and a special are appended.
+#
+# THIS FILE IS A SEED, not a breach corpus. A deployment handling real evidence loads a
+# published compromised-credential corpus over the same offline staging path the symbol tables
+# use, appends it here, and re-records the review:
+#
+#   ci/password-blacklist-check.sh --record "loaded <corpus> <version>"
+#
+# Reviewed on a cadence (835) and on suspicion of compromise (840); the record is what makes
+# either claim falsifiable, and `--check` fails once it goes stale.
+#
+# Lowercase only — Keycloak lowercases the candidate before comparing, so a capitalized entry
+# here is an entry that can never match.
+
+# --- platform and deployment context -------------------------------------------------
+dfir
+dfirplatform
+dfir-platform
+irplatform
+ir-platform
+irenclave
+ir-enclave
+enclave
+platform
+incident
+incidentresponse
+forensics
+forensic
+analyst
+investigator
+responder
+reverseengineer
+auditor
+keycloak
+traefik
+consul
+vault
+minio
+postgres
+podman
+correlation
+evidence
+custody
+collector
+receiver
+puller
+bastion
+workstation
+tailnet
+boundary
+kiosk
+
+# --- role and account shapes ---------------------------------------------------------
+administrator
+administrador
+sysadmin
+secadmin
+serviceaccount
+svcaccount
+defaultadmin
+firstlogin
+changeme
+changeit
+temppassword
+temporary
+newpassword
+resetpassword
+
+# --- known-weak forms that survive composition rules ----------------------------------
+password
+passw0rd
+p@ssw0rd
+p@ssword
+password1
+qwerty
+qwertyuiop
+azerty
+letmein
+welcome
+welcome1
+monkey
+dragon
+sunshine
+princess
+football
+baseball
+iloveyou
+trustno1
+whatever
+starwars
+superman
+batman
+master
+shadow
+freedom
+ninja
+access
+secret
+summer
+winter
+spring
+autumn
+january
+december

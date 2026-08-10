@@ -1,0 +1,5 @@
+# Image currency review — SRG-APP-000456-WSR-000187.
+# Written by ci/image-currency.sh --record. Checked by --age.
+reviewed = "2026-08-07T20:20:23Z"
+findings = 2
+interval_days = 30

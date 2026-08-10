@@ -14,7 +14,7 @@ import io
 import json
 import os
 
-from django.db.models import Count, Q
+from django.db.models import Count, Q, Sum
 from django.utils import timezone
 from rest_framework import filters, status, viewsets
 from rest_framework.decorators import action, api_view, permission_classes
@@ -36,6 +36,7 @@ from . import retention as retention_mod
 from .models import (
     AuditLog,
     CollectionRun,
+    ExportLedger,
     Finding,
     Host,
     IOC,
@@ -49,7 +50,9 @@ from .models import (
     RescanRequest,
     SymbolRequest,
 )
+from .exportledger import record_export
 from .rbac import (
+    CanExport,
     IsAdmin,
     IsAnalystOrAdmin,
     IsAuditorOrAdmin,
@@ -605,9 +608,16 @@ class AuditExportView(APIView):
     accompanied by the same result in its headers.
 
     Taking an export is itself an auditable act and is recorded before the file is sent.
+
+    Reading the trail and REMOVING it are separate rights. An auditor's remit is to see
+    everything, which says nothing about carrying it out of the platform, so both permissions
+    are required rather than one implying the other.
     """
 
-    permission_classes = [IsAuditorOrAdmin]
+    permission_classes = [IsAuditorOrAdmin, CanExport]
+    # Read by cases.denials, so a refusal lands in the ledger under the same kind a success
+    # would have.
+    export_kind = "audit"
 
     def get(self, request):
         # `fmt`, not `format`: DRF reserves the latter for content negotiation.
@@ -646,11 +656,16 @@ class AuditExportView(APIView):
             "prev_hash": r.prev_hash,
         } for r in rows[:limit]]
 
-        audit_mod.audit(getattr(request.user, "username", "?"), "audit.export",
+        record_export(request, kind="audit", fmt=fmt, row_count=len(entries),
+                      filters={k: params.get(k) for k in
+                               ("q", "action", "actor", "object_type", "since", "until")})
+        # The chain's own verification stays on the audit trail: it describes the trail's
+        # integrity at the moment of export, not what left, and the ledger is a list of
+        # what left.
+        audit_mod.audit(getattr(request.user, "username", "?"), "audit.export.verification",
                         role=role_of(request.user), method="GET", path=request.path,
                         object_type="AuditLog",
-                        detail={"fmt": fmt, "rows": len(entries),
-                                "chain_intact": ok, "first_broken_id": broken})
+                        detail={"chain_intact": ok, "first_broken_id": broken})
 
         stamp = timezone.now().strftime("%Y%m%d_%H%M%S")
         if fmt == "json":
@@ -678,6 +693,59 @@ class AuditExportView(APIView):
         if broken:
             response["X-Audit-First-Broken-Id"] = str(broken)
         return response
+
+
+class ExportLedgerView(APIView):
+    """What has left the platform — and what was refused.
+
+    Readable by auditors and admins. Reading the ledger is NOT gated on the export right:
+    the people who need to know what left are rarely the people permitted to take it, and
+    requiring the second to see the first would hide the record from its audience.
+
+    Totals are computed over the filtered set rather than the returned page, because the
+    question is "how much has gone out", and a count that silently means "of the fifty rows
+    you are looking at" answers a different one.
+    """
+
+    permission_classes = [IsAuditorOrAdmin]
+
+    def get(self, request):
+        params = request.query_params
+        rows = ExportLedger.objects.all()
+        for field in ("actor", "kind", "outcome"):
+            if params.get(field):
+                rows = rows.filter(**{field: params[field]})
+        if params.get("since"):
+            rows = rows.filter(created_at__gte=params["since"])
+        if params.get("until"):
+            rows = rows.filter(created_at__lte=params["until"])
+
+        totals = rows.aggregate(exports=Count("id"), rows_taken=Sum("row_count"))
+        limit = min(int(params.get("limit", 200)), 2000)
+        entries = [{
+            "id": r.id,
+            "at": r.created_at.isoformat(),
+            "actor": r.actor,
+            "role": r.role,
+            "kind": r.kind,
+            "fmt": r.fmt,
+            "filters": r.filters,
+            "row_count": r.row_count,
+            "destination": r.destination,
+            "outcome": r.outcome,
+            "denied_reason": r.denied_reason,
+            "path": r.path,
+        } for r in rows[:limit]]
+
+        return Response({
+            "entries": entries,
+            "count": len(entries),
+            "total_exports": totals["exports"] or 0,
+            # Denials are counted separately: a rising refusal count is a finding in its own
+            # right, and averaged into one total it disappears.
+            "denied": rows.filter(outcome="denied").count(),
+            "total_rows_taken": totals["rows_taken"] or 0,
+        })
 
 
 class PlatformMetricsView(APIView):
@@ -919,17 +987,21 @@ class SymbolRequestView(APIView):
 
 
 class SymbolRequisitesView(APIView):
-    """The requisites an administrator carries out to acquire symbols."""
+    """The requisites an administrator carries out to acquire symbols.
 
-    permission_classes = [IsAdmin]
+    It leaves the enclave on removable media, so it is an export and is ledgered as one —
+    even though it carries kernel identity rather than evidence. What crossed the boundary
+    is the question the ledger answers, not how sensitive it was.
+    """
+
+    permission_classes = [IsAdmin, CanExport]
+    export_kind = "symbol_requisites"
 
     def get(self, request):
         payload = symbols_mod.requisites_export()
-        audit_mod.audit(getattr(request.user, "username", "?"),
-                        "symbols.requisites_export", role="admin",
-                        method="GET", path=request.path,
-                        object_type="SymbolRequest",
-                        detail={"requests": len(payload["requests"])})
+        record_export(request, kind="symbol_requisites", fmt="json",
+                      row_count=len(payload["requests"]),
+                      destination="removable media (administrator, out of band)")
         response = Response(payload)
         response["Content-Disposition"] = 'attachment; filename="symbol-requisites.json"'
         return response

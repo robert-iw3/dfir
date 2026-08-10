@@ -226,10 +226,14 @@ if [[ -z "${DISPLAY:-}" ]]; then
 else
     for tool in ghidra binja; do
         case "${tool}" in
+            # Separate budgets: Ghidra boots a JVM, creates a project, imports the region and
+            # auto-analyzes it before it draws anything, where Binary Ninja opens the file
+            # directly. One budget for both fails the slower tool on a busy host and calls it
+            # a broken workstation.
             ghidra) IMG="${IR_RE_GHIDRA_IMAGE:-ir-re-ghidra:latest}"; DF="Dockerfile.ghidra"
-                    WPAT='ghidra|CodeBrowser' ;;
+                    WPAT='ghidra|CodeBrowser'; TRIES=140 ;;
             binja)  IMG="${IR_RE_IMAGE:-ir-re-workstation:latest}";   DF="Dockerfile"
-                    WPAT='[Bb]inary ?[Nn]inja|binaryninja' ;;
+                    WPAT='[Bb]inary ?[Nn]inja|binaryninja'; TRIES=60 ;;
         esac
         ${RUNTIME} image exists "${IMG}" 2>/dev/null || {
             info "building ${IMG} (network at BUILD time only)"
@@ -244,7 +248,7 @@ else
         # The window on the host's display is the assertion. A running container proves the
         # process started; only a mapped window proves the analyst has a session.
         WIN=0
-        for _ in $(seq 1 60); do
+        for _ in $(seq 1 "${TRIES}"); do
             if [[ "$(xwininfo -root -tree 2>/dev/null | grep -ciE "${WPAT}" || true)" -gt 0 ]]; then
                 WIN=1; break
             fi

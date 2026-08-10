@@ -18,8 +18,9 @@ EVIDENCE PATH  (data in, pull-based)
   (endpoint)     (DMZ)      │ (enclave)
                      the enclave PULLS across this boundary; nothing initiates inward
 
-ANALYST PATH  (brokered, single origin)
-  kiosk browser ──▶ CoreDNS (name→bastion) ──▶ tailnet ──▶ broker (Boundary session)
+ANALYST PATH  (brokered, single origin; one node per workstation — IR_WS_ID)
+  kiosk browser ──▶ CoreDNS (name→bastion) ──▶ tailnet ──▶ distributor :8443
+      ──▶ one of N Boundary sessions (127.0.0.1:18443+)
       ──▶ egress worker ──▶ Traefik ──▶ oauth2-proxy ──┬─▶ Keycloak
                                                        └─▶ frontend ──▶ backend
 ```
@@ -62,13 +63,39 @@ service may reach which, default-deny ([`../test/uat_consul.sh`](../test/uat_con
   Target and auth-method ids arrive via `deploy/.env.boundary`, written by the controller's
   bootstrap. **The Boundary target is the allow-list** — one target, the SSO gate, authorized
   per session and per principal.
-- The session is **supervised**: when it ends — controller rebuilt, worker recreated, expiry, a
-  fatal proxy error — the broker re-authenticates and re-establishes within seconds, and it
-  cancels the sessions it abandons so the access record stays truthful.
+- **`BROKER_SESSIONS` independent sessions**, each on its own loopback port from
+  `BROKER_SESSION_BASE`, each with its own supervisor and its own principal
+  (`analyst-s1..sN`), so sessions are individually attributable and each supervisor's reap
+  reaches only its own session. They are loopback-only: the distributor
+  (§3a) is the only way to reach one, so no workstation can pin itself to a single session.
+- Each session is **supervised by its listener**, not by its process: a client can hold a
+  session and report a listening proxy with nothing bound. When one ends, its supervisor
+  cancels that session **by id** and establishes a new one; a principal-scoped reap would take
+  the siblings with it, so that runs only at startup.
 - **Probe:**
   ```bash
-  podman logs ir-dmz_broker_1 | grep -E 'authenticated as|Session ID' | tail -2
-  podman exec ir-dmz_bastion_1 sh -c 'netstat -ltn 2>/dev/null | grep 8443 || ss -ltn | grep 8443'
+  podman logs ir-dmz_broker_1 | grep -E 'authenticated as|listening on session' | tail -3
+  podman exec ir-dmz_bastion_1 sh -c 'netstat -ltn 2>/dev/null | grep -c ":184"'   # = BROKER_SESSIONS
+  ```
+
+### 3a. Connection distributor — DMZ
+- **Config:** [`hashicorp/access/broker_distributor.sh`](../hashicorp/access/broker_distributor.sh)
+  + the `distributor` service in [`deploy/dmz/docker-compose.yml`](../deploy/dmz/docker-compose.yml).
+  haproxy in the bastion's network namespace; it renders its config from `BROKER_SESSIONS`.
+- Owns the analyst-facing port and spreads connections over the sessions with `leastconn`.
+  **`option redispatch`** retries a connection that hits a dead session onto a sibling, so a
+  session loss costs the connections already on it and nothing more.
+- **No health checks**: a TCP probe against a Boundary proxy is itself a session connection, so
+  a checker would cause the churn it reports.
+- **`BROKER_ACCEPT_RATE`** (default 8/s) bounds new connections. Simultaneous connection setups
+  corrupt the WebSocket to the egress worker and kill a whole session; established connections
+  are unaffected. The ceiling belongs to the single egress worker, so it does not rise with
+  `BROKER_SESSIONS`.
+- **Holds no credentials and terminates no TLS** — `mode tcp`, byte-for-byte pass-through.
+- **Probe:**
+  ```bash
+  podman exec ir-dmz_bastion_1 sh -c 'netstat -ltn 2>/dev/null | grep :8443'
+  podman logs --tail 20 ir-dmz_distributor_1     # brokered/sN names the session each took
   ```
 
 ### 4. Traefik — enclave ingress

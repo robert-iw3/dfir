@@ -10,18 +10,18 @@ SRG-APP-000001-WSR-000001:
     frontend/nginx.conf.template (limit_conn, large_client_header_buffers 4 16k), deploy/enclave/docker-compose.yml
     (--cookie-csrf-per-request-limit)
   verified: test/uat_srg_webtier.sh — connection and stream limits asserted as deployed; the CSRF cookie
-    cap is asserted at the gate and the header buffer asserted to remain at its bounded value, so a
-    regression that widens it to absorb accumulation fails the test
+    cap is asserted at the gate and the header buffer asserted to remain at its bounded value, so a regression
+    that widens it to absorb accumulation fails the test
 SRG-APP-000001-WSR-000002:
   status: mitigated
-  mechanism: 'Sessions are held server-side in Redis, not in the client''s cookie, so signing out or
-    cancelling a session ends it for real. The gate is a mesh service in its own right: Redis binds
-    loopback only, so the gate reaches it through its own Connect sidecar and its access is an intention
-    rather than network reachability. Database 1 keeps analyst sessions out of the task broker''s keyspace.'
+  mechanism: 'Sessions are held server-side in Redis, not in the client''s cookie, so signing out or cancelling
+    a session ends it for real. The gate is a mesh service in its own right: Redis binds loopback only,
+    so the gate reaches it through its own Connect sidecar and its access is an intention rather than
+    network reachability. Database 1 keeps analyst sessions out of the task broker''s keyspace.'
   evidence: deploy/enclave/docker-compose.yml (oauth2-proxy --session-store-type=redis, oauth2-proxy-
     sidecar), hashicorp/consul/config-entries/ir-redis.hcl, hashicorp/consul/register-mesh.sh
-  verified: test/uat_srg_webtier.sh — a real authorization-code login through the ingress grows the
-    session database from 0 to 1 key; with a cookie store that count never moves
+  verified: test/uat_srg_webtier.sh — a real authorization-code login through the ingress grows the session
+    database from 0 to 1 key; with a cookie store that count never moves
 SRG-APP-000220-WSR-000201:
   status: mitigated
   mechanism: Sign-out ends the gate session AND the Keycloak session through the back-channel --backend-
@@ -31,26 +31,26 @@ SRG-APP-000220-WSR-000201:
     / KEYCLOAK_SESSION cookies are gone
 SRG-APP-000223-WSR-000011:
   status: mitigated
-  mechanism: Secure, HttpOnly and SameSite=lax are all stated explicitly rather than inherited, with
-    per- request CSRF cookies on a fifteen-minute expiry.
+  mechanism: Secure, HttpOnly and SameSite=lax are all stated explicitly rather than inherited, with per-
+    request CSRF cookies on a fifteen-minute expiry.
   evidence: deploy/enclave/docker-compose.yml (oauth2-proxy cookie flags)
   verified: test/uat_srg_webtier.sh — the gate reports secure(https):true httponly:true samesite:lax
 SRG-APP-000223-WSR-000145:
   status: mitigated
-  mechanism: Session identifiers are minted by oauth2-proxy and Keycloak. Nothing in the application
-    accepts a client-supplied identifier; the gate rejects a cookie it did not sign.
+  mechanism: Session identifiers are minted by oauth2-proxy and Keycloak. Nothing in the application accepts
+    a client-supplied identifier; the gate rejects a cookie it did not sign.
   evidence: deploy/enclave/docker-compose.yml (oauth2-proxy --cookie-secret)
   verified: ''
 SRG-APP-000224-WSR-000135:
   status: redesign
-  note: The identifier is unique per session, but "FIPS 140-2 approved random number generator" is a
-    claim about the crypto module, not the application. Ties to the FIPS track below — it cannot be
-    closed by configuring oauth2-proxy or Keycloak.
+  note: The identifier is unique per session, but "FIPS 140-2 approved random number generator" is a claim
+    about the crypto module, not the application. Ties to the FIPS track below — it cannot be closed by
+    configuring oauth2-proxy or Keycloak.
   where: FIPS track (SRG-APP-000179-*)
 SRG-APP-000224-WSR-000136:
   status: mitigated
-  mechanism: Session identifiers come from Keycloak and oauth2-proxy's CSPRNG-backed session layer;
-    neither derives an identifier from user or time input, so they are not reproducible.
+  mechanism: Session identifiers come from Keycloak and oauth2-proxy's CSPRNG-backed session layer; neither
+    derives an identifier from user or time input, so they are not reproducible.
   evidence: keycloak/realm-irplatform.json, deploy/enclave/docker-compose.yml
   verified: ''
 SRG-APP-000224-WSR-000137:
@@ -61,14 +61,14 @@ SRG-APP-000224-WSR-000137:
   verified: ''
 SRG-APP-000224-WSR-000138:
   status: mitigated
-  mechanism: Identifiers are base64/hex encodings over the full character set of their encoding, not
-    a restricted alphabet.
+  mechanism: Identifiers are base64/hex encodings over the full character set of their encoding, not a
+    restricted alphabet.
   evidence: keycloak/realm-irplatform.json
   verified: ''
 SRG-APP-000224-WSR-000139:
   status: mitigated
-  mechanism: Entropy is a property of the identity provider's session layer (128-bit), not a tunable
-    of the deployment.
+  mechanism: Entropy is a property of the identity provider's session layer (128-bit), not a tunable of
+    the deployment.
   evidence: keycloak/realm-irplatform.json
   verified: ''
 SRG-APP-000295-WSR-000012:
@@ -82,23 +82,23 @@ SRG-APP-000295-WSR-000012:
     value
 SRG-APP-000295-WSR-000134:
   status: mitigated
-  mechanism: The session is re-validated against the identity provider every fifteen minutes, which
-    is what makes an idle session lapse and a revoked account stop working mid-session, paired with
-    the realm's ssoSessionIdleTimeout.
+  mechanism: The session is re-validated against the identity provider every fifteen minutes, which is
+    what makes an idle session lapse and a revoked account stop working mid-session, paired with the realm's
+    ssoSessionIdleTimeout.
   evidence: deploy/enclave/docker-compose.yml (--cookie-refresh=15m), hashicorp/keycloak/realm- irplatform.json
     (ssoSessionIdleTimeout)
   verified: test/uat_srg_webtier.sh — the gate reports refresh:after 15m0s
 SRG-APP-000219-WSR-000190:
   status: implement
   note: Management sessions are not pinned to their originating address. Boundary already records the
-    client address per session, so the enforcement point exists; binding the gate's session to it is
-    the work.
+    client address per session, so the enforcement point exists; binding the gate's session to it is the
+    work.
   where: deploy/enclave/docker-compose.yml, backend/cases/authentication.py
 SRG-APP-000219-WSR-000191:
   status: implement
-  note: Same for user sessions. Note the interaction with the brokered path — every analyst arrives
-    from the egress worker's address, so the pin must be applied at the broker, not the gate, or every
-    session shares one source.
+  note: Same for user sessions. Note the interaction with the brokered path — every analyst arrives from
+    the egress worker's address, so the pin must be applied at the broker, not the gate, or every session
+    shares one source.
   where: hashicorp/access/boundary_session.sh, deploy/enclave/docker-compose.yml
 SRG-APP-000014-WSR-000006:
   status: mitigated
@@ -123,20 +123,19 @@ SRG-APP-000172-WSR-000104:
   verified: test/uat_boundary.sh; test/uat_baseline.sh (browser OIDC login for all roles)
 SRG-APP-000429-WSR-000113:
   status: mitigated
-  mechanism: Identifiers and passwords cross the wire only under TLS, and Keycloak stores passwords
-    hashed — the application holds no password of its own.
+  mechanism: Identifiers and passwords cross the wire only under TLS, and Keycloak stores passwords hashed
+    — the application holds no password of its own.
   evidence: SECURITY-MODEL.md P4; keycloak/realm-irplatform.json
   verified: test/uat_baseline.sh
 SRG-APP-000439-WSR-000151:
   status: mitigated
-  mechanism: TLS on the ingress, Boundary per-session mutual TLS on the approach, Connect mutual TLS
-    between enclave services. No hop in the analyst path is cleartext.
+  mechanism: TLS on the ingress, Boundary per-session mutual TLS on the approach, Connect mutual TLS between
+    enclave services. No hop in the analyst path is cleartext.
   evidence: SECURITY-MODEL.md P4 and P9
   verified: test/uat_boundary.sh; test/uat_consul.sh
 SRG-APP-000439-WSR-000152:
   status: mitigated
-  mechanism: Session identifiers travel only inside the TLS session; the gate is not reachable over
-    cleartext.
+  mechanism: Session identifiers travel only inside the TLS session; the gate is not reachable over cleartext.
   evidence: traefik/traefik.yml (TLS entrypoint)
   verified: test/uat_baseline.sh
 SRG-APP-000439-WSR-000153:
@@ -144,10 +143,10 @@ SRG-APP-000439-WSR-000153:
   mechanism: 'The session cookie is not compressed, and cannot be: the gate offers no cookie compression
     option, and with the Redis session store the cookie carries a REFERENCE rather than session content
     — there is nothing in it whose compressed length could leak.'
-  evidence: deploy/enclave/docker-compose.yml (--session-store-type=redis); oauth2-proxy exposes no
-    cookie-compression flag
-  verified: test/uat_srg_webtier.sh — the server-side session store is asserted, which is what makes
-    the cookie a ticket
+  evidence: deploy/enclave/docker-compose.yml (--session-store-type=redis); oauth2-proxy exposes no cookie-compression
+    flag
+  verified: test/uat_srg_webtier.sh — the server-side session store is asserted, which is what makes the
+    cookie a ticket
 SRG-APP-000439-WSR-000154:
   status: mitigated
   mechanism: The gate sets --cookie-secure=true, so the session cookie is sent only over TLS.
@@ -166,8 +165,8 @@ SRG-APP-000439-WSR-000156:
   verified: test/uat_dns.sh; test/uat_boundary.sh
 SRG-APP-000439-WSR-000188:
   status: mitigated
-  mechanism: Export, NULL, RC4 and DES suites are absent because the cipher list names only the six
-    suites that are permitted.
+  mechanism: Export, NULL, RC4 and DES suites are absent because the cipher list names only the six suites
+    that are permitted.
   evidence: traefik/dynamic-sso/dynamic.yml (tls.options.default.cipherSuites)
   verified: test/uat_srg_webtier.sh — a client offering only export/NULL/RC4/DES is refused
 SRG-APP-000439-WSR-000192:
@@ -177,12 +176,11 @@ SRG-APP-000439-WSR-000192:
   verified: test/uat_srg_webtier.sh — ALPN selects h2
 SRG-APP-000439-WSR-000193:
   status: redesign
-  note: 'Not reachable with this ingress. Refusing HTTP/1.x means not OFFERING http/1.1 in ALPN, and
-    Traefik exposes no control over the ALPN list — its http2 settings tune streams and header tables
-    only. Meeting this needs an ingress that can restrict ALPN, which is an ingress replacement rather
-    than a setting. Weigh that against the exposure: HTTP/2 is negotiated and used, the only client
-    is the workstation''s managed browser, and the downgrade path is a fallback nothing on the analyst
-    path takes.'
+  note: 'Not reachable with this ingress. Refusing HTTP/1.x means not OFFERING http/1.1 in ALPN, and Traefik
+    exposes no control over the ALPN list — its http2 settings tune streams and header tables only. Meeting
+    this needs an ingress that can restrict ALPN, which is an ingress replacement rather than a setting.
+    Weigh that against the exposure: HTTP/2 is negotiated and used, the only client is the workstation''s
+    managed browser, and the downgrade path is a fallback nothing on the analyst path takes.'
   where: traefik/ — would require a different ingress, or an ALPN control Traefik does not have
 SRG-APP-000439-WSR-000196:
   status: mitigated
@@ -219,26 +217,26 @@ SRG-APP-000416-WSR-000118:
   where: FIPS track
 SRG-APP-000175-WSR-000095:
   status: redesign
-  note: RFC 5280 certification path validation implies a real PKI. The platform pins self-signed CAs
-    deliberately (the enclave has no egress, so no CRL/OCSP responder is reachable), which satisfies
-    the trust decision but not path validation. Meeting this means issuing web-tier certificates from
-    DoD PKI and providing revocation data inside the enclave.
+  note: RFC 5280 certification path validation implies a real PKI. The platform pins self-signed CAs deliberately
+    (the enclave has no egress, so no CRL/OCSP responder is reachable), which satisfies the trust decision
+    but not path validation. Meeting this means issuing web-tier certificates from DoD PKI and providing
+    revocation data inside the enclave.
   where: PKI track — traefik/gen-cert.sh, hashicorp/access/gen-boundary-cert.sh
 SRG-APP-000427-WSR-000186:
   status: implement
-  note: 'The PLUMBING is built and inert: hashicorp/keycloak/pki-logon/ holds the x509 browser flow,
-    a trust-anchor allow-list and a CRL directory, and deploy.sh renders both the ingress client-auth
-    block and the realm flow from IR_PKI_LOGON — rendering the DISABLED form explicitly, so a deployment
-    that once had it on stops asking for certificates. Enabling it with no trust anchor is refused,
-    because that is a lockout rather than a hardening step. What remains is not code: an issuing CA,
-    cards carrying its certificates, and revocation data staged into the enclave. It stays opt-in until
-    an environment has them.'
+  note: 'The PLUMBING is built and inert: hashicorp/keycloak/pki-logon/ holds the x509 browser flow, a
+    trust-anchor allow-list and a CRL directory, and deploy.sh renders both the ingress client-auth block
+    and the realm flow from IR_PKI_LOGON — rendering the DISABLED form explicitly, so a deployment that
+    once had it on stops asking for certificates. Enabling it with no trust anchor is refused, because
+    that is a lockout rather than a hardening step. What remains is not code: an issuing CA, cards carrying
+    its certificates, and revocation data staged into the enclave. It stays opt-in until an environment
+    has them.'
   where: hashicorp/keycloak/pki-logon/, deploy/deploy.sh (pki_logon_render), traefik/dynamic- sso/dynamic.yml,
     deploy/.env (IR_PKI_LOGON)
 SRG-APP-000875-WSR-000280:
   status: redesign
-  note: A local cache of revocation data presumes revocation data exists (see WSR-000095). Inside an
-    enclave with no egress it must be staged in like symbol tables are.
+  note: A local cache of revocation data presumes revocation data exists (see WSR-000095). Inside an enclave
+    with no egress it must be staged in like symbol tables are.
   where: PKI track
 SRG-APP-000910-WSR-000300:
   status: mitigated
@@ -250,8 +248,8 @@ SRG-APP-000910-WSR-000300:
 SRG-APP-000915-WSR-000310:
   status: mitigated
   mechanism: Vault holds key material and app secrets, with dynamic database credentials and an audit
-    device; the unseal key is the operator's, not a container's. The custody HMAC key comes from KV
-    rather than a file.
+    device; the unseal key is the operator's, not a container's. The custody HMAC key comes from KV rather
+    than a file.
   evidence: SECURITY-MODEL.md P2; hashicorp/vault/vault-setup-ir.sh
   verified: test/uat_vault.sh — credentials are dynamic, minted live, and revocation works
 SRG-APP-000176-WSR-000096:
@@ -263,22 +261,21 @@ SRG-APP-000176-WSR-000096:
 SRG-APP-000033-WSR-000169:
   status: mitigated
   mechanism: Every request passes the SSO gate; Keycloak group membership maps to a platform role, and
-    the API enforces per-role permissions. The backend trusts forwarded identity only when the proxy
-    shared secret matches, so headers cannot be spoofed by a direct client.
+    the API enforces per-role permissions. The backend trusts forwarded identity only when the proxy shared
+    secret matches, so headers cannot be spoofed by a direct client.
   evidence: backend/cases/authentication.py, backend/cases/rbac.py
   verified: test/uat_baseline.sh; test/uat_e2e.sh (RBAC section — an analyst cannot delete)
 SRG-APP-000315-WSR-000003:
   status: mitigated
-  mechanism: Remote access is a Boundary session against one target, from a workstation enrolled on
-    a deny-by-default tailnet. There is no second path to permit or forbid.
+  mechanism: Remote access is a Boundary session against one target, from a workstation enrolled on a
+    deny-by-default tailnet. There is no second path to permit or forbid.
   evidence: SECURITY-MODEL.md P1, P3
-  verified: test/uat_boundary.sh; test/uat_tailnet.sh — the tunnel carries the session and bounds it
-    (no internal reach)
+  verified: test/uat_boundary.sh; test/uat_tailnet.sh — the tunnel carries the session and bounds it (no
+    internal reach)
 SRG-APP-000315-WSR-000004:
   status: mitigated
-  mechanism: The enclave accepts no connection originated in the DMZ except the Boundary controller
-    API and the egress worker's proxy port, both authenticated. The bastion cannot reach the ingress
-    directly.
+  mechanism: The enclave accepts no connection originated in the DMZ except the Boundary controller API
+    and the egress worker's proxy port, both authenticated. The bastion cannot reach the ingress directly.
   evidence: SECURITY-MODEL.md P1
   verified: test/uat_boundary.sh — the bastion cannot reach the enclave ingress except through a session
 SRG-APP-000316-WSR-000170:
@@ -339,9 +336,9 @@ SRG-APP-000141-WSR-000087:
   verified: ''
 SRG-APP-000880-WSR-000290:
   status: mitigated
-  mechanism: 'Maintenance access is separated from user access by construction: administrators reach
-    management interfaces through their own forwarder, not through the analyst origin, and the analyst
-    target reaches only the SSO gate.'
+  mechanism: 'Maintenance access is separated from user access by construction: administrators reach management
+    interfaces through their own forwarder, not through the analyst origin, and the analyst target reaches
+    only the SSO gate.'
   evidence: admin/README.md; SECURITY-MODEL.md P3
   verified: test/uat_boundary.sh — exactly one target exists, and it is the SSO gate
 SRG-APP-000141-WSR-000015:
@@ -356,8 +353,8 @@ SRG-APP-000815-WSR-000160:
     every mutation is attributed to that account in the audit trail.
   evidence: backend/cases/authentication.py, backend/cases/audit.py
   verified: test/uat_e2e.sh — audit entries carry the acting principal
-  note: The BROKERED hop still uses one shared analyst principal (SECURITY-MODEL open item). The web
-    tier satisfies this control; per-analyst Boundary principals close it end to end.
+  note: The BROKERED hop still uses one shared analyst principal (SECURITY-MODEL open item). The web tier
+    satisfies this control; per-analyst Boundary principals close it end to end.
 SRG-APP-000820-WSR-000170:
   status: implement
   note: MFA is not configured. Keycloak supports OTP as a required action and conditional flow; enabling
@@ -371,37 +368,49 @@ SRG-APP-000825-WSR-000180:
 SRG-APP-000830-WSR-000190:
   status: mitigated
   mechanism: 'The realm enforces a password policy: length 15, all four character classes, notUsername
-    and notEmail, history 5, forced change on expiry. Read from the RUNNING realm, because an import
-    never overwrites an existing one — deploy.sh recreates Keycloak when the realm file changes so the
-    two cannot disagree. notUsername and notEmail refuse the two guesses made first.'
+    and notEmail, history 5, forced change on expiry. Read from the RUNNING realm, because an import never
+    overwrites an existing one — deploy.sh recreates Keycloak when the realm file changes so the two cannot
+    disagree. notUsername and notEmail refuse the two guesses made first.'
   evidence: hashicorp/keycloak/realm-irplatform.json (passwordPolicy)
   verified: test/uat_srg_webtier.sh — the policy is read back from the running realm and each element
     asserted
 SRG-APP-000835-WSR-000200:
-  status: implement
-  note: Updating the blacklist is an operational procedure plus a staged file — the same inbound path
-    symbol tables use.
-  where: keycloak/, symbols/README.md (the staging pattern to follow)
+  status: mitigated
+  mechanism: 'Keycloak passwordBlacklist(dfir-platform.txt), added to the realm password policy that converges
+    on every deploy (D-008). The list is baked into the image beside the theme and for the same reason:
+    a policy naming a file Keycloak cannot read fails password SETTING, and the first sign would be an
+    analyst unable to complete a forced reset. Seeded with platform CONTEXT terms as well as weak forms
+    — ''IrPlatform#2026'' satisfies length, case, digits and specials, and is the first thing an attacker
+    who has read the public repository would try. A composition rule cannot catch that; a list can. It
+    gates password setting only, never sign-in.'
+  evidence: keycloak/password-blacklists/dfir-platform.txt, keycloak/Dockerfile (COPY + build-time test
+    -s), hashicorp/keycloak/realm-irplatform.json passwordPolicy
+  verified: uat_srg_webtier.sh — the policy names the list, the file is present and non-empty inside the
+    running Keycloak, and the review record is within its interval
 SRG-APP-000840-WSR-000210:
-  status: implement
-  note: Same list, updated on compromise. Procedure plus staged file.
-  where: keycloak/
+  status: mitigated
+  mechanism: 'The same list and the same converge path. This control differs from WSR-000200 only in its
+    trigger — suspected compromise rather than a schedule — so the mechanism is shared and the RECORD
+    is what distinguishes them: --record takes a reason, and an out-of-cycle update states what prompted
+    it.'
+  evidence: keycloak/password-blacklists/dfir-platform.txt, ci/password-blacklist-check.sh
+  verified: uat_srg_webtier.sh — same assertions as WSR-000200, plus the reason field on the record
 SRG-APP-000845-WSR-000220:
   status: mitigated
   mechanism: 'The realm enforces a password policy: length 15, all four character classes, notUsername
-    and notEmail, history 5, forced change on expiry. Read from the RUNNING realm, because an import
-    never overwrites an existing one — deploy.sh recreates Keycloak when the realm file changes so the
-    two cannot disagree. Verification happens on every set, since the policy is the realm''s.'
+    and notEmail, history 5, forced change on expiry. Read from the RUNNING realm, because an import never
+    overwrites an existing one — deploy.sh recreates Keycloak when the realm file changes so the two cannot
+    disagree. Verification happens on every set, since the policy is the realm''s.'
   evidence: hashicorp/keycloak/realm-irplatform.json (passwordPolicy)
   verified: test/uat_srg_webtier.sh — the policy is read back from the running realm and each element
     asserted
 SRG-APP-000850-WSR-000230:
   status: mitigated
-  mechanism: Passwords are stored salted and hashed with pbkdf2-sha512 at 210,000 iterations, stated
-    explicitly in the realm rather than inherited from an image default that drifts between Keycloak
-    releases. The platform never sees or stores a password.
-  evidence: hashicorp/keycloak/realm-irplatform.json (passwordPolicy) — hashAlgorithm(pbkdf2-sha512)
-    and hashIterations(210000)
+  mechanism: Passwords are stored salted and hashed with pbkdf2-sha512 at 210,000 iterations, stated explicitly
+    in the realm rather than inherited from an image default that drifts between Keycloak releases. The
+    platform never sees or stores a password.
+  evidence: hashicorp/keycloak/realm-irplatform.json (passwordPolicy) — hashAlgorithm(pbkdf2-sha512) and
+    hashIterations(210000)
   verified: test/uat_srg_webtier.sh — an approved salted hash is asserted on the running realm
 SRG-APP-000855-WSR-000240:
   status: mitigated
@@ -412,34 +421,34 @@ SRG-APP-000855-WSR-000240:
 SRG-APP-000860-WSR-000250:
   status: mitigated
   mechanism: 'The realm enforces a password policy: length 15, all four character classes, notUsername
-    and notEmail, history 5, forced change on expiry. Read from the RUNNING realm, because an import
-    never overwrites an existing one — deploy.sh recreates Keycloak when the realm file changes so the
-    two cannot disagree. A 15-character minimum, with no upper bound — long passwords are permitted.'
+    and notEmail, history 5, forced change on expiry. Read from the RUNNING realm, because an import never
+    overwrites an existing one — deploy.sh recreates Keycloak when the realm file changes so the two cannot
+    disagree. A 15-character minimum, with no upper bound — long passwords are permitted.'
   evidence: hashicorp/keycloak/realm-irplatform.json (passwordPolicy)
   verified: test/uat_srg_webtier.sh — the policy is read back from the running realm and each element
     asserted
 SRG-APP-000865-WSR-000260:
   status: mitigated
   mechanism: 'The realm enforces a password policy: length 15, all four character classes, notUsername
-    and notEmail, history 5, forced change on expiry. Read from the RUNNING realm, because an import
-    never overwrites an existing one — deploy.sh recreates Keycloak when the realm file changes so the
-    two cannot disagree. Keycloak''s login form reports the policy as the user types, once one exists.'
+    and notEmail, history 5, forced change on expiry. Read from the RUNNING realm, because an import never
+    overwrites an existing one — deploy.sh recreates Keycloak when the realm file changes so the two cannot
+    disagree. Keycloak''s login form reports the policy as the user types, once one exists.'
   evidence: hashicorp/keycloak/realm-irplatform.json (passwordPolicy)
   verified: test/uat_srg_webtier.sh — the policy is read back from the running realm and each element
     asserted
 SRG-APP-000870-WSR-000270:
   status: mitigated
   mechanism: 'The realm enforces a password policy: length 15, all four character classes, notUsername
-    and notEmail, history 5, forced change on expiry. Read from the RUNNING realm, because an import
-    never overwrites an existing one — deploy.sh recreates Keycloak when the realm file changes so the
-    two cannot disagree. Composition rules and reuse history are stated in the policy.'
+    and notEmail, history 5, forced change on expiry. Read from the RUNNING realm, because an import never
+    overwrites an existing one — deploy.sh recreates Keycloak when the realm file changes so the two cannot
+    disagree. Composition rules and reuse history are stated in the policy.'
   evidence: hashicorp/keycloak/realm-irplatform.json (passwordPolicy)
   verified: test/uat_srg_webtier.sh — the policy is read back from the running realm and each element
     asserted
 SRG-APP-000700-WSR-000100:
   status: implement
-  note: Account expiry is not configured. Keycloak supports an account expiry attribute and disabled
-    state; the platform's user admin must surface and honour it.
+  note: Account expiry is not configured. Keycloak supports an account expiry attribute and disabled state;
+    the platform's user admin must surface and honour it.
   where: keycloak/realm-irplatform.json, backend/cases/keycloak_admin.py
 SRG-APP-000705-WSR-000110:
   status: implement
@@ -448,8 +457,8 @@ SRG-APP-000705-WSR-000110:
   where: backend/cases/keycloak_admin.py
 SRG-APP-000516-WSR-000079:
   status: mitigated
-  mechanism: No default or shared web-server accounts exist. Service identities are container users
-    with no password and no shell; human accounts live only in Keycloak.
+  mechanism: No default or shared web-server accounts exist. Service identities are container users with
+    no password and no shell; human accounts live only in Keycloak.
   evidence: frontend/Dockerfile, backend/Dockerfile
   verified: ''
 SRG-APP-000141-WSR-000078:
@@ -460,19 +469,18 @@ SRG-APP-000141-WSR-000078:
   verified: ''
 SRG-APP-000334-WSR-000024:
   status: mitigated
-  mechanism: Service-to-service identity is a Connect certificate checked against an intention, not
-    an address; user identity is an OIDC assertion. Both name the source explicitly.
+  mechanism: Service-to-service identity is a Connect certificate checked against an intention, not an
+    address; user identity is an OIDC assertion. Both name the source explicitly.
   evidence: SECURITY-MODEL.md P9
   verified: test/uat_consul.sh — denied pairs are refused on the wire
 SRG-APP-000016-WSR-000005:
   status: implement
   note: 'Aggregated into a PRIVATE MinIO bucket (ir-logs), held apart from evidence and carved regions
     and reachable only through the mesh. Object storage is the ''different system or media'' the control
-    asks for without adding an egress path or a second product to run: the store already exists, is
-    already backed up as a unit, and already has a retention lifecycle the platform understands. An
-    external monitor reads the bucket rather than being given a route to the ingress.'
-  where: deploy/enclave/docker-compose.yml (log-shipper), backend/cases/storage.py (ir-logs bucket),
-    backend/cases/componenthealth.py
+    asks for without adding an egress path or a second product to run: the store already exists, is already
+    backed up as a unit, and already has a retention lifecycle the platform understands. An external monitor
+    reads the bucket rather than being given a route to the ingress.'
+  where: deploy/enclave/docker-compose.yml (log-shipper), backend/cases/storage.py (ir-logs bucket), backend/cases/componenthealth.py
 SRG-APP-000089-WSR-000047:
   status: mitigated
   mechanism: Structured JSON access logging is enabled explicitly on the ingress.
@@ -507,14 +515,14 @@ SRG-APP-000098-WSR-000059:
   verified: test/uat_srg_webtier.sh — ClientHost is present
 SRG-APP-000098-WSR-000060:
   status: mitigated
-  mechanism: Attribution behind the proxy is a JOIN, not a header. Boundary's hop is a TCP session,
-    so no HTTP proxy exists to insert X-Forwarded-For and ClientHost is the egress worker for every
-    analyst. The ingress record carries StartUTC and ClientHost; the broker's session record carries
-    the real client address for that window, and the two join on time and session. The ingress also
-    captures X-Forwarded-For when present, so a future HTTP proxy in front would be recorded directly.
+  mechanism: Attribution behind the proxy is a JOIN, not a header. Boundary's hop is a TCP session, so
+    no HTTP proxy exists to insert X-Forwarded-For and ClientHost is the egress worker for every analyst.
+    The ingress record carries StartUTC and ClientHost; the broker's session record carries the real client
+    address for that window, and the two join on time and session. The ingress also captures X-Forwarded-For
+    when present, so a future HTTP proxy in front would be recorded directly.
   evidence: traefik/traefik.yml (accessLog.fields.headers), backend/cases/brokeredsessions.py
-  verified: test/uat_srg_webtier.sh — the test drives a request through the brokered listener, then
-    asserts the ingress record carries the join keys and the session reports the real client address
+  verified: test/uat_srg_webtier.sh — the test drives a request through the brokered listener, then asserts
+    the ingress record carries the join keys and the session reports the real client address
 SRG-APP-000099-WSR-000061:
   status: mitigated
   mechanism: The record carries the response status.
@@ -528,12 +536,12 @@ SRG-APP-000100-WSR-000064:
   verified: test/uat_e2e.sh
 SRG-APP-000108-WSR-000166:
   status: mitigated
-  mechanism: The log shipper self-reports to Component Health; a pass failure rides the next report
-    as an alert, and a shipper that goes quiet is surfaced as stale rather than assumed healthy.
+  mechanism: The log shipper self-reports to Component Health; a pass failure rides the next report as
+    an alert, and a shipper that goes quiet is surfaced as stale rather than assumed healthy.
   evidence: backend/cases/management/commands/ship_logs.py (healthreporter wiring), backend/cases/componenthealth.py
     (log alerts, stale rows)
-  verified: test/uat_srg_webtier.sh — the shipper's health row exists and a reported failure raises
-    an alert
+  verified: test/uat_srg_webtier.sh — the shipper's health row exists and a reported failure raises an
+    alert
 SRG-APP-000116-WSR-000066:
   status: mitigated
   mechanism: Timestamps come from the system clock in every component; nothing accepts a client-supplied
@@ -548,8 +556,8 @@ SRG-APP-000118-WSR-000068:
   verified: test/uat_e2e.sh — the auditor reads the trail, the analyst cannot
 SRG-APP-000119-WSR-000069:
   status: mitigated
-  mechanism: The audit ledger is append-only and hash-chained; modification breaks the chain and the
-    verification says where. Nothing in the API can rewrite an entry.
+  mechanism: The audit ledger is append-only and hash-chained; modification breaks the chain and the verification
+    says where. Nothing in the API can rewrite an entry.
   evidence: backend/cases/audit.py
   verified: test/uat_e2e.sh — the hash chain verifies over the whole ledger
 SRG-APP-000120-WSR-000070:
@@ -561,18 +569,18 @@ SRG-APP-000120-WSR-000070:
 SRG-APP-000125-WSR-000071:
   status: mitigated
   mechanism: The shipper moves web-tier records off the container filesystem into the PRIVATE ir-logs
-    bucket, held apart from evidence and reachable only through the mesh; the store is backed up as
-    a unit, so losing a container or its host no longer loses the log. Resumable by byte offsets kept
-    beside the objects, from read-only source mounts.
+    bucket, held apart from evidence and reachable only through the mesh; the store is backed up as a
+    unit, so losing a container or its host no longer loses the log. Resumable by byte offsets kept beside
+    the objects, from read-only source mounts.
   evidence: backend/cases/management/commands/ship_logs.py, deploy/enclave/docker-compose.yml (log-shipper,
     read-only mounts)
   verified: test/uat_srg_webtier.sh — a deployed pass ships, objects and offset state are in the bucket,
     the bucket refuses unauthenticated reads, the sources are read-only
 SRG-APP-000357-WSR-000150:
   status: mitigated
-  mechanism: Log record storage carries a declared allocation (IR_LOGS_ALLOC_BYTES) and every health
-    report measures bucket consumption against it, so capacity is a stated figure rather than whatever
-    the volume happens to hold.
+  mechanism: Log record storage carries a declared allocation (IR_LOGS_ALLOC_BYTES) and every health report
+    measures bucket consumption against it, so capacity is a stated figure rather than whatever the volume
+    happens to hold.
   evidence: backend/cases/management/commands/ship_logs.py (ALLOC_BYTES, log_storage), backend/cases/componenthealth.py
     (_log_storage_alerts)
   verified: test/uat_srg_webtier.sh — the allocation is declared and reported with measured usage
@@ -584,21 +592,20 @@ SRG-APP-000358-WSR-000063:
   verified: ''
 SRG-APP-000358-WSR-000163:
   status: mitigated
-  mechanism: 'Integration is a read against the ir-logs bucket: shipped objects are whole structured
-    records a SIEM consumes as-is, and the enclave never dials out to deliver them.'
-  evidence: backend/cases/management/commands/ship_logs.py (whole-line objects), traefik/traefik.yml
-    (JSON access log)
+  mechanism: 'Integration is a read against the ir-logs bucket: shipped objects are whole structured records
+    a SIEM consumes as-is, and the enclave never dials out to deliver them.'
+  evidence: backend/cases/management/commands/ship_logs.py (whole-line objects), traefik/traefik.yml (JSON
+    access log)
   verified: test/uat_srg_webtier.sh — a shipped object is fetched and parses as structured records
 SRG-APP-000359-WSR-000065:
   status: mitigated
-  mechanism: Component Health warns at 75% of the declared log storage allocation and goes critical
-    at 95%, on the same page and alert channel every other capacity figure uses.
+  mechanism: Component Health warns at 75% of the declared log storage allocation and goes critical at
+    95%, on the same page and alert channel every other capacity figure uses.
   evidence: backend/cases/componenthealth.py (LOG_STORAGE_PERCENT_WARN, _log_storage_alerts)
   verified: test/uat_srg_webtier.sh — 76% of allocation warns and 50% does not, in the deployed code
 SRG-APP-000374-WSR-000172:
   status: mitigated
-  mechanism: Timestamps are recorded in UTC throughout, and the UI labels the zone on every rendered
-    time.
+  mechanism: Timestamps are recorded in UTC throughout, and the UI labels the zone on every rendered time.
   evidence: backend/cases/audit.py; UI_OVERVIEW.md (display preferences)
   verified: test/uat_ui.sh
 SRG-APP-000375-WSR-000171:
@@ -610,11 +617,10 @@ SRG-APP-000745-WSR-000120:
   status: implement
   note: 'Aggregated into a PRIVATE MinIO bucket (ir-logs), held apart from evidence and carved regions
     and reachable only through the mesh. Object storage is the ''different system or media'' the control
-    asks for without adding an egress path or a second product to run: the store already exists, is
-    already backed up as a unit, and already has a retention lifecycle the platform understands. One
-    place to review web-tier records, beside the application''s own audit trail.'
-  where: deploy/enclave/docker-compose.yml (log-shipper), backend/cases/storage.py (ir-logs bucket),
-    backend/cases/componenthealth.py
+    asks for without adding an egress path or a second product to run: the store already exists, is already
+    backed up as a unit, and already has a retention lifecycle the platform understands. One place to
+    review web-tier records, beside the application''s own audit trail.'
+  where: deploy/enclave/docker-compose.yml (log-shipper), backend/cases/storage.py (ir-logs bucket), backend/cases/componenthealth.py
 SRG-APP-000795-WSR-000130:
   status: implement
   note: Alerting on detected unauthorized activity — no alert path exists; the Component Health reporter
@@ -622,8 +628,8 @@ SRG-APP-000795-WSR-000130:
   where: backend/cases/healthreporter.py
 SRG-APP-000805-WSR-000140:
   status: implement
-  note: Enforcement actions are partly recorded — RBAC denials return 403 but are not written to the
-    ledger. Recording denials is a bounded backend change.
+  note: Enforcement actions are partly recorded — RBAC denials return 403 but are not written to the ledger.
+    Recording denials is a bounded backend change.
   where: backend/cases/rbac.py, backend/cases/audit.py
 SRG-APP-000141-WSR-000075:
   status: mitigated
@@ -676,15 +682,14 @@ SRG-APP-000141-WSR-000085:
   verified: ''
 SRG-APP-000142-WSR-000089:
   status: mitigated
-  mechanism: Every service binds a stated address and port; the data tier binds loopback only so its
-    sidecar is the sole listener, and the ingress binds one TLS entrypoint.
+  mechanism: Every service binds a stated address and port; the data tier binds loopback only so its sidecar
+    is the sole listener, and the ingress binds one TLS entrypoint.
   evidence: SECURITY-MODEL.md P9; deploy/enclave/docker-compose.yml
   verified: test/uat_consul.sh
 SRG-APP-000383-WSR-000175:
   status: mitigated
   mechanism: 'Cleartext and unnecessary ports are disabled rather than firewalled: Consul''s HTTP and
-    gRPC cleartext ports are off, ops listeners bind loopback, and the networks are internal with no
-    egress.'
+    gRPC cleartext ports are off, ops listeners bind loopback, and the networks are internal with no egress.'
   evidence: hashicorp/consul/server.hcl (http = -1); SECURITY-MODEL.md P4, P6
   verified: test/uat_consul.sh — cleartext ports closed; test/uat_dns.sh
 SRG-APP-000266-WSR-000142:
@@ -726,8 +731,8 @@ SRG-APP-000251-WSR-000157:
   verified: ''
 SRG-APP-000251-WSR-000194:
   status: mitigated
-  mechanism: A request carrying both Content-Length and Transfer-Encoding is normalized to a single
-    request by the ingress rather than resolved inconsistently. The control permits normalizing or terminating;
+  mechanism: A request carrying both Content-Length and Transfer-Encoding is normalized to a single request
+    by the ingress rather than resolved inconsistently. The control permits normalizing or terminating;
     this normalizes, and the smuggled second request is never served.
   evidence: traefik/traefik.yml — the ingress runtime enforces RFC 7230 framing
   verified: test/uat_srg_webtier.sh — a crafted desync request produces exactly ONE response; the assertion
@@ -735,9 +740,9 @@ SRG-APP-000251-WSR-000194:
     error
 SRG-APP-000251-WSR-000195:
   status: mitigated
-  mechanism: The ambiguity is resolved before dispatch, so the smuggled request is discarded rather
-    than passed upstream as a request of its own — the ingress and its upstream cannot disagree about
-    where one request ends.
+  mechanism: The ambiguity is resolved before dispatch, so the smuggled request is discarded rather than
+    passed upstream as a request of its own — the ingress and its upstream cannot disagree about where
+    one request ends.
   evidence: traefik/traefik.yml
   verified: test/uat_srg_webtier.sh — no second response is produced
 SRG-APP-000246-WSR-000149:
@@ -749,17 +754,17 @@ SRG-APP-000246-WSR-000149:
   verified: test/uat_srg_webtier.sh — the rate limit is asserted as deployed
 SRG-APP-000233-WSR-000146:
   status: mitigated
-  mechanism: 'Document root and system files are separated by construction: the served bundle lives
-    in the image, evidence lives in object storage, and writable state is a named volume rather than
-    a directory under the document root.'
+  mechanism: 'Document root and system files are separated by construction: the served bundle lives in
+    the image, evidence lives in object storage, and writable state is a named volume rather than a directory
+    under the document root.'
   evidence: frontend/Dockerfile, deploy/enclave/docker-compose.yml
   verified: ''
 SRG-APP-000231-WSR-000144:
   status: redesign
   note: 'Data at rest is not encrypted: MinIO stores captures unencrypted and Postgres has no transparent
     encryption. This is the largest remaining gap for a platform holding memory images — it needs MinIO
-    server-side encryption with a Vault-held key, plus an encrypted volume or pgcrypto decision for
-    the metadata store.'
+    server-side encryption with a Vault-held key, plus an encrypted volume or pgcrypto decision for the
+    metadata store.'
   where: deploy/enclave/docker-compose.yml (MinIO KMS), hashicorp/vault/
 SRG-APP-000225-WSR-000074:
   status: mitigated
@@ -769,16 +774,16 @@ SRG-APP-000225-WSR-000074:
   verified: test/uat_e2e.sh (the deployment is rebuilt and re-validated end to end)
 SRG-APP-000225-WSR-000140:
   status: mitigated
-  mechanism: 'Failure is to a closed state: the broker refuses to open a listener without a session,
-    Vault comes back sealed, the receiver refuses to start without a certificate, and each deploy stage
-    gates on a health check rather than proceeding.'
+  mechanism: 'Failure is to a closed state: the broker refuses to open a listener without a session, Vault
+    comes back sealed, the receiver refuses to start without a certificate, and each deploy stage gates
+    on a health check rather than proceeding.'
   evidence: hashicorp/access/boundary_session.sh, deploy/deploy.sh
   verified: test/uat_boundary.sh
 SRG-APP-000225-WSR-000141:
   status: redesign
-  note: No clustering. Postgres, MinIO, Redis and the ingress are single instances; the platform is
-    designed for one enclave. This is the horizontal-scalability track, and it is a genuine architecture
-    change rather than a setting.
+  note: No clustering. Postgres, MinIO, Redis and the ingress are single instances; the platform is designed
+    for one enclave. This is the horizontal-scalability track, and it is a genuine architecture change
+    rather than a setting.
   where: planning/enterprise_storage_roadmap.md, planning/PARALLEL-ANALYSIS-CAPACITY.md
 SRG-APP-000435-WSR-000148:
   status: mitigated
@@ -787,21 +792,36 @@ SRG-APP-000435-WSR-000148:
   evidence: hashicorp/postgres/pg-tune.sh, deploy/enclave/docker-compose.yml
   verified: ''
 SRG-APP-000131-WSR-000051:
-  status: implement
-  note: Images are built from source but their base images are pinned by tag, not digest, and no signature
-    or checksum is verified at build. Pin by digest and record the manifest.
-  where: every Dockerfile; ci/image-currency.sh
+  status: mitigated
+  mechanism: 'Every external FROM names a DIGEST, not a tag. A tag is a mutable pointer — alpine:3.24
+    is whatever the registry decides on the day of the build — so two builds of one source produced different
+    images and neither could be said to be the one reviewed. Pulling by digest IS the integrity check:
+    podman refuses content that does not hash to the name requested, so there is nothing further to verify
+    at build time. ci/base-images.lock is the manifest record the control asks for. The Rust toolchain
+    is RECORDED but not rewritten inline: build.sh passes RUST_VERSION from rust-toolchain.toml and an
+    inline digest would silently win over that file.'
+  evidence: ci/pin-base-images.sh (--check/--update/--apply), ci/base-images.lock, 16 FROM lines across
+    backend, worker, collector, dmz, frontend, ingest, keycloak, workstation, re-workstation, consul sidecar,
+    ntp, troubleshooting agent
+  verified: 'uat_srg_webtier.sh — the check passes on the tree, and is proven to catch both failure modes
+    by injection: a FROM reverted to a bare tag, and a FROM carrying a digest that disagrees with the
+    lock'
 SRG-APP-000131-WSR-000073:
   status: mitigated
-  mechanism: 'There are no loadable expansion modules: the web tier runs fixed binaries from pinned
-    images, with no plugin directory to populate.'
+  mechanism: 'There are no loadable expansion modules: the web tier runs fixed binaries from pinned images,
+    with no plugin directory to populate.'
   evidence: frontend/Dockerfile, deploy/enclave/docker-compose.yml
   verified: ''
 SRG-APP-000456-WSR-000187:
-  status: implement
-  note: ci/image-currency.sh already detects drift from current stable versions — the mechanism exists.
-    What is missing is the 30-day cadence and a record of applying it.
-  where: ci/image-currency.sh
+  status: mitigated
+  mechanism: ci/image-currency.sh already asked the registry whether each pin had moved on; detecting
+    drift was never the gap. The gap was that nothing recorded WHEN a review happened, so 'we check regularly'
+    was unfalsifiable. --record writes the date AND the finding count, because a review that found five
+    stale images and one that found none are different events; --age fails once the record passes the
+    30-day ceiling the control names.
+  evidence: ci/image-currency.sh (--record, --age), ci/image-currency.record
+  verified: uat_srg_webtier.sh — the record exists, is within the interval, and the gate is proven to
+    fail on an overdue record by backdating one
 SRG-APP-001035-WSR-000340:
   status: mitigated
   mechanism: Every component runs a current vendor-supported release, and drift is detected rather than
@@ -814,12 +834,29 @@ SRG-APP-000516-WSR-000174:
     and the result is recorded against each one.
   where: artifacts/WEB-SERVER-SRG-TRACKER.md
 SRG-APP-000920-WSR-000320:
-  status: implement
-  note: Containers inherit the host clock, so synchronization is the host's NTP configuration — which
-    the platform does not currently assert. It becomes a host-preparation task in the Ansible track.
-  where: Ansible track (host preparation)
+  status: mitigated
+  mechanism: 'The enclave runs its own chrony, staged beside the resolver and for the same reason: `internal:
+    true` installs no route off the host, so both authorities must live inside the segment. It serves
+    the enclave HOSTS, whose chrony clients discipline their own clocks; containers inherit from the host
+    and cannot set time, so the service runs with -x and never touches a clock it does not own. This matters
+    more here than on an ordinary web tier: temporal_coherence compares instants ACROSS hosts, so a drifting
+    enclave does not produce a wrong-looking record, it places a plausible one at the wrong point on the
+    timeline.'
+  evidence: ntp/Dockerfile, ntp/chrony.conf, ntp/entrypoint.sh, deploy/enclave/docker-compose.yml (ntp
+    on internal + dmzlink), deploy/deploy.sh stage 0a, ci/clock-sync-check.sh
+  verified: uat_srg_webtier.sh — the service answers chronyc and is serving; the host clock is synchronized;
+    and a container's clock is proven to agree with the host's, which is the inheritance the design assumed
+    and had never tested
 SRG-APP-000925-WSR-000330:
-  status: implement
-  note: Comparison against an authoritative source is the same host-preparation task; inside an enclave
-    with no egress the source is an internal stratum server.
-  where: Ansible track (host preparation), deploy/NETWORKING.md
+  status: mitigated
+  mechanism: 'Comparison against an authoritative source, with the air gap stated rather than hidden.
+    IR_NTP_UPSTREAM names the reference and the service is disciplined by it; unset, the service serves
+    from a LOCAL stratum 10 reference and the check reports the segment as internally consistent but NOT
+    traceable. Stratum 10 is deliberately poor so any client that can reach a real source prefers it.
+    CONDITIONAL BY DESIGN: a deployment that names no upstream does not satisfy traceability, and the
+    check says so instead of passing quietly — a check that failed on the designed air-gapped case would
+    simply be turned off.'
+  evidence: ntp/entrypoint.sh (upstream templating), ci/clock-sync-check.sh, deploy/.env IR_NTP_UPSTREAM
+  verified: uat_srg_webtier.sh — when IR_NTP_UPSTREAM is set the upstream must actually be reached, so
+    an unreachable server cannot read the same as a deliberate air gap; when unset the untraceable state
+    is reported explicitly
