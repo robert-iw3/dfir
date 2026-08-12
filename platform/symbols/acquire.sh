@@ -1,13 +1,6 @@
 #!/usr/bin/env bash
-# Acquire DWARF for one kernel and convert it to a Volatility 3 ISF.
-#
-# Runs inside a per-family builder container, outside the enclave. Reads the requisites
-# captured at collection and writes <out>/<symbol_key>.json.
-#
-# Order matters: debuginfod first because it resolves by build-id and works for any
-# distro, package manager second because it needs this family's repositories. A kernel
-# with no published debug symbols yields no ISF, and that is reported rather than
-# substituted with an approximate one — a mismatched ISF produces confident wrong answers.
+# Acquire DWARF for one kernel and convert it to a Volatility 3 ISF, inside a per-family builder
+# container outside the enclave. Only the resulting JSON is carried inward.
 set -uo pipefail
 
 REQ="${IR_REQUISITES:-/work/_symbols.json}"
@@ -46,11 +39,6 @@ if [[ -n "${LOCAL_VMLINUX}" && -r "/work/$(basename "${LOCAL_VMLINUX}")" ]]; the
 fi
 
 # 2. debuginfod — distro-agnostic, keyed by build-id.
-#
-# A failure here is reported as what it was, not as a conclusion about the archive. The two
-# outcomes lead to opposite next steps: "this build is not published" ends the search, while
-# "the query timed out" means nothing was learned and the answer is still unknown. Reporting a
-# timeout as absence sends whoever reads the log looking for a missing package that exists.
 if [[ -z "${VMLINUX}" && -n "${BUILD_ID}" ]]; then
     echo "acquire: querying debuginfod for ${BUILD_ID:0:16}…"
     if debuginfod-find debuginfo "${BUILD_ID}" > "${WORK}/path" 2>"${WORK}/err"; then
@@ -73,11 +61,8 @@ if [[ -z "${VMLINUX}" && -n "${BUILD_ID}" ]]; then
     fi
 fi
 
-# 3. The family's debug-symbol package.
-#
-# Says what happened rather than only what was attempted. Previously this printed "trying" and
-# moved on in silence, so a package the archive does not carry looked identical to one that
-# failed to unpack — and the next source's error became the only visible explanation.
+# 3. The family's debug-symbol package, reporting what HAPPENED rather than what was attempted —
+# 'trying' with no outcome reads as success.
 if [[ -z "${VMLINUX}" && -n "${KREL}" ]]; then
     echo "acquire: trying the ddebs archive for linux-image-${KREL}-dbgsym"
     apt-get update -qq 2>/dev/null || true
@@ -101,9 +86,8 @@ if [[ -z "${VMLINUX}" && -n "${KREL}" ]]; then
     fi
 fi
 
-# 4. Launchpad. The ddebs archive prunes debug packages for superseded kernel ABIs, but
-#    Launchpad keeps published binaries — so for a kernel that has been updated since the
-#    capture was taken this is usually the only route left. Debian/Ubuntu only.
+# 4. Launchpad: the ddebs archive prunes debug packages for superseded kernel ABIs, but
+# Launchpad keeps published binaries.
 if [[ -z "${VMLINUX}" && -n "${KREL}" ]]; then
     # "linux-image-<ver>-dbgsym" is a thin wrapper for signed kernels — a few KB with no
     # DWARF in it. The unsigned package carries the actual debug vmlinux, so it is tried
@@ -118,12 +102,8 @@ if [[ -z "${VMLINUX}" && -n "${KREL}" ]]; then
         [[ -n "${DEB_URL}" ]] && break
     done
     if [[ -n "${DEB_URL}" ]]; then
-        # Ask before committing. A kernel dbgsym is a multi-GB transfer, so spending one HEAD
-        # request to learn whether the URL serves at all — and how big it is — is free next to
-        # discovering it minutes in. It also separates the two failures that matter: a 404 means
-        # the build is genuinely absent and the search is over, while a 5xx is the server having
-        # a bad moment and the same request will likely succeed shortly. Reported distinctly,
-        # because treating a transient 503 as "not published" abandons a package that exists.
+        # Ask before committing: a kernel dbgsym is a multi-GB transfer, so one HEAD request to learn
+        # whether the URL serves at all is free by comparison.
         echo "acquire: checking $(basename "${DEB_URL}")"
         # One request for both facts. -sSL follows redirects (Launchpad redirects to a CDN) and
         # reports the FINAL status, which is the one that decides whether to transfer.

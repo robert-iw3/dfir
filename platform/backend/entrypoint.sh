@@ -1,18 +1,13 @@
 #!/usr/bin/env bash
-# Backend entrypoint. `web` runs migrations + the API; `worker` runs the Celery
-# memory-analysis worker. Both share this image.
+# Backend entrypoint: `web` runs migrations + the API, `worker` runs the Celery memory-analysis
+# worker, both from this image.
 set -euo pipefail
 
 role="${1:-web}"
 
-# Which component this process reports resources as. Derived from the role it was launched
-# with rather than passed in through compose: podman-compose does not reliably merge an
-# `environment:` block with an `env_file:`, and a variable that silently fails to arrive
-# leaves a process reporting nothing while looking correctly configured. This process
-# already knows what it is. An explicit value still wins.
-#
-# Only for the two roles that ARE reporters: any other command through this image — the log
-# shipper, a one-off manage.py — would otherwise report itself as the API.
+# Which component this process reports as, derived from the role it was launched with — podman-
+# compose does not reliably merge an environment override, so deriving it is what keeps the
+# health row honest.
 case "${role}" in
     web|worker) export IR_HEALTH_REPORT_ROLE="${IR_HEALTH_REPORT_ROLE:-${role}}" ;;
 esac
@@ -36,19 +31,9 @@ if [ "${IR_VAULT:-0}" = "1" ]; then
     echo "[entrypoint] sourced Vault-issued secrets (db user: ${POSTGRES_USER:-?})"
 fi
 
-# Waits INDEFINITELY by default, and that is a mesh requirement rather than patience.
-#
-# With Connect enforcing, this service reaches Postgres only through its own sidecar, and that
-# sidecar lives in THIS container's network namespace. Exiting here is therefore self-defeating:
-# the restart gives the container a NEW namespace, which strands the proxy that was about to
-# start serving, so the next attempt fails for the reason the previous exit created. Two
-# containers cannot converge that way — each restart breaks the thing it is waiting for.
-#
-# Waiting instead keeps the namespace stable so the proxy can attach to it. A database that is
-# genuinely unreachable is caught by the deployment's own health gate and reported there, with
-# the whole stage's context, rather than as a container that quietly exited.
-#
-# IR_DB_WAIT_TRIES bounds it for anything that needs a definite failure (0 = forever).
+# Waits INDEFINITELY by default — a mesh requirement, not patience: with Connect enforcing,
+# Postgres is reachable only through this service's own sidecar, which may still be
+# initializing.
 wait_for_db() {
     echo "[entrypoint] waiting for postgres at ${POSTGRES_HOST}:${POSTGRES_PORT:-5432} ..."
     tries="${IR_DB_WAIT_TRIES:-0}"
@@ -76,17 +61,8 @@ except Exception as e:
     done
 }
 
-# Create the correlation database when it does not exist yet. CREATE DATABASE cannot run
-# inside a transaction, so it goes through a direct autocommit connection rather than a
-# migration.
-# A side store must already exist. Creating it here needs the CREATEDB attribute, which the
-# app tier deliberately does not hold — hashicorp/db-bootstrap.py owns the one static admin
-# credential and creates every database before the application starts. Attempting it here
-# died with "permission denied to create database" and took the API down with it, which is
-# the security control working; the fix is to stop asking, not to widen the grant.
-#
-# Checked rather than assumed: a missing database must say so by name, because the migrate
-# that follows would otherwise fail with a connection error that names nothing useful.
+# Create the correlation database when absent: CREATE DATABASE cannot run inside a transaction,
+# so it goes through a direct autocommit connection.
 require_side_db() {  # NAME_VAR  DEFAULT_NAME  HOST_VAR  PORT_VAR
     IR_DB_NAME_VAR="$1" IR_DB_NAME_DEFAULT="$2" IR_DB_HOST_VAR="$3" IR_DB_PORT_VAR="$4" \
     python - <<'PY'
@@ -118,11 +94,8 @@ PY
 case "$role" in
     web)
         wait_for_db
-        # Migrations are committed, not generated at start-up. Regenerating them here
-        # made the migration history diverge from the database: Django recorded 0001 as
-        # applied, then rewrote 0001 to include later model changes, so it believed the new
-        # columns existed while the database had never received them. Schema changes ship
-        # as migration files reviewed with the code that needs them.
+        # Migrations are committed, never generated at start-up — regenerating here made the recorded
+        # history diverge from the database.
         python manage.py migrate --noinput
         # The derived correlation store is a separate database: create it if absent, then
         # migrate it explicitly. The router keeps `cases` out of it and it out of `default`.

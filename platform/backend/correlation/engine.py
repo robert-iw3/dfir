@@ -40,10 +40,8 @@ from .models import (ActorProfile, AttributionCandidate, BehaviorEvent, Behavior
 ATTRIBUTION_FLOOR = 0.25
 SIMILARITY_FLOOR = 0.30
 
-# 2.0 = weighted linkage replaces union-find. Two hosts join a campaign when their strongest
-# shared evidence clears a threshold, not because they share anything at all — so an account
-# present on the whole fleet no longer fuses unrelated compromises. Runs correlated under
-# 1.x remain readable; supersession, never mutation.
+# 2.0 — weighted linkage replaces union-find: hosts join when their strongest shared evidence
+# clears a threshold, so a service account on forty machines no longer merges the fleet.
 ALGORITHM_VERSION = "2.0"
 
 # Techniques that place a host at the start of an intrusion rather than downstream of it.
@@ -126,14 +124,8 @@ def correlate_investigation(investigation_id, investigation_name=""):
     # all 25 hosts at 01:00, so "first activity" read as the scanner's schedule, every host
     # looked simultaneous, and temporal coherence had nothing left to discriminate with.
     host_first_confirmed = {}
-    # When each TECHNIQUE was first observed on each HOST, from the confirming finding that
-    # carried it. The campaign's tradecraft order is read from this rather than from host
-    # first_activity, which is the earliest thing on a host at all and therefore fleet-wide
-    # benign noise.
-    #
-    # Kept per host so it can be narrowed to one campaign's hosts. An investigation-wide map
-    # lets a second, unrelated campaign in the same case set the times — the same mistake as
-    # fingerprinting the run's whole node set instead of the campaign's.
+    # When each TECHNIQUE was first observed on each HOST, from the confirming finding that carried
+    # it — the campaign's tradecraft order is read from this, not from host first-seen times.
     technique_first_host = defaultdict(dict)
     for f in Finding.objects.filter(run_id__in=run_ids).select_related("run__host"):
         host = f.run.host.hostname
@@ -150,12 +142,8 @@ def correlate_investigation(investigation_id, investigation_name=""):
                 host not in host_first_standalone
                 or observed < host_first_standalone[host]):
             host_first_standalone[host] = observed
-        # Technique timing takes CONFIRMING findings of every kind, movement included. The
-        # movement exclusion above is narrow and specific: a movement cannot testify about
-        # when its own source host was compromised. It testifies perfectly well about when
-        # the technique it used was seen, and lateral movement techniques are only ever
-        # carried by movement findings — excluding them here left T1021 with no time at all,
-        # falling back to the host's benign first_activity and sorting before the phish.
+        # Technique timing takes CONFIRMING findings of every kind, movement included; the movement
+        # exclusion elsewhere is narrow — a movement cannot testify about its own destination.
         if f.verdict in CONFIRMING_VERDICTS:
             if (host not in host_first_confirmed
                     or observed < host_first_confirmed[host]):
@@ -197,16 +185,8 @@ def correlate_investigation(investigation_id, investigation_name=""):
         # fleet-wide.
         graph_nodes, graph_events = build_graph(crun, run_ids)
 
-        # L1: score every candidate pair from that graph, then take connected components over
-        # the links that clear the threshold. Timestamps are resolved to datetimes first —
-        # temporal coherence compares instants, and comparing ISO strings would order
-        # "2026-07-20T09:00" against a datetime by text.
-        # Standalone confirming evidence first, then any confirming, then the raw earliest.
-        #
-        # The order matters. A movement is confirming evidence, but taking it first lets a
-        # record the engine has DISCOUNTED set the clock: the contradicted 07:30 edge became
-        # the campaign's start, so the headline said the intrusion began before its own
-        # patient zero was phished. Standalone evidence is the host testifying about itself.
+        # L1: score every candidate pair, then take connected components over links clearing the
+        # threshold. Timestamps resolve to datetimes first so ordering is comparable across sources.
         intrusion_first = {
             h: host_first_standalone.get(h) or host_first_confirmed.get(h, v)
             for h, v in host_first.items()
@@ -266,15 +246,8 @@ def correlate_investigation(investigation_id, investigation_name=""):
             cluster_shared = {k: v for k, v in shared.items() if v & cluster}
             c_min, c_mean = cohesion(cluster, links)
 
-            # Named from the campaign's OWN evidence, not from the case it sits in. Every
-            # campaign took the investigation's name, so two intrusions in one engagement
-            # were indistinguishable on the page and in the similarity table — which is the
-            # one place a name has to mean something, since it is what an analyst reads when
-            # deciding whether two cases share an actor.
-            # Family AND patient zero, because one actor runs more than one intrusion: the
-            # corpus's two campaigns are both EmberFox with rotated infrastructure, and on
-            # the family alone the similarity table read "seen before: EmberFox" against a
-            # campaign of the same name. A name that cannot tell two rows apart is not one.
+            # Named from the campaign's OWN evidence, not the case it sits in — otherwise two intrusions in
+            # one engagement carry the same name and neither is identifiable.
             family = sorted({v for (kind, v), hosts in carriers.items()
                              if kind == "malware_family" and hosts & cluster})
             if family and pz:

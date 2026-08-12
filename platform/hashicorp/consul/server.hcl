@@ -1,10 +1,4 @@
-# Consul — the enclave's service mesh control plane.
-#
-# WHAT ENFORCES THESE. Nothing here, on its own. An intention is applied by the Envoy sidecar in
-# front of each service, and only reaches traffic because Postgres and MinIO bind LOOPBACK — see
-# IR_DB_LISTEN / IR_MINIO_LISTEN — so the sidecar is the only listener the enclave network can
-# reach. Without that binding these rules are a document, which is exactly what they were before
-# the mesh was wired: Consul answered "denied" while the connection succeeded.
+# Consul — the enclave's service mesh control plane. WHAT ENFORCES THESE.
 
 datacenter  = "dc1"
 server      = true
@@ -15,7 +9,7 @@ client_addr = "0.0.0.0"
 
 # One server. The enclave is a single failure domain already — losing it loses the evidence
 # store — so mesh quorum across three nodes would add operational weight without adding
-# survivability. Raise this with the node count if the enclave ever spans hosts.
+# survivability.
 bootstrap_expect = 1
 
 ui_config { enabled = true }
@@ -76,6 +70,4 @@ ports {
 # NO config_entries block, deliberately. `bootstrap` entries apply only when the entry does not
 # already exist, so an intention edited here never reaches a cluster whose data volume predates
 # the edit — the policy on disk and the policy in force silently diverge, which is how Vault was
-# denied a database it was plainly allowed. The entries live in config-entries/*.hcl and are
-# WRITTEN on every deployment by consul-acl-bootstrap.sh; `consul config write` is idempotent
-# and converges the live state to the files.
+# denied a database it was plainly allowed.

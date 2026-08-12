@@ -2,14 +2,10 @@
 # Unseal Vault. Idempotent: does nothing if it is already unsealed.
 #
 # WHY THIS IS SEPARATE FROM SETUP. Vault seals itself on every restart — that is the design, not
-# a fault. Provisioning runs once; unsealing has to run every time the process comes back, and
-# tying the two together means a restarted Vault stays sealed until someone re-provisions it. The
-# application tier then has no database password and fails several steps downstream, reporting an
-# authentication error rather than a sealed Vault.
+# a fault.
 #
-# THE SEAL TRADEOFF, stated rather than implied. HashiCorp recommends auto-unseal, which requires
-# a KMS or HSM to hold the key. The enclave has no egress, so a cloud KMS is unreachable, and no
-# HSM is assumed. The two honest options are therefore:
+# THE SEAL TRADEOFF, stated rather than implied. HashiCorp recommends auto-unseal, which
+# requires a KMS or HSM to hold the key.
 #
 #   IR_VAULT_AUTO_UNSEAL=1  (default)  the unseal key is stored on the vault-state volume and
 #                                      applied automatically. Convenient, and correct for
@@ -70,10 +66,8 @@ fi
 }
 
 # Through the sys/unseal API, not the CLI. `vault operator unseal` offers exactly two ways to
-# take the key — as an argument (visible in the process list) or from a TTY prompt (absent here);
-# a piped `-` is treated as the literal key. The API call reads the key straight from the file it
-# already lives in, so it never touches argv. Threshold may exceed one; keys are applied in turn
-# until Vault reports unsealed.
+# take the key — as an argument (visible in the process list) or from a TTY prompt (absent
+# here); a piped `-` is treated as the literal key.
 python3 - "${STATE}/vault-init.json" "${VAULT_ADDR}" "${VAULT_CACERT}" <<'PY'
 import json, ssl, sys, urllib.request
 

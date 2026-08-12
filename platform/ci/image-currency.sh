@@ -4,14 +4,10 @@
 #
 # A pinned tag freezes a vulnerability set. The image does not change, so anything unpatched at
 # pin time stays unpatched, silently, for as long as the pin survives — and a pin that is never
-# revisited is indistinguishable from one that was deliberately chosen. This tier runs the
-# resolver every enclave service queries, the IdP that gates the console, and the tunnel
-# endpoint an analyst dials in over; a stale pin on any of those is a pivot into the segment
-# holding the evidence.
+# revisited is indistinguishable from one that was deliberately chosen.
 #
 # Reading the compose files does not surface this. The tag looks deliberate and the stack comes
-# up green either way, so the only thing that catches drift is asking the registry. That is what
-# this does.
+# up green either way, so the only thing that catches drift is asking the registry.
 #
 #   ci/image-currency.sh          # report
 #   ci/image-currency.sh --strict # non-zero exit when anything has moved on (CI gate)
@@ -19,10 +15,7 @@
 #   ci/image-currency.sh --age    # fail if the record is older than the review interval
 #
 # SRG-APP-000456-WSR-000187 requires security-relevant updates within 30 days. Detecting drift
-# was never the gap — this script already did that. The gap was that nothing recorded WHEN the
-# review last happened, so "we check regularly" was unfalsifiable. `--record` writes the date
-# and the finding count; `--age` fails once that record passes REVIEW_DAYS, which is what turns
-# the cadence into something a UAT can assert rather than a claim in a document.
+# was never the gap — this script already did that.
 #
 # Track precision is respected: a pin of `postgres:18` tracks the 18.x line and is current as
 # long as no 19 exists, while `coredns:1.13.1` names an exact build and is stale the moment

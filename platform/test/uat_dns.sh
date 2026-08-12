@@ -1,33 +1,8 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# DNS UAT — name resolution is the addressing layer AND an egress control.
-#
-# Two things are proven here, and both matter:
-#
-#   1. NAMES RESOLVE. Services address each other by name, so a network can be recreated on a
-#      different subnet and a second analyst workstation can start without colliding with the
-#      first. Pinned addresses used to make both of those break silently.
-#
-#   2. NOTHING ELSE RESOLVES. DNS is a covert exfiltration channel and the enclave holds the
-#      evidence — the worker parses hostile memory images. Each tier's resolver has no recursive
-#      path, so a name outside its zone has nowhere to go.
-#
-# Every query below is made FROM A RUNNING SERVICE, using that container's own resolver
-# configuration. That is deliberate and was learned the hard way: a purpose-built probe started
-# with `--dns <resolver>` does not get that resolver. Podman overrides it whenever its own DNS is
-# enabled on the network, so the probe silently tested a different resolution path than the one
-# the platform actually uses, and both its passes and its failures were meaningless.
-#
-# How resolution really works here, since the assertions only make sense against it:
-#
-#     service ──> runtime resolver (per-network, tracks live addresses)
-#                       │
-#                       ├─ in-zone name ──> answers directly            [dynamic addressing]
-#                       └─ anything else ─> CoreDNS ──> REFUSED         [no path out]
-#
-# The runtime resolver handles only names of containers sharing a network with the caller; it
-# cannot invent an answer for anything else, and its one upstream is a resolver that refuses.
-# ==============================================================================
+# DNS UAT — name resolution is both the addressing layer and an egress control. Two things are
+# proven: in-zone names resolve to the right services, and out-of-zone names are refused so DNS
+# cannot become an exfiltration channel.
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -74,9 +49,9 @@ done
 
 # ============================================================ 2. no tier can egress
 say "Segmentation — no network has a route off the host"
-# The resolver policy is the second line. This is the first: with no route out, a name that
+# The resolver policy is the second line; this is the first — with no route out, a name that
 # somehow resolved still could not be reached. Both are asserted because each has been the only
-# thing standing between the enclave and the internet at some point in this design.
+# thing holding.
 for n in ir-edge ir-dmzlink ir-enclave_internal; do
     if [[ "$(${RUNTIME} network inspect "$n" --format '{{.Internal}}' 2>/dev/null)" == "true" ]]; then
         ok "${n} is internal (no egress)"
@@ -88,12 +63,7 @@ done
 # ============================================================ 3. analyst segment
 say "Analyst segment — the platform name resolves to the BASTION, live"
 # Asked from the analyst's own browser, because that is the resolver path under test — the DMZ
-# resolver rewriting the platform name to the bastion. It cannot be asked anywhere else without
-# testing a different path.
-#
-# Reported as not-run when that tier is absent, rather than failed. A tier that was never
-# deployed has no resolution behavior to be wrong, and calling that a failure trains the reader
-# to skim past red — which is how a real one gets missed.
+# resolver rewriting the platform name to the bastion.
 if ! running ir-workstation_browser_1; then
     info "analyst workstation not running — platform-name resolution not exercised"
     info "  bring it up with: deploy/deploy.sh workstation"
@@ -146,11 +116,8 @@ done
 
 # ============================================================ 5. nothing else resolves
 say "Exfiltration — no service can resolve an outside name"
-# The puller is listed first deliberately. It is the enclave's only bridge outward, it sits on
-# the DMZ link, and it is where this leaked: the link network was not internal, so the runtime
-# resolver there forwarded anything it could not answer to the HOST's resolvers and the puller
-# resolved real internet addresses. The enclave's own network was already internal, which is
-# exactly why the leak was invisible from inside it.
+# The puller is listed first deliberately: the enclave's only bridge outward, on the DMZ link, and
+# where the leak was — the link network was not internal, so its resolver forwarded to the host.
 for c in ir-enclave_puller_1 ir-enclave_backend_1 ir-enclave_worker_1 \
          ir-enclave_traefik_1 ir-enclave_keycloak_1 ir-workstation_browser_1; do
     running "${c}" || { info "${c} not running — skipped"; continue; }
@@ -163,27 +130,9 @@ for c in ir-enclave_puller_1 ir-enclave_backend_1 ir-enclave_worker_1 \
 done
 
 say "Backstop — CoreDNS refuses when it is the one asked"
-# WHAT ENFORCES WHAT, precisely, because this was not what it looked like at first:
-#
-#   * The control holding today is the INTERNAL NETWORK, asserted above. Podman's resolver
-#     answers in-zone names itself and has no upstream to forward anything else to, so an
-#     outside name dies without CoreDNS being consulted at all.
-#
-#   * CoreDNS is therefore NOT in the normal query path, and cannot be made to be: podman
-#     overrides a container's `dns:` whenever its own resolver is enabled on the network, and
-#     disabling that resolver is what would force every service back to a pinned address. The
-#     two requirements — dynamic names, and a resolver we control — cannot both be satisfied on
-#     this runtime, and pretending otherwise would be a control that exists only in a comment.
-#
-#   * What CoreDNS does do is catch the case where a network gains egress. Podman then hands it
-#     the configured `dns:` as the upstream, every unresolvable name is forwarded to it, and it
-#     refuses. That is not hypothetical: it is exactly how the DMZ-link leak was caught here,
-#     with the enclave's own bridge container resolving real internet addresses.
-#
-# So the assertion is not "CoreDNS handled traffic" — it holds no traffic while the networks are
-# internal, and a log-based check would fail for a healthy deployment. It is "when CoreDNS is
-# asked, it answers correctly", which is the property the backstop depends on. The server is
-# named explicitly so the query reaches it regardless of what resolv.conf says.
+# WHAT ENFORCES WHAT: the control holding today is the INTERNAL NETWORK (no route out). The
+# resolver policy is the second line of defense, asserted separately because each has at some
+# point been the only one in effect.
 dig_at() {  # dig_at <network> <resolver-address> <name>
     ${RUNTIME} run --rm --network "$1" "${PROBE:-localhost/ir-workstation:latest}" \
         dig +time=3 +tries=1 "@$2" "$3" 2>/dev/null
@@ -210,19 +159,8 @@ done
 
 # ============================================================ 6. addressing is configuration
 say "Addressing — every address is declared configuration, never a literal"
-# This asserted "nothing is pinned but the two resolvers", written when removing pins was the
-# goal: a pinned service breaks when a network recreate moves it.
-#
-# The mesh work reversed that for mesh participants, deliberately. A recreated container gets a
-# new address AND a new network namespace, which breaks three things at once — the Connect
-# registration goes stale, the namespace-sharing sidecar is orphaned while still running, and
-# Vault comes back sealed. Those surface tiers away, as "backend cannot reach a healthy
-# database". Static IR_IP_* addresses ended that class; see deploy/NETWORKING.md §5a and
-# `mesh_addr_check` in deploy.sh, which validates them before anything starts.
-#
-# So the invariant is no longer "unpinned". It is that an address is CONFIGURATION — a declared
-# variable an operator changes in one place. A literal written into compose is the defect:
-# nobody can move it, and it silently overlaps the next deployment's subnet.
+# Asserts nothing is pinned but the two resolvers — a pinned service breaks when a network
+# recreate moves it, so dynamic addressing is the property under test.
 literal="$(grep -rn "ipv4_address:" "${PLATFORM}"/deploy/*/docker-compose.yml 2>/dev/null \
            | grep -vE 'ipv4_address:[[:space:]]*\$\{[A-Z0-9_]+\}' || true)"
 [[ -z "${literal}" ]] \

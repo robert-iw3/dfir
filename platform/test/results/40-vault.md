@@ -2,7 +2,7 @@
 
 *What passing proves:* The platform holds no static application credential: Vault issues short-lived database users the app provably runs on, the custody key is Vault-sourced, the store is audited with its root revoked, and a full rotation converges the platform onto fresh credentials while it stays up.
 
-- Run: `uat_vault.sh` — 2026-08-09 01:44:42Z
+- Run: `uat_vault.sh` — 2026-08-12 13:57:19Z
 
 **Placement — the secrets authority is in the enclave**
 
@@ -36,36 +36,36 @@
 
 | Result | Assertion — with evidence |
 |---|---|
-| ✅ PASS | audit device is recording (16409433 bytes) |
+| ✅ PASS | audit device is recording (572699 bytes) |
 | ✅ PASS | initial root token revoked and removed from state |
 
 **The app tier runs on Vault-issued credentials**
 
 | Result | Assertion — with evidence |
 |---|---|
-| ✅ PASS | agent rendered a Vault-minted database user (v-approle-ir-platf-U5ENHHOYtecHOVz7b1hH-1786238926) |
+| ✅ PASS | agent rendered a Vault-minted database user (v-approle-ir-platf-axbDSs0mg3P1wWtSbN93-1786542770) |
 | ✅ PASS | it is not the static admin |
 | ✅ PASS | the custody HMAC key is Vault-sourced |
 | ✅ PASS | Django key + remaining app secrets are Vault-sourced |
-| ✅ PASS | Django logs in as the Vault dynamic user (v-approle-ir-platf-U5ENHHOYtecHOVz7b1hH-1786238926) |
+| ✅ PASS | Django logs in as the Vault dynamic user (v-approle-ir-platf-axbDSs0mg3P1wWtSbN93-1786542770) |
 | ✅ PASS | and acts as the stable owner role ir_app (rotation-safe) |
 
 **Both databases answer the dynamic user**
 
 | Result | Assertion — with evidence |
 |---|---|
-| ✅ PASS | ir_platform: django_migrations readable (46 rows) |
-| ✅ PASS | ir_correlation: django_migrations readable (46 rows) |
+| ✅ PASS | ir_platform: django_migrations readable (50 rows) |
+| ✅ PASS | ir_correlation: django_migrations readable (50 rows) |
 | ✅ PASS | API healthy over the issued credentials |
 
 **Rotation — executed, not assumed**
 
 | Result | Assertion — with evidence |
 |---|---|
-| ✅ PASS | rotation procedure completed (rotation complete: v-approle-ir-platf-U5ENHHOYtecHOVz7b1hH-1786238926 -> v-approle-ir-platf-zWTrCcUJ6VhIw9nvFV3j-1786239902) |
-| ✅ PASS | a NEW credential was issued (v-approle-ir-platf-U5ENHHOYtecHOVz7b1hH-1786238926 -> v-approle-ir-platf-zWTrCcUJ6VhIw9nvFV3j-1786239902) |
-| ✅ PASS | the old user was dropped from Postgres at rotation (v-approle-ir-platf-U5ENHHOYtecHOVz7b1hH-1786238926) |
-| ✅ PASS | Django's live connection is on the new user (v-approle-ir-platf-zWTrCcUJ6VhIw9nvFV3j-1786239902) |
+| ✅ PASS | rotation procedure completed (rotation complete: v-approle-ir-platf-axbDSs0mg3P1wWtSbN93-1786542770 -> v-approle-ir-platf-P2jJFFh67DNP7vZSFmRS-1786543057) |
+| ✅ PASS | a NEW credential was issued (v-approle-ir-platf-axbDSs0mg3P1wWtSbN93-1786542770 -> v-approle-ir-platf-P2jJFFh67DNP7vZSFmRS-1786543057) |
+| ✅ PASS | the old user was dropped from Postgres at rotation (v-approle-ir-platf-axbDSs0mg3P1wWtSbN93-1786542770) |
+| ✅ PASS | Django's live connection is on the new user (v-approle-ir-platf-P2jJFFh67DNP7vZSFmRS-1786543057) |
 | ✅ PASS | KV secrets (custody/Django keys) unchanged by rotation, as they must be |
 | ✅ PASS | platform healthy on the rotated credential |
 

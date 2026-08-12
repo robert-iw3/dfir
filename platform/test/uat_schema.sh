@@ -1,17 +1,7 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# SCHEMA INTEGRITY — the store refuses what the application merely avoided.
-#
-# Every assertion here tries to BREAK an invariant and requires the database to stop it.
-# Asserting that a constraint appears in pg_constraint proves the DDL ran, not that the
-# defect is closed: the defect was a read-then-write race, so the test has to race.
-#
-# Non-destructive and re-runnable: a run leaves the evidence store exactly as it found it.
-# Sections proving the database REFUSES something roll back, since nothing they write should
-# land. T1 and T2 must commit — a rollup that outlives the evidence it summarizes cannot be
-# demonstrated inside a transaction thrown away regardless — so they delete their fixtures
-# instead, this run's and any an earlier run left.
-# ==============================================================================
+# SCHEMA INTEGRITY — the store refuses what the application merely avoided: every assertion tries
+# to BREAK an invariant and requires the DATABASE to stop it.
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -28,11 +18,8 @@ say "Preconditions"
 [[ "$(${RUNTIME} inspect "${BE}" --format '{{.State.Status}}' 2>/dev/null)" == "running" ]] \
     && ok "${BE} running" || { bad "${BE} not running — deploy the enclave first"; report_finish; exit 1; }
 
-# Anything the probe script prints that is not an assertion is kept, not dropped. A traceback
-# matches none of these prefixes, so swallowing unknown lines let an exception truncate a whole
-# section while the suite still reported PASS — the assertions that never ran looked identical
-# to assertions that did not exist. DONECHK is the last line the script prints; its absence is
-# what turns a crash into a failure rather than a shorter report.
+# Non-assertion output is kept, not dropped: a traceback matches no prefix, and swallowing unknown
+# lines once let an exception truncate a section silently.
 TRACE=""; COMPLETED=0
 while read -r line; do
     case "${line}" in
@@ -169,9 +156,13 @@ cur.execute("SET LOCAL enable_seqscan = off")
 cur.execute("EXPLAIN SELECT id FROM cases_finding WHERE mitre @> '[\"T1021.001\"]'::jsonb")
 plan = " ".join(r[0] for r in cur.fetchall())
 chk("finding_mitre_gin" in plan, f"the ATT&CK containment query uses the GIN index")
+# The property is that the index CAN serve the query, not that the planner picks it on a near-
+# empty table — seqscan is disabled for the check so planner economics stay out of it.
+cur.execute("SET enable_seqscan = off")
 cur.execute("EXPLAIN SELECT id FROM cases_finding WHERE source = 'memory'")
 plan2 = " ".join(r[0] for r in cur.fetchall())
-chk("finding_source_idx" in plan2 or "Index" in plan2, "the source filter uses an index")
+cur.execute("SET enable_seqscan = on")
+chk("finding_source_idx" in plan2 or "Index" in plan2, "the source index serves the source filter")
 
 # raw is deliberately unindexed; assert that decision holds rather than drifting.
 cur.execute("""SELECT count(*) FROM pg_indexes
@@ -369,19 +360,8 @@ from cases.models import Investigation, InvalidTransition
 from django.db import transaction as _txn
 
 
-# T1 and T2 write real rows and clean up by DELETING them, not by rolling back.
-#
-# Both run in autocommit, like the ingest path they exercise, because T2's whole claim is
-# that a rollup survives the deletion of the evidence it summarizes — and survival cannot be
-# demonstrated inside a transaction that is thrown away regardless.
-#
-# The sections above roll back instead, and are right to: they prove the database REFUSES
-# something, so nothing they write should ever land.
-#
-# What was here before was `transaction.savepoint()`, which returns None outside an atomic
-# block. `savepoint_rollback(None)` did nothing, the fixtures were committed, and the probe
-# passed exactly once before failing on its own leftovers at the unique machine-id
-# constraint on every later run.
+# T1/T2 write real rows and clean up by DELETING, not rolling back: they run in autocommit like
+# the ingest path, because T2's claim is about committed visibility.
 def _clear_fixtures():
     """Remove T1/T2 fixtures — this run's, and any a previous run committed."""
     from cases.models import Host as _H, IndicatorSighting as _S
@@ -422,13 +402,8 @@ _clear_fixtures()
 from cases.ingest import as_datetime, roll_up_sightings
 from cases.models import CollectionRun, Host, IndicatorSighting, IOC
 
-# A bundle carries collected_at as an ISO STRING, and Django leaves an assigned attribute
-# exactly as given until it is reloaded — so the run object the ingest path uses held a str.
-# Comparing it against a first_seen from the database raised, and only on RE-collection: the
-# first ingest of an indicator created the row and never compared, the second returned HTTP
-# 500, and the puller held the bundle in the DMZ rather than discard evidence it could not
-# store. Asserted on the parser AND on the second rollup below, because the shape is the
-# cause and the re-collection is where it bites.
+# A bundle carries collected_at as an ISO STRING and Django keeps an assigned attribute as given
+# until reload — normalize at the boundary or the type error fires far from the cause.
 import datetime as _dt
 chk(isinstance(as_datetime("2026-07-15T09:30:00+00:00"), _dt.datetime),
     "a bundle's ISO timestamp parses to a datetime")
@@ -486,13 +461,8 @@ fi
 # ============================================================ audit chain under concurrency
 say "The audit chain stays linear when writers collide"
 
-# The chain is the platform's tamper-evidence, and ordinary concurrent work could break it:
-# `select_for_update()` on the last row cannot lock a row that does not exist yet, so two
-# appenders read the same predecessor and both chain from it. A load test's concurrent
-# provisioning did exactly that and forked the ledger at row 2024.
-#
-# Asserted by RACING it. The defect is invisible to a sequential test, which is why it
-# survived every previous run of this suite.
+# Ordinary concurrent work could break the tamper-evidence chain: FOR UPDATE cannot lock a row
+# that does not exist yet, so appends serialize on an advisory lock instead.
 RACE="$(${RUNTIME} exec -i "${BE}" python3 - <<'PY' 2>&1 | tail -6
 import os, django
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "ir_platform.settings"); django.setup()
@@ -531,10 +501,8 @@ read -r D_UNIQ D_TOT <<<"$(sed -n 's#^DISTINCT_PREV \([0-9]*\)/\([0-9]*\)#\1 \2#
 [[ "${D_UNIQ:-0}" -eq "${D_TOT:-1}" && "${D_TOT:-0}" -gt 0 ]] \
     && ok "every racing row chained from a DIFFERENT predecessor (${D_UNIQ}/${D_TOT} distinct) — the appenders serialized" \
     || bad "${D_UNIQ:-0} distinct predecessors across ${D_TOT:-0} racing rows — writers collided and the chain forked"
-# Compared BEFORE against AFTER, not against perfection. This ledger carries a historical
-# break from the very race being fixed (rows 2023/2024, written before the lock existed), and
-# an absolute assertion would fail forever on damage already done while saying nothing about
-# whether the appenders still collide. The question is whether the race makes it WORSE.
+# Compared BEFORE against AFTER, not against perfection: the ledger carries a declared historical
+# break, and requiring perfection would fail every run for history.
 C_BEFORE="$(sed -n 's/^CHAIN_BEFORE //p' <<<"${RACE}")"
 C_AFTER="$(sed -n 's/^CHAIN_AFTER //p' <<<"${RACE}")"
 [[ -n "${C_AFTER}" && "${C_AFTER}" == "${C_BEFORE}" ]] \
@@ -544,10 +512,8 @@ C_AFTER="$(sed -n 's/^CHAIN_AFTER //p' <<<"${RACE}")"
 # ============================================================ checkpoints cannot hide tampering
 say "An acknowledged discontinuity is not a way to clear a real one"
 
-# A checkpoint lets a KNOWN historical break be declared rather than re-chained. That is only
-# safe if it cannot also clear a break nobody declared, and cannot survive the row it covers
-# being edited afterwards. Both run inside a transaction that is rolled back, so the ledger is
-# unchanged either way — asserted at the end.
+# A checkpoint lets a KNOWN break be declared rather than re-chained — safe only if it cannot
+# clear an undeclared break and cannot survive edits to the row it covers.
 CP="$(${RUNTIME} exec -i -w /app ir-enclave_backend_1 python - <<'PYCP' 2>&1
 import os, django
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "ir_platform.settings")
@@ -559,7 +525,7 @@ from cases.models import AuditCheckpoint, AuditLog
 base_ok, base_bad, base_sigs = A.verify_audit_detail()
 print(f"BASE {base_ok} {len(base_sigs.get('discontinuities', []))}")
 
-# 1. Edit a row the checkpoints do NOT cover. The chain must break.
+# 1. Edit a row the checkpoints do NOT cover: the chain must break.
 with transaction.atomic():
     row = AuditLog.objects.order_by("-id").first()
     row.detail = dict(row.detail or {}, uat_tamper=True)

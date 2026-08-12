@@ -51,11 +51,9 @@ UA = "Mozilla/5.0 (X11; Linux x86_64; rv:140.0) Gecko/20100101 Firefox/140.0"
 DEFAULT_API = ["/api/me/", "/api/stats/", "/api/facets/", "/api/investigations/",
                "/index.html?_=1", "/api/version/"]
 
-# Exactly what the SPA's fetch wrapper sends (frontend/src/api.js) — and specifically NOT
-# `Accept: application/json`. The gate answers 401 for anything that looks like AJAX, by the
-# Accept header alone and whatever the path: sending one here would produce a 401 attributable
-# to two mechanisms at once, and the test would pass with --api-route removed. The SPA sets
-# Content-Type and no Accept, so fetch's own `*/*` is what actually arrives.
+# Exactly what the SPA's fetch wrapper sends, and specifically NOT `Accept: application/json`: the
+# gate 401s anything that looks like AJAX, so an AJAX-shaped probe would self-agree without
+# exercising the flow.
 PROBE_HEADERS = {"Accept": "*/*", "Content-Type": "application/json"}
 
 
@@ -93,7 +91,7 @@ def main(app_url, user, password, rotate_to, api_paths):
 
     origin = "{0.scheme}://{0.netloc}".format(urllib.parse.urlsplit(app_url))
 
-    # 1. The navigation. One attempt, therefore one cookie.
+    # 1. The navigation: one attempt, one cookie.
     try:
         with browser.open(app_url, timeout=25) as r:
             page = r.read().decode("utf-8", "replace")
@@ -107,7 +105,7 @@ def main(app_url, user, password, rotate_to, api_paths):
         print("FLOW FAIL: no login form — the navigation did not reach the identity provider")
         return 1
 
-    # 2. Credentials. The forced change leaves the attempt open, mid-flow, callback not yet run.
+    # 2. Credentials: the forced change leaves the attempt open, mid-flow, callback not yet run.
     data = urllib.parse.urlencode({"username": user, "password": password,
                                    "credentialId": ""}).encode()
     try:
@@ -129,8 +127,8 @@ def main(app_url, user, password, rotate_to, api_paths):
 
     held = csrf_names(jar)
 
-    # 3. The page load lands ON TOP of the open flow. Each of these would start an attempt
-    #    of its own were API paths not answered directly.
+    # 3. The page load lands ON TOP of the open flow — each call would start its own attempt were API
+    # paths not answered directly.
     minted_by_api = set()
     print("PROBE_ACCEPT " + PROBE_HEADERS["Accept"])
     for path in api_paths:
@@ -152,10 +150,8 @@ def main(app_url, user, password, rotate_to, api_paths):
 
     print(f"API_MINTED {len(minted_by_api)}")
 
-    # A page load is one burst; a login takes MINUTES. DeployWatch polls every 30 seconds for
-    # as long as the tab is open, so the question is not whether one page load fits under the
-    # ceiling but whether an idle unauthenticated tab exhausts it while someone types a new
-    # password. Six polls is three minutes of waiting — less than a forced change takes.
+    # A page load is one burst; a login takes MINUTES, and DeployWatch polls every 30s for as long as
+    # the tab is open — so the poll path must not mint an attempt.
     minted_by_poll = set()
     for _ in range(6):
         try:
@@ -172,7 +168,7 @@ def main(app_url, user, password, rotate_to, api_paths):
     survived = 1 if held and held <= csrf_names(jar) else 0
     print(f"NAV_SURVIVED {survived}")
 
-    # 4. Complete the held-open flow. This is the callback that returned 403.
+    # 4. Complete the held-open flow: this is the callback that returned 403.
     action = form_action(page)
     if not action:
         print("FLOW FAIL: update-password page carries no form action")
@@ -207,5 +203,11 @@ if __name__ == "__main__":
     if len(sys.argv) < 5:
         print(__doc__)
         sys.exit(2)
-    sys.exit(main(sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4],
-                  sys.argv[5:] or DEFAULT_API))
+    try:
+        sys.exit(main(sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4],
+                      sys.argv[5:] or DEFAULT_API))
+    except OSError as exc:
+        # A brokered-path connection can die mid-flow; that is a transport outcome to
+        # NAME, not a traceback to swallow — the caller distinguishes it from a verdict.
+        print(f"FLOW FAIL: transport: {exc}")
+        sys.exit(1)

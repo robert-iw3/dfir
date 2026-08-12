@@ -46,10 +46,10 @@
 
   <rect class="box" x="357" y="214" width="317" height="82"/>
   <text class="rT" x="369" y="232">Truthful access record</text>
-  <text class="rS" x="369" y="247">Brokered Sessions page = who, from where, to what,</text>
-  <text class="rS" x="369" y="260">how long, how much, why ended · abandoned sessions</text>
-  <text class="rS" x="369" y="273">are canceled, so "active" means active · the page's</text>
-  <text class="rS" x="369" y="286">credential can list and read — a cancel is REFUSED</text>
+  <text class="rS" x="369" y="247">Brokered Sessions page = WHO (the person, by pinned</text>
+  <text class="rS" x="369" y="260">workstation + sign-on record, labeled no stronger than</text>
+  <text class="rS" x="369" y="273">its evidence), from where, to what, how long, why ended</text>
+  <text class="rS" x="369" y="286">· abandoned sessions canceled · a cancel is REFUSED</text>
 
   <text class="prf" x="36" y="322" fill="#1DAEFF">PROVEN: test/uat_boundary.sh — placement · no authority in the DMZ · one target · attribution ·</text>
   <text class="prf" x="36" y="337" fill="#1DAEFF">traffic end to end · healing · the record matches the controller's own, read via a second authority</text>

@@ -1,12 +1,7 @@
-# Reverse-engineering workstation — Binary Ninja over carved memory regions.
-#
-# Carved regions are live malware, so this is the most hazardous interactive surface in
-# the platform. The threat direction is the reverse of the analyst workstation: that tier
-# is hardened to stop evidence getting OUT, this one to stop malware getting ANYWHERE.
-#
-# Binary Ninja is fetched at BUILD time. The free edition needs no licence, activation or
-# call-home, so a session needs no network at all — which is why `launch.sh` runs the
-# container with `--network none`. Network exists only while this image is built.
+# Reverse-engineering workstation — Binary Ninja over carved memory regions; the threat direction
+# is the reverse of the analyst tier: stop malware getting ANYWHERE. Fetched at build time (the
+# free edition needs no licence or call-home), so `launch.sh` runs the session with `--network
+# none`.
 FROM docker.io/library/debian:12@sha256:813017f3d62be4b5891a7acca6a01bdcd4b8513daa81b1ab99d3a50385b26931
 
 ENV DEBIAN_FRONTEND=noninteractive \
@@ -47,11 +42,9 @@ RUN mkdir -p /binja /regions \
 # No plugins are installed: nothing here should extend what the tool does, and a plugin
 # directory is one more thing a malicious sample could try to write into.
 
-# Defence in depth against a future build gaining a call-home: settings are pinned so
-# external fetches and telemetry stay off even though this session has no route out.
-#
-# The key names are the ones Binary Ninja writes back itself. An invented or renamed key is
-# silently discarded when it loads the file, which looks identical to a pin that is working.
+# Defense in depth against a future build gaining a call-home: fetches and telemetry are pinned
+# off even without a route out. Key names are the ones Binary Ninja writes itself — an invented
+# key is silently discarded, which looks identical to a working pin.
 RUN mkdir -p /home/binja/.binaryninja \
     && printf '%s\n' '{' \
         '  "network.enableExternalResources": false,' \

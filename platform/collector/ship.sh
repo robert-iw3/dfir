@@ -7,9 +7,8 @@
 #   collection  root + privileged (memory capture, host inspection)  ·  NO network at all
 #   shipping    unprivileged, no host mounts                         ·  ONE outbound target
 #
-# The component with root cannot reach the network. The component with network access sees
-# only a sealed tarball on a volume and has no view of the host. A compromise of either
-# yields materially less than a compromise of one container holding both.
+# The component with root cannot reach the network. The component with network access sees only
+# a sealed tarball on a volume and has no view of the host.
 #
 #   RECEIVER_URL   required, e.g. https://dmz.example:8090
 #   BUNDLE         path to the sealed .tar.gz (default /evidence/bundle.tar.gz)
@@ -26,22 +25,16 @@ SHA=$(sha256sum "${BUNDLE}" | awk '{print $1}')
 echo "[ship] ${BUNDLE} (${SIZE} bytes, sha256=${SHA%"${SHA#????????????????}"}…) -> ${RECEIVER_URL}/ingest"
 
 # `-T` streams from disk; `--data-binary @file` buffers the whole bundle in memory. A bundle is
-# sized by the endpoint's RAM, so buffering OOM-kills curl with no output but `Killed`. `-T`
-# with an explicit `-X POST` streams the body and sets Content-Length from the file size.
-#
-# The timeout is hours: a memory image at 10 Mb/s needs longer than 3600s to move.
+# sized by the endpoint's RAM, so buffering OOM-kills curl with no output but `Killed`.
 set -- --fail --show-error --silent \
        --max-time "${SHIP_TIMEOUT:-14400}" \
        --retry "${SHIP_RETRIES:-3}" --retry-delay 10 --retry-connrefused \
        -X POST -T "${BUNDLE}" \
        -H "Content-Type: application/gzip"
-# ---- transport security ---------------------------------------------------
-# This carries a memory image: every credential, key, token and open file the host had in RAM.
-# The custody seal proves the bundle was not ALTERED; it does nothing to stop it being READ,
-# and the endpoint is usually on a segment the responder neither controls nor trusts.
-#
-# Server verification stops the collector handing that to whoever answers on the address. curl
-# verifies by default; CA_BUNDLE points at the DMZ's CA for an internal PKI.
+# ---- transport security --------------------------------------------------- This carries a
+# memory image: every credential, key, token and open file the host had in RAM. The custody seal
+# proves the bundle was not ALTERED; it does nothing to stop it being READ, and the endpoint is
+# usually on a segment the responder neither controls nor trusts.
 [ -n "${CA_BUNDLE:-}" ] && set -- "$@" --cacert "${CA_BUNDLE}"
 
 # A client certificate keeps third parties from filling the receiver's holding volume. NOT a

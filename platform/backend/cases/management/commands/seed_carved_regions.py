@@ -55,11 +55,15 @@ class Command(BaseCommand):
         if not os.path.isdir(source):
             raise CommandError(f"--source {source} is not a directory")
 
+        # isfile() follows symlinks, so a dangling link — routine in a system bin directory,
+        # which is a natural --source for simulated regions — is excluded here rather than
+        # crashing the load at open().
         files = sorted(
-            os.path.join(root, name)
+            path
             for root, _dirs, names in os.walk(source)
             for name in names
             if name.endswith(opts["pattern"])
+            and os.path.isfile(path := os.path.join(root, name))
         )
         if opts["limit"]:
             files = files[: opts["limit"]]
@@ -74,36 +78,48 @@ class Command(BaseCommand):
             incident_id=opts["incident"],
             defaults={"name": f"{opts['incident']} (seeded regions)"},
         )
-        run = CollectionRun.objects.create(
-            host=host, investigation=investigation,
-            collected_at=timezone.now(),
-            overall_status="COMPLETED",
-            # Marked as simulated in the record itself, in the two places a reader looks. A
-            # seeded run must never be mistaken for a real collection by someone reviewing this
-            # investigation months later, when the only evidence of its origin is the database.
-            toolkit_version="simulated/seed_carved_regions",
-            status_json={"simulated": True,
-                         "note": "regions seeded for pipeline validation, not collected"},
+        # get_or_create throughout: the addresses below are already deterministic so a rerun
+        # is the SAME seed, and the (investigation, host, stamp) uniqueness constraint makes a
+        # second create an IntegrityError — a rerun after an aborted load could otherwise
+        # never finish the job it started.
+        run, _ = CollectionRun.objects.get_or_create(
+            host=host, investigation=investigation, stamp="",
+            defaults=dict(
+                collected_at=timezone.now(),
+                overall_status="COMPLETED",
+                # Marked as simulated in the record itself, in the two places a reader looks. A
+                # seeded run must never be mistaken for a real collection by someone reviewing
+                # this investigation months later, when the only evidence of its origin is the
+                # database.
+                toolkit_version="simulated/seed_carved_regions",
+                status_json={"simulated": True,
+                             "note": "regions seeded for pipeline validation, not collected"},
+            ),
         )
-        capture = MemoryCapture.objects.create(
+        capture, _ = MemoryCapture.objects.get_or_create(
             run=run,
             object_key=f"{opts['incident']}/{hostname}/simulated-capture",
-            size_bytes=0,
-            # The field the platform already uses to keep synthetic material from being read as
-            # evidence. Setting it is what stops this run being reported as a real capture.
-            is_synthetic=True,
-            capture_tool="simulated",
+            defaults=dict(
+                size_bytes=0,
+                # The field the platform already uses to keep synthetic material from being
+                # read as evidence. Setting it is what stops this run being reported as a real
+                # capture.
+                is_synthetic=True,
+                capture_tool="simulated",
+            ),
         )
         # `investigation` on this model is the analysis engine's NARRATIVE output — attack
         # chains and named findings — not a link to the Investigation row, despite the shared
         # name. Left empty: nothing here analyzed anything, and inventing a narrative would put
         # conclusions in the record that no engine reached.
-        analysis = MemoryAnalysisRun.objects.create(
-            capture=capture,
-            status="completed", engine="simulated",
-            started_at=timezone.now(), finished_at=timezone.now(),
-            summary={"simulated": True,
-                     "note": "regions seeded for pipeline validation; no analysis was performed"},
+        analysis, _ = MemoryAnalysisRun.objects.get_or_create(
+            capture=capture, engine="simulated",
+            defaults=dict(
+                status="completed",
+                started_at=timezone.now(), finished_at=timezone.now(),
+                summary={"simulated": True,
+                         "note": "regions seeded for pipeline validation; no analysis was performed"},
+            ),
         )
 
         bucket = storage.ensure_carved_bucket(hostname)
@@ -126,25 +142,27 @@ class Command(BaseCommand):
             key = f"pid{pid}_{stem}_0x{base:x}.bin"
 
             storage.put_carved_region(hostname, path, key)
-            CarvedRegion.objects.create(
+            CarvedRegion.objects.get_or_create(
                 analysis=analysis,
-                bucket=bucket,
                 object_key=key,
-                size_bytes=len(payload),
-                sha256=sha,
-                carved_by="simulated",
-                trigger={
-                    "simulated": True,
-                    "source_file": os.path.relpath(path, source),
-                    # Recorded because a reverse engineer reads this to know what to look for,
-                    # and an empty trigger is how a region becomes two megabytes of unexplained
-                    # heap with no stated reason for suspicion.
-                    "note": "seeded for pipeline validation; not the product of a YARA pass",
-                    "permissions": "rwx",
-                },
-                source_pid=pid,
-                source_process=stem[:64],
-                triage_status="unanalyzed",
+                defaults=dict(
+                    bucket=bucket,
+                    size_bytes=len(payload),
+                    sha256=sha,
+                    carved_by="simulated",
+                    trigger={
+                        "simulated": True,
+                        "source_file": os.path.relpath(path, source),
+                        # Recorded because a reverse engineer reads this to know what to look
+                        # for, and an empty trigger is how a region becomes two megabytes of
+                        # unexplained heap with no stated reason for suspicion.
+                        "note": "seeded for pipeline validation; not the product of a YARA pass",
+                        "permissions": "rwx",
+                    },
+                    source_pid=pid,
+                    source_process=stem[:64],
+                    triage_status="unanalyzed",
+                ),
             )
             created += 1
 

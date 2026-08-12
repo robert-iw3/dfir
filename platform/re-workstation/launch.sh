@@ -1,10 +1,6 @@
 #!/usr/bin/env bash
-# Launch a reverse-engineering session over one host's carved regions.
-#
-# The session has NO network namespace. Binary Ninja Free needs no license, activation or
-# call-home, so nothing here requires a route — and a container opening live malware
-# should not have one. The display arrives over a mounted X11 socket, the regions over a
-# read-only mount, and the container is destroyed on exit.
+# Launch a reverse-engineering session over one host's carved regions, with NO network namespace —
+# Binary Ninja Free and Ghidra both need no license or call-home.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -12,15 +8,8 @@ RUNTIME="${IR_RUNTIME:-podman}"
 NAME="ir-re-session"
 REGIONS=""
 
-# Binary Ninja and Ghidra are both free of licensing, activation and call-home, so either can
-# run in a session with no route out. Which one an analyst reads a disassembly faster in is a
-# preference, and forcing the other on them costs accuracy on the work that matters. The
-# containment is identical whichever is chosen; only the tool differs.
-#
-# The choice is a deployment decision, so it lives in deploy/.env with the rest of them — an
-# installation standardises on one tool and every session gets it without anyone remembering a
-# flag. Precedence runs narrowest-first: a --tool argument beats an exported variable, which
-# beats the deployment default.
+# Either tool runs in a session with no route out; which one an analyst prefers is a preference,
+# so IR_RE_TOOL selects and `--tool` overrides per session.
 TOOL_ARG=""
 TOOL_EXPORTED="${IR_RE_TOOL:-}"
 ENV_FILE="${IR_ENV_FILE:-${HERE}/../deploy/.env}"
@@ -77,28 +66,12 @@ echo "[re] session for host $(cat "${REGIONS}/.host" 2>/dev/null || echo unknown
 echo "[re] tool: ${TOOL}"
 echo "[re] regions: ${#REGION_FILES[@]} (read-only, no network)"
 
-# Ghidra diverges from here. It cannot open a file from a read-only mount the way Binary Ninja
-# does: a region has to be imported into a project first, and a project is a directory Ghidra
-# writes to. Its launcher also resolves and then SAVES the JDK path under the user's home, and
-# treats being unable to write there as "no JDK found" — it falls back to prompting, which in a
-# container has no TTY and aborts every import with an error about the prompt rather than about
-# Java.
-#
-# So both the project and the home directory live on one writable tmpfs, and the mode is set
-# explicitly: podman copies the image directory's permissions onto a tmpfs without its
-# ownership, so mounting over /home/ghidra yields a root-owned 0700 directory the session user
-# cannot write to. Everything ephemeral in one mount also means the analysis database built
-# from live malware dies with the container, which is the lifetime the Binary Ninja path gets
-# by mounting only settings.json.
+# Ghidra diverges here: it cannot open a file from a read-only mount, so a region is imported into
+# a project directory on a tmpfs first — no analysis state from live malware survives the
+# container.
 
-# ---- X11 for the session window ------------------------------------------
-# The socket alone is not enough on a Wayland desktop. Xwayland issues an auth COOKIE, and
-# without it the connection is refused and the tool reports itself as running "in a headless
-# environment" — which reads as a broken image rather than a missing credential.
-#
-# The cookie is passed instead of opening the display with `xhost +local:`. Loosening host
-# access for every local client, to run a session that opens live malware, is the wrong trade;
-# this grants exactly this container a display and changes nothing on the host.
+# The X socket alone is not enough on Wayland: Xwayland issues an auth COOKIE, so the cookie is
+# passed in and XAUTHORITY points at it.
 X11_ARGS=()
 if [[ -n "${DISPLAY:-}" ]]; then
     X11_ARGS+=(-v /tmp/.X11-unix:/tmp/.X11-unix -e "DISPLAY=${DISPLAY}")
@@ -131,18 +104,8 @@ fi
 MOUNTED_REGIONS=()
 for f in "${REGION_FILES[@]}"; do MOUNTED_REGIONS+=("/regions/$(basename "${f}")"); done
 
-# Preferences come from the host, read-only.
-#
-# This file carries the pins that keep update checks and telemetry off. The session opens
-# live malware, so it does not get write access to its own security settings — a sample
-# able to edit them could re-enable call-home for every session that follows.
-#
-# Edit this file on the host to change a preference. Choices made inside the session apply
-# for that session and are discarded with it, which is the correct lifetime for anything a
-# malware-analysis container touched.
-#
-# Only settings.json is mounted, not the whole profile directory: recent-file lists and
-# analysis databases from a malware session are not things to carry into the next one.
+# Preferences come from the host read-only, carrying the pins that keep update checks and
+# telemetry off; the session opens with them already set.
 SETTINGS="${HERE}/binja-settings.json"
 if [[ ! -f "${SETTINGS}" ]]; then
     cat > "${SETTINGS}" <<'JSON'
@@ -158,14 +121,8 @@ JSON
     echo "[re] created ${SETTINGS} — Binary Ninja preferences persist here"
 fi
 
-# The X server's socket is owned by the host user, and connecting to a Unix socket needs
-# write permission on it. Under rootless podman the host user maps to container root, so
-# the unprivileged account this image runs as falls into "other" and is refused — Binary
-# Ninja starts and immediately dies with "could not connect to display".
-#
-# Mapping the host user onto that account fixes it without running the session as root,
-# which matters more here than anywhere else in the platform: this is the process that
-# opens live malware.
+# The X socket is owned by the host user and connecting needs write permission on it; under
+# rootless podman the host user maps to container root, which has it.
 exec ${RUNTIME} run --rm -it --name "${NAME}" \
     --network none \
     --userns=keep-id:uid=1001,gid=1001 \

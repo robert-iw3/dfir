@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api.js";
 import { useData, Loading } from "../components/common.jsx";
+import { useNavigate } from "react-router-dom";
+import { StatTiles, BacklogTrend } from "../components/charts.jsx";
 
 function Stat({ num, label, cls }) {
   return (
@@ -36,8 +38,15 @@ function FacetPanel({ title, items, getKey, getLabel, getMeta, selected, onToggl
 }
 
 export default function Dashboard() {
+  const navigate = useNavigate();
   const { data: stats, error } = useData(() => api.stats());
   const { data: facets } = useData(() => api.facets());
+  // The dashboard answers "where should I be looking right now?", so every figure is a
+  // server aggregate over the whole fleet rather than a sum of whatever this page loaded.
+  const { data: backlog } = useData(() => api.findingsBacklog(30));
+  const { data: funnel } = useData(() => api.findingsFunnel());
+  const { data: stalled } = useData(() => api.stalledInvestigations(30));
+  const { data: queue } = useData(() => api.queueDepth(), [], { refreshMs: 30000 });
   const [sel, setSel] = useState({ investigations: [], hosts: [], verdicts: [], retention: [] });
   const [summary, setSummary] = useState(null);
 
@@ -51,21 +60,107 @@ export default function Dashboard() {
   }, [sel]);
 
   if (!stats) return <Loading error={error} />;
+  // Collected minus adjudicated, from the funnel the platform computed — never a client
+  // subtraction over two unrelated payloads.
+  const fs = Object.fromEntries((funnel?.stages || []).map((st) => [st.stage, st.count]));
+  const awaiting = fs.collected != null && fs.adjudicated != null
+    ? fs.collected - fs.adjudicated : "—";
 
   return (
     <>
       <h1>Dashboard</h1>
-      <p className="page-sub">Cross-investigation forensic data — click panel items to drill down; the summary updates below.</p>
+      <p className="page-sub">Where to be looking right now, across every investigation.</p>
 
-      <div className="cards">
-        <Stat num={stats.investigations} label="Investigations" cls="accent" />
-        <Stat num={stats.hosts} label="Hosts" />
-        <Stat num={stats.runs} label="Collection Runs" />
-        <Stat num={stats.findings} label="Findings" />
-        <Stat num={stats.true_positives} label="True Positives" cls="bad" />
-        <Stat num={stats.compromised_hosts} label="Compromised Hosts" cls="bad" />
-        <Stat num={stats.captures_retained} label="Captures Retained" />
-        <Stat num={stats.recurring_hosts} label="Recurring Hosts" cls="good" />
+      <StatTiles tiles={[
+        { label: "Investigations", value: stats.investigations, accent: "var(--accent)",
+          onOpen: () => navigate("/investigations") },
+        { label: "Compromised hosts", value: stats.compromised_hosts, accent: "var(--bad)",
+          sub: `of ${stats.hosts} seen`, onOpen: () => navigate("/hosts") },
+        { label: "Awaiting a verdict", value: awaiting, accent: "var(--warn)",
+          sub: "collected, not adjudicated",
+          onOpen: () => navigate("/findings?adjudicated=no") },
+        { label: "Confirmed", value: stats.true_positives, accent: "var(--good)",
+          sub: "true positive",
+          onOpen: () => navigate(`/findings?verdict=${encodeURIComponent("True Positive")}`) },
+        { label: "Seen before", value: stats.recurring_hosts, accent: "var(--accent-2, var(--accent))",
+          sub: "hosts in more than one case", onOpen: () => navigate("/hosts") },
+      ]} />
+
+      <div className="panel" style={{ padding: 20 }}>
+        <h3 style={{ margin: "0 0 4px" }}>Backlog</h3>
+        <p className="chart-note">
+          What has arrived and not yet been decided. Findings per day tracks the intrusion;
+          this tracks the response — falling means the queue is being worked down, climbing
+          means evidence is arriving faster than it is being judged. Click a day to open the
+          findings still waiting from it.
+        </p>
+        <BacklogTrend backlog={backlog} funnel={funnel} />
+      </div>
+
+      <div className="panel-row" style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
+        <div className="panel" style={{ flex: "1 1 380px", padding: 20 }}>
+          <h3 style={{ margin: "0 0 4px" }}>Going quiet</h3>
+          <p className="chart-note">
+            Investigations past the age ceiling with nothing new landing. An abandoned case
+            is not a closed one, and archival will take it either way.
+          </p>
+          {!(stalled?.stalled || []).length ? (
+            <p className="muted">
+              No open investigation has been quiet for {stalled?.age_ceiling_days ?? 30} days.
+            </p>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {(stalled.stalled || []).slice(0, 8).map((inv) => (
+                <div key={inv.id} {...{ role: "link", tabIndex: 0,
+                       style: { cursor: "pointer", display: "flex",
+                                justifyContent: "space-between", gap: 10,
+                                padding: "8px 12px", borderRadius: 6,
+                                background: "var(--bg-elev-2)",
+                                borderLeft: "3px solid var(--warn)" },
+                       onClick: () => navigate(`/investigations/${inv.id}`) }}>
+                  <span style={{ fontSize: 12.5 }}>
+                    {inv.name}
+                    <span className="mono" style={{ color: "var(--text-dim)", fontSize: 11 }}>
+                      {inv.incident_id ? `  ${inv.incident_id}` : ""}</span>
+                  </span>
+                  <span className="mono" style={{ fontSize: 11.5, color: "var(--text-dim)" }}>
+                    {inv.last_activity
+                      ? `${Math.max(0, Math.round((Date.now() - new Date(inv.last_activity)) / 86400000))}d quiet`
+                      : inv.status}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* The platform's own health, beside the cases it is carrying. A console that shows
+          the work moving while hiding that the analyser is falling behind flatters itself. */}
+      <div className="panel" style={{ padding: 20 }}>
+        <h3 style={{ margin: "0 0 4px" }}>Platform pulse</h3>
+        <p className="chart-note">
+          Whether the platform is keeping up with the evidence it is being given.
+        </p>
+        <div style={{ display: "flex", gap: 26, flexWrap: "wrap", alignItems: "center" }}>
+          {[
+            ["Queued", queue?.queued ?? 0, (queue?.queued ?? 0) > 0 ? "var(--warn)" : "var(--good)"],
+            ["Running", queue?.running ?? 0, "var(--accent)"],
+            ["Awaiting analysis", queue?.captures_awaiting_analysis ?? 0,
+             (queue?.captures_awaiting_analysis ?? 0) > 0 ? "var(--warn)" : "var(--good)"],
+            ["Oldest wait", queue?.oldest_waiting_seconds
+              ? `${Math.round(queue.oldest_waiting_seconds / 60)}m` : "—",
+             (queue?.oldest_waiting_seconds ?? 0) > 900 ? "var(--bad)" : "var(--text-dim)"],
+          ].map(([label, value, color]) => (
+            <div key={label} style={{ display: "flex", alignItems: "center", gap: 9 }}>
+              <span style={{ width: 9, height: 9, borderRadius: 999, background: color }} />
+              <span style={{ fontSize: 11.5, color: "var(--text-dim)" }}>{label}</span>
+              <span className="mono" style={{ fontSize: 15, fontWeight: 700 }}>{value}</span>
+            </div>
+          ))}
+          <button className="linkish" style={{ marginLeft: "auto" }}
+                  onClick={() => navigate("/platform-health")}>platform health →</button>
+        </div>
       </div>
 
       {facets && (

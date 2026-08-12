@@ -15,11 +15,7 @@
 #   ci/clock-sync-check.sh            # assert and report
 #   ci/clock-sync-check.sh --quiet    # exit status only
 #
-# ENCLAVE NOTE. The enclave has no egress, so a public pool is unreachable by design. The
-# authoritative source there is an internal stratum server, named by IR_NTP_SERVER, and host
-# preparation points systemd-timesyncd or chrony at it. This script asserts the RESULT —
-# synchronized, and agreeing with the containers — rather than the mechanism, so it holds for
-# either daemon and for an internal source as readily as a public one.
+# ENCLAVE NOTE. The enclave has no egress, so a public pool is unreachable by design.
 # ==============================================================================
 set -uo pipefail
 
@@ -105,9 +101,8 @@ else
     if [[ -z "${STRAT}" ]]; then
         bad "${NTPC} is running but does not answer chronyc — it is not serving"
     elif [[ "${STRAT}" == "10" ]]; then
-        # Serving, but from its own local reference. The segment agrees with itself and is not
-        # traceable to anything. Reported rather than failed: an air-gapped enclave is the
-        # designed case, and a check that fails on it would be turned off.
+        # Serving, but from its own local reference. The segment agrees with itself and is not traceable
+        # to anything.
         info "serving at stratum 10 — LOCAL reference, no traceable source (IR_NTP_UPSTREAM unset)"
         ok "the enclave has a time authority, so its hosts can agree with each other"
     else

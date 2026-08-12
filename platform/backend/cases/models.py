@@ -52,10 +52,8 @@ class Investigation(TimeStamped):
     ARCHIVED = "archived"
     STATUS = [(s, s) for s in (OPEN, CONTAINED, CONCLUDED, ARCHIVED)]
 
-    # Forward through the engagement, with two ways back. Reopening a concluded case is
-    # ordinary — evidence arrives late — so `concluded -> open` is legal and clears
-    # `concluded_at`. `archived` is terminal: its evidence has been moved out, and a
-    # transition out of it would assert data that is no longer there.
+    # Forward through the engagement, with two ways back: reopening a concluded case is ordinary
+    # (evidence arrives late), and `concluded -> open` clears the conclusion fields.
     TRANSITIONS = {
         OPEN: {CONTAINED, CONCLUDED},
         CONTAINED: {CONCLUDED, OPEN},
@@ -106,15 +104,8 @@ class Host(TimeStamped):
     """A collected endpoint. Recurs across investigations — the 'seen before?' anchor."""
 
     hostname = models.CharField(max_length=255, db_index=True)
-    # What actually identifies the machine. A hostname is a mutable label: it gets renamed,
-    # reused across environments, and reported as a container id when collection runs without
-    # the host filesystem mounted. Resolving by name alone forks a second record on any
-    # mismatch, and evidence for one machine then sits under two — a memory image analyzed
-    # hours after its collection landed no longer corroborates against it.
-    #
-    # /etc/machine-id: generated once at install, stable across reboots and renames. Blank for
-    # hosts collected before the collector recorded it, or where it was unreadable, in which
-    # case resolution falls back to the hostname.
+    # What actually identifies the machine: a hostname is a mutable label, so identity is (hostname,
+    # machine_id) and a rename becomes history rather than a new host.
     machine_id = models.CharField(max_length=64, blank=True, db_index=True)
     platform = models.CharField(max_length=32, default="linux")  # linux/windows/cloud
     clock_context = models.JSONField(default=dict, blank=True)   # _clock.json verbatim
@@ -122,16 +113,9 @@ class Host(TimeStamped):
     class Meta:
         ordering = ["hostname"]
         constraints = [
-            # machine-id is what makes a collection and the memory image analyzed hours
-            # later converge on one host. Enforced only in Python, that convergence was a
-            # read-then-write race: two arrivals for the same machine could each find no
-            # host and each create one, splitting the machine's evidence across two records
-            # with no way to tell afterwards. The database refuses it instead.
-            #
-            # Partial, because blank means "not recorded" — collections predating the
-            # machine-id capture, or where it was unreadable, legitimately have none and
-            # fall back to hostname resolution. A unique index over them would collapse
-            # every such host into one.
+            # machine-id is what makes a collection and the memory image analyzed later converge on one host;
+            # enforced in the DATABASE, because Python-only enforcement leaves every other write path free to
+            # diverge.
             models.UniqueConstraint(
                 fields=["machine_id"],
                 condition=models.Q(machine_id__gt=""),
@@ -262,10 +246,8 @@ class Finding(TimeStamped):
     source = models.CharField(max_length=32, default="collector")      # collector | memory | LLM
     raw = models.JSONField(default=dict)                               # verbatim finding
 
-    # Who owns the current verdict: "" (nobody has judged it), "engine", or "analyst".
-    # An automated pass may set and revise a verdict it owns; it may not replace one an
-    # analyst set. A report rests on the human determination, and an engine re-run that
-    # quietly overturns it invalidates the report rather than merely annoying its author.
+    # Who owns the current verdict: '' (unjudged), 'engine', or 'analyst'. An automated pass may
+    # revise a verdict it owns; it may not replace an analyst's.
     adjudicated_by = models.CharField(max_length=16, blank=True, default="")
     # The analysis pass that PRODUCED the current verdict — not the last pass that looked at
     # it. A later run that reached the same conclusion did not produce anything.
@@ -273,12 +255,8 @@ class Finding(TimeStamped):
         "MemoryAnalysisRun", related_name="adjudicated_findings",
         on_delete=models.SET_NULL, null=True, blank=True,
     )
-    # What the engine would have said where an analyst already ruled otherwise. Empty when
-    # they agree. This is how disagreement reaches review instead of being applied.
-    #
-    # Deliberately unindexed: the conflict set is small, and the triage queue is already
-    # scoped to a run, so an index here would cost writes on the largest table in the store
-    # to serve a query that filters a few hundred rows.
+    # What the engine would have said where an analyst ruled otherwise — empty when they agree.
+    # Disagreement reaches review instead of being applied.
     adjudication_conflict = models.JSONField(default=dict, blank=True)
 
     class Meta:
@@ -292,10 +270,8 @@ class Finding(TimeStamped):
             # memory and reverse-engineering evidence.
             models.Index(fields=["source"], name="finding_source_idx"),
         ]
-        # `raw` is deliberately NOT indexed. It is read in Python by the correlation engine
-        # and never queried by key in SQL, so a GIN over it would cost write throughput on
-        # the largest table in the store to serve no query. Index it if and when a query
-        # needs it.
+        # `raw` is deliberately NOT indexed: it is read in Python by the correlation engine and never
+        # queried by key in SQL, so a GIN would cost write throughput for nothing.
 
     def __str__(self):
         return f"{self.finding_type} -> {self.target} [{self.verdict}]"
@@ -387,11 +363,8 @@ class IndicatorSighting(TimeStamped):
     class Meta:
         ordering = ["ioc_type", "value", "hostname"]
         indexes = [
-            # Named to match what the migration created. Left unnamed, Django derives a name
-            # from the field list, disagrees with the migration's, and proposes a RENAME on
-            # every makemigrations — noise that eventually gets committed as a real one.
-            #
-            # The cross-case pivot: everywhere this indicator has ever been seen.
+            # Named to match what the migration created — unnamed, Django derives a different name and
+            # proposes a rename on every makemigrations.
             models.Index(fields=["ioc_type", "value"], name="cases_indic_ioc_typ_pivot_idx"),
             # And the per-case read, for the investigation's own indicator index.
             models.Index(fields=["investigation_id", "ioc_type"],
@@ -505,10 +478,8 @@ class ProcessVerdict(TimeStamped):
     mitre = models.JSONField(default=list, blank=True)
     positive_dims = models.JSONField(default=list, blank=True)  # the dimensions that fired
     prior_adjudication = models.CharField(max_length=64, blank=True)  # the host's verdict
-    # A re-analysis SUPERSEDES rather than replaces. Deleting the prior pass destroyed the
-    # only record that the engine once judged a PID differently — and "what did we conclude
-    # before, and what changed it" is a question a report has to answer. Same shape as
-    # CorrelationRun, so the two derived stores behave alike.
+    # A re-analysis SUPERSEDES rather than replaces: deleting the prior pass destroys the only record
+    # that the engine once judged a PID differently.
     is_current = models.BooleanField(default=True, db_index=True)
     superseded_at = models.DateTimeField(null=True, blank=True)
     superseded_by = models.ForeignKey(
@@ -717,6 +688,26 @@ class ComponentHealth(TimeStamped):
 
     def __str__(self):
         return f"{self.component} @ {self.reported_at:%Y-%m-%d %H:%M}"
+
+
+class QueueSample(models.Model):
+    """One reading of the analysis backlog, taken on the backend's health-report beat.
+
+    ComponentHealth is a current-state panel, one row overwritten in place; a queue-depth
+    LINE needs history, which is a different contract, so it gets its own table rather than
+    a shape change there. Rows are pruned on the same beat that writes them — the line
+    answers "is the platform keeping up this week", not "what happened in March".
+    """
+
+    sampled_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    queued = models.IntegerField(default=0)
+    running = models.IntegerField(default=0)
+    # Captures no analysis has claimed yet — backlog that predates the queue.
+    awaiting = models.IntegerField(default=0)
+    oldest_waiting_seconds = models.IntegerField(default=0)
+
+    class Meta:
+        ordering = ["sampled_at"]
 
 
 class AuditLog(TimeStamped):
@@ -943,13 +934,8 @@ class CarvedRegion(TimeStamped):
     sha256 = models.CharField(max_length=64, blank=True, db_index=True)
     # What caused it to be carved — the rule or plugin that matched.
     carved_by = models.CharField(max_length=255, blank=True)
-    # The signature hits that flagged this region: rule names, which strings matched, the
-    # memory permissions, and the severity the analyzer assigned.
-    #
-    # Without this a reverse engineer is handed two megabytes of heap and asked for a
-    # verdict with no statement of what to look for. The permissions matter as much as the
-    # rule name: a rule hitting anonymous rw- memory is matching data, while the same rule
-    # on anonymous rwx is matching code that nothing on disk accounts for.
+    # The signature hits that flagged this region: rule names, matched strings, memory permissions,
+    # and the analyzer's severity.
     trigger = models.JSONField(default=dict, blank=True)
     # Where it came from inside the image, when the analyzer could attribute it.
     source_pid = models.IntegerField(null=True, blank=True)

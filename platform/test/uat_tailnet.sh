@@ -1,14 +1,9 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# TAILNET UAT — the analyst's WireGuard tunnel to the DMZ, proven rather than described.
+# TAILNET UAT — the analyst's WireGuard tunnel to the DMZ, proven rather than described. Asserts
+# the tunnel EXISTS and the ACL BOUNDS it.
 #
-# Asserts the tunnel EXISTS and the ACL BOUNDS it. Both halves matter: a tunnel that carries
-# traffic but permits everything is worse than no tunnel, because it looks like a control.
 #
-# Written because this tier was documented as "workstation joins a self-hosted tailnet" while
-# the deployment ran a plain socat forwarder with no tailnet member at all — the claim and the
-# behavior had drifted apart with nothing checking. Every assertion here is a property an
-# analyst's session actually depends on.
 # ==============================================================================
 set -uo pipefail
 
@@ -166,13 +161,7 @@ info "listeners in the bastion namespace: ${extra:-0} (tailscaled's own sockets 
 say "DERP — the tunnel has a relay to fall back on"
 # Tailscale REFUSES to use a DERP relay that is not served over TLS, and does not report
 # declining to. The node comes up, calls itself connected, and has no relay at all — which stays
-# invisible until two peers cannot build a direct path, and then the session simply fails. On a
-# segment with no internet the public DERP fleet is not a fallback either, so the embedded relay
-# is the only one there is.
-# Asserted from LIVE state, not from the log. A log-tail check passes or fails depending on how
-# much the node has since printed — the DERP line scrolls out of any bounded window — so it
-# reported a healthy relay as missing on a busy node. `tailscale status` reports what the relay
-# is right now.
+# invisible until two peers cannot build a direct path, and then the session simply fails.
 for pair in "${BASTION}:bastion" "${ANALYST}:analyst"; do
     c="${pair%%:*}"; label="${pair##*:}"
     ${RUNTIME} inspect "${c}" >/dev/null 2>&1 || continue
@@ -188,12 +177,10 @@ for pair in "${BASTION}:bastion" "${ANALYST}:analyst"; do
     else
         bad "${label} relays through '${relay}' — not the embedded region; it reached the public fleet"
     fi
-    # Health warnings are CLASSIFIED, not counted. tailscaled cannot create its own iptables
-    # chains inside a rootless container when the host has not loaded the filter table, and it
-    # reports that forever while the tunnel works — WireGuard carries regardless, which the
-    # assertions above and below prove independently. Counting makes that host-state detail
-    # fail the platform; ignoring it would hide a real impairment. So it is named, and
-    # anything else still fails.
+    # Health warnings are CLASSIFIED, not counted. tailscaled cannot create its own iptables chains
+    # inside a rootless container when the host has not loaded the filter table, and it reports that
+    # forever while the tunnel works — WireGuard carries regardless, which the assertions above and
+    # below prove independently.
     health="$(${RUNTIME} exec -i "${c}" tailscale status --json 2>/dev/null \
         | python3 -c "
 import json, sys
@@ -213,10 +200,8 @@ print(len(warns), len(warns) - len(benign))
     fi
 done
 
-# The control plane must be TLS, since that is the precondition for the relay above.
-# Read from the RENDERED config on disk, which is the file mounted into the container. The
-# headscale image is minimal and has no shell utilities, so exec'ing sed there returns empty and
-# the assertion fails against a correctly configured control plane.
+# The control plane must be TLS, since that is the precondition for the relay above. Read from
+# the RENDERED config on disk, which is the file mounted into the container.
 HS_CONF="${PLATFORM}/hashicorp/access/headscale.yaml"
 if [[ -r "${HS_CONF}" ]]; then
     url="$(sed -n 's/^server_url: //p' "${HS_CONF}" | tr -d '[:space:]')"
@@ -267,8 +252,7 @@ say "Identity — a second workstation is a second node, not a collision"
 
 # The requirement is 50+ workstations. Two answering to one tailnet name are ONE node to the
 # control plane, and the tunnel then works for whichever registered last — which looks like an
-# intermittent VPN fault rather than a naming collision. Asserted on the CONTROL PLANE's own
-# record, because that is what decides which node a packet belongs to.
+# intermittent VPN fault rather than a naming collision.
 WS_IDS="${IR_WS_IDS:-analyst}"
 NODES="$(${RUNTIME} exec ir-dmz_headscale_1 headscale nodes list -o json 2>/dev/null || echo '[]')"
 

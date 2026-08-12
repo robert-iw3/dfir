@@ -1,11 +1,7 @@
 #!/usr/bin/env bash
-# Derive Postgres settings from the resources this container actually has, then start it.
-#
-# Every value below can still be overridden explicitly (IR_PG_*), because a site that has
-# measured its own workload knows better than a ratio.
-#
-# The ratios are the standard ones for a host dedicated to Postgres, which the enclave's database
-# is — nothing else runs in this namespace but its own sidecar.
+# Derive Postgres settings from the resources this container actually has, then start it. Every
+# value below can still be overridden explicitly (IR_PG_*), because a site that has measured its
+# own workload knows better than a ratio.
 set -euo pipefail
 
 # Memory the container may actually use. The cgroup limit is what matters when one is set: the

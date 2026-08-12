@@ -64,12 +64,10 @@ def investigation_correlation(request, investigation_id):
     if not crun:
         return Response({"correlated": False, "campaigns": []})
 
-    # The id alone does not prove this correlation belongs to this investigation. The two
-    # stores are separate databases with no cross-database foreign key, so a deleted
-    # investigation leaves its correlation behind and PostgreSQL hands the id to the next
-    # one created — which then reads as another incident's campaigns. The name recorded at
-    # correlation time is the check: when it no longer matches, the row describes something
-    # else and is not served.
+    # The id alone does not prove this correlation belongs to this investigation. The two stores are
+    # separate databases with no cross-database foreign key, so a deleted investigation leaves its
+    # correlation behind and PostgreSQL hands the id to the next one created — which then reads as
+    # another incident's campaigns.
     from cases.models import Investigation
 
     current_name = (Investigation.objects.filter(id=investigation_id)
@@ -146,6 +144,9 @@ def campaign_graph(request, campaign_id):
             "weight": round(l.weight, 4),
             "top_factor": (l.factors or {}).get("top", {}),
             "evidence_kinds": (l.factors or {}).get("evidence_kinds", []),
+            # The contributions stored in full (strongest first). The bars render these rows
+            # verbatim; anything summed or grouped would be a figure nothing stored.
+            "corroboration": (l.factors or {}).get("corroboration", []),
         } for l in links
             if l.linked and {l.host_a, l.host_b} <= names
             and not _has_movement(edges, l.host_a, l.host_b)],
@@ -264,12 +265,25 @@ def shared_indicators(request):
         if ind.campaign_id:
             entry["campaigns"].add(ind.campaign_id)
 
+    # The rarity-adjusted linkage weight, computed with the ENGINE'S OWN functions over the
+    # same deployment population it uses — served so the rarity scatter renders a figure the
+    # platform computed, never one the client re-derived. An indicator on most of the fleet
+    # scores near zero however suspicious it looks; that is the chart's whole point.
+    from .linkage import TYPE_WEIGHT, rarity
+    from .models import BehaviorNode
+    population = max(1, BehaviorNode.objects.filter(
+        run_id__in=list(current), kind="host").values("value").distinct().count())
+
+    def link_weight(kind, hosts):
+        return round(TYPE_WEIGHT.get(kind, min(TYPE_WEIGHT.values())) * rarity(hosts, population), 4)
+
     return Response({"indicators": [{
         "kind": r["kind"], "value": r["value"],
         "hostnames": sorted(detail.get((r["kind"], r["value"]), {}).get("hostnames", [])),
         "host_count": len(detail.get((r["kind"], r["value"]), {}).get("hostnames", [])),
         "campaign_ids": sorted(detail.get((r["kind"], r["value"]), {}).get("campaigns", [])),
-    } for r in rows]})
+        "link_weight": link_weight(r["kind"], len(detail.get((r["kind"], r["value"]), {}).get("hostnames", []) or [1])),
+    } for r in rows], "population": population})
 
 
 class RecomputeView(APIView):
@@ -367,3 +381,32 @@ def correlation_links(request, run_id):
             "top_factor": (l.factors or {}).get("top", {}),
         } for l in links],
     })
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def correlation_history(request, investigation_id):
+    """V5 — cohesion per campaign over successive correlation runs.
+
+    Whether a campaign is tightening or fragmenting as evidence lands is a question about
+    RUNS, not about the current state: each recompute supersedes rather than mutates, so the
+    history is already stored and only needs reading out. Newest last, so a strip renders
+    left-to-right in the order the evidence arrived.
+    """
+    runs = (CorrelationRun.objects.filter(investigation_id=investigation_id)
+            .order_by("created_at")[:50])
+    out = []
+    for r in runs:
+        out.append({
+            "run_id": r.id,
+            "at": r.created_at.isoformat(),
+            "is_current": r.is_current,
+            "campaigns": [{
+                "label": c.label,
+                "cohesion_mean": round(c.cohesion_mean, 4),
+                "cohesion_min": round(c.cohesion_min, 4),
+                "hosts": c.hosts.count(),
+            } for c in r.campaigns.all().order_by("label")],
+        })
+    return Response({"investigation_id": investigation_id, "runs": out,
+                     "computed_over": len(out)})

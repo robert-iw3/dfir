@@ -9,6 +9,8 @@ interactive surface in the platform, and its threat direction is the reverse of 
 tier: that one is hardened to stop evidence getting **out**, this one to stop malware getting
 **anywhere**.
 
+![Carve to per-host bucket, staged 0400, opened with no network; the determination travels back through the analyst](../img/re-workstation.svg)
+
 ---
 
 ## 1. Containment

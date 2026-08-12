@@ -8,15 +8,9 @@
 #   ./remediation-agent.sh --once     drain what is queued and exit
 #
 # WHY THIS IS A SEPARATE EXECUTOR. Every repair below drives podman or the deployment scripts.
-# Doing that from the backend would mean mounting the container runtime's socket into a
-# request-serving web service — a container-escape path that would defeat the tier separation
-# the whole platform is built on. So the backend records a REQUEST, and this agent — holding
-# the socket, reachable by nothing — decides what that request means.
 #
 # THE TRUST BOUNDARY IS THE ACTION NAME. Nothing else crosses it: no command, no arguments, no
-# paths. The case statement below is the complete set of things that can happen, and it lives
-# here rather than in the database, so a forged or tampered row can only ask for one of them.
-# An unknown name is rejected and recorded, not guessed at.
+# paths.
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

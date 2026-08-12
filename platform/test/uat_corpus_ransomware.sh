@@ -2,9 +2,8 @@
 # ==============================================================================
 # CORPUS R — 24 endpoints, "Vault Serpent". Mass encryption and destruction.
 #
-# The third attack shape, and the one that inverts what the first two assume. An intrusion
-# is rare, reached hop by hop, and leaves evidence that survives to be collected. A
-# ransomware event is none of those:
+# The third attack shape, and the one that inverts what the first two assume. An intrusion is
+# rare, reached hop by hop, and leaves evidence that survives to be collected.
 #
 #   scale        the campaign's signature — the ransom note, the appended extension, the
 #                payload hash — is on EVERY host it touched. Rarity reads "on most of the
@@ -181,10 +180,10 @@ else:
     chk(not strays, f"no clean endpoint appears in any campaign ({len(m['clean'])} clean)"
                     + (f" — strays: {strays}" if strays else ""))
 
-    # The residual risk of the confirmed-everywhere rarity floor, measured rather than
-    # argued. A public file-transfer binary is adjudicated True Positive on all five hosts
-    # that carry it — three in this event, two in an unrelated data theft — so it is exactly
-    # the evidence the floor could wrongly promote. It is distinctive of neither party.
+    # The residual risk of the confirmed-everywhere rarity floor, measured rather than argued. A
+    # public file-transfer binary is adjudicated True Positive on all five hosts that carry it —
+    # three in this event, two in an unrelated data theft — so it is exactly the evidence the floor
+    # could wrongly promote.
     joined = sorted(set(m["insider_hosts"]) & set(members))
     chk(not joined,
         f"the unrelated data theft is NOT pulled in by the {m['commodity_tool']} both "
@@ -243,10 +242,6 @@ for host in m["logs_cleared"]:
 # The timeline test states what it concluded, or states that it could not conclude. A blank
 # field meant "checked and consistent", "could not be checked" and "no movement here" alike,
 # which is the same defect as recording an unanswerable question as a passed one.
-#
-# Hosts are selected from the LINKS rather than from `evidence_kinds`: that list holds each
-# contribution's subkind, and a movement's subkind is its technique, so the word "movement"
-# never appears there.
 from correlation.models import HostLink
 
 moved = set()

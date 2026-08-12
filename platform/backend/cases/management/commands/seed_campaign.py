@@ -191,8 +191,13 @@ class Command(BaseCommand):
         runs = {}
 
         def make_run(inv, hostname, collected, compromised_flag):
+            # Host identity is (hostname, machine_id), not hostname alone: a corpus or a
+            # real collection may hold the same hostname under its own machine id, and a
+            # hostname-only lookup then matches several rows. The seeded host is the one
+            # with NO machine id, distinct from every real one by construction.
             host, _ = Host.objects.get_or_create(
                 hostname=hostname,
+                machine_id="",
                 defaults={"platform": "windows",
                           "clock_context": {"tz": "UTC", "skew_seconds": 0}},
             )

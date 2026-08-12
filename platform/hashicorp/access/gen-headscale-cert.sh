@@ -3,15 +3,10 @@
 #
 # WHY DERP NEEDS THIS AT ALL. Tailscale will not use a DERP relay that is not served over TLS,
 # and it does not fail loudly about it — the node comes up, reports itself connected, and simply
-# has no relay. Direct paths keep working, so the tunnel looks healthy right up until two peers
-# cannot reach each other directly and there is nothing to fall back to. On a segment with no
-# internet, that fallback cannot be the public DERP fleet either; the embedded relay is the only
-# one there is, and without TLS it is decorative.
+# has no relay.
 #
 # Separate from both the platform's web certificate and the receiver's. Three different trust
-# relationships: analysts inside the tunnel, endpoints under suspicion, and tailnet nodes. One
-# certificate covering all three ties the tunnel's security to the console's, so rotating either
-# forces both.
+# relationships: analysts inside the tunnel, endpoints under suspicion, and tailnet nodes.
 #
 # Self-signed by default, because the nodes PIN it (SSL_CERT_FILE) rather than consulting a
 # public trust store. There is exactly one control plane a node should ever talk to; pinning it

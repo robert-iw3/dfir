@@ -5,9 +5,8 @@
 # secrets (Vault), the SSO ingress, the app, the stores, the mesh, and the ingest
 # PULLER that is the only bridge to the DMZ.
 #
-# Hard rule this tier enforces: NOTHING initiates INTO the enclave. The puller
-# reaches OUT to the DMZ receiver; analysts arrive only via the DMZ broker onto the
-# SSO ingress. The `internal` network has no gateway, so the enclave cannot egress.
+# Hard rule this tier enforces: NOTHING initiates INTO the enclave. The puller reaches OUT to
+# the DMZ receiver; analysts arrive only via the DMZ broker onto the SSO ingress.
 #
 #   podman-compose -p ir-enclave --env-file ../.env -f docker-compose.yml up -d
 # ===========================================================================
@@ -25,7 +24,10 @@ networks:
     internal: true
     ipam:
       config:
+        # ip_range bounds what the runtime allocates on its own: unbounded, the allocator
+        # climbs into the pinned addresses below and a pinned service can then never start.
         - subnet: ${ENCLAVE_SUBNET}
+          ip_range: ${ENCLAVE_DYNAMIC_RANGE}
   # The routed link between the DMZ hardware and the enclave hardware. Declared
   # EXTERNAL so both tiers (separate compose projects, separate hosts in production)
   # attach to the same segment; created by deploy.sh.
@@ -260,15 +262,10 @@ services:
     command:
       - /bin/sh
       - -c
-      # A mounted volume arrives root-owned, after the image's own chown has already run. Vault
-      # drops to an unprivileged user, so without this the audit device cannot be written — and
-      # Vault treats an unwritable audit device as fatal, which is correct and would otherwise
-      # look like a startup fault with no obvious cause.
-      # Unsealing belongs to the SERVER's lifecycle, not the deployment's. Vault seals itself on
-      # every restart by design, and a restart has causes a deploy never sees: the mesh repair in
-      # deploy.sh recreates a sidecar, which can recreate the service with it (see mesh_attach),
-      # and the platform is then left answering health checks while serving nothing — no dynamic
-      # database credentials, no custody HMAC, no mesh auth. Run from here, any restart recovers.
+      # A mounted volume arrives root-owned, after the image's own chown has already run. Vault drops
+      # to an unprivileged user, so without this the audit device cannot be written — and Vault treats
+      # an unwritable audit device as fatal, which is correct and would otherwise look like a startup
+      # fault with no obvious cause.
       #
       # Backgrounded rather than exec'd so the unseal can follow it, with TERM forwarded so a
       # stop is still a clean raft shutdown. Unseal failure is not fatal: on a first deploy Vault
@@ -318,10 +315,9 @@ services:
       context: ../..
       dockerfile: backend/Dockerfile
     image: localhost/ir-backend:latest
-    # In the DATABASE's network namespace, not the mesh. It carries the static admin credential
-    # and creates the owner role that dynamic users act as — an administrative task that belongs
-    # beside the database rather than in front of a proxy. Loopback reaches Postgres whether or
-    # not the mesh is enforcing, and db's own attachment still reaches the rest of the enclave.
+    # In the DATABASE's network namespace, not the mesh. It carries the static admin credential and
+    # creates the owner role that dynamic users act as — an administrative task that belongs beside
+    # the database rather than in front of a proxy.
     network_mode: "service:db"
     depends_on: [db]
     # A legitimate holder of the static admin credential: it creates databases and owner roles.
@@ -346,9 +342,7 @@ services:
     command: ["/bin/bash", "/opt/vault/vault-setup-ir.sh"]
     # On the enclave network with its own resolver — NOT in the database's namespace. This is a
     # Vault client and never speaks to Postgres: Vault itself dials the database, through its own
-    # sidecar, and verifies the connection when the engine is configured. Sharing db's namespace
-    # bought a loopback readiness probe and cost the ability to resolve `vault`, because a
-    # container keeps its own /etc/resolv.conf and dns: cannot be set with network_mode: service:.
+    # sidecar, and verifies the connection when the engine is configured.
     networks: [internal]
     # A legitimate holder of the static admin credential: it hands it to Vault's database
     # engine, which issues the short-lived users everything else authenticates with.
@@ -406,10 +400,9 @@ services:
     # ir-postgres" becomes a refused connection rather than a statement in a config file.
     #
     # Set to 0.0.0.0 to run without the mesh; the platform works, and service-to-service
-    # authorization is then network segmentation only.
-    # Settings are DERIVED from the memory and CPU this container actually has, not written
-    # down — a fixed shared_buffers wastes enclave hardware and swaps a laptop. See pg-tune.sh;
-    # every value stays overridable through IR_PG_*.
+    # authorization is then network segmentation only. Settings are DERIVED from the memory and CPU
+    # this container actually has, not written down — a fixed shared_buffers wastes enclave hardware
+    # and swaps a laptop.
     entrypoint: ["/bin/bash", "/opt/pg-tune.sh"]
     command: []
     volumes:
@@ -523,11 +516,9 @@ services:
       KC_HOSTNAME_STRICT: "false"
       KC_HOSTNAME_STRICT_BACKCHANNEL: "false"
       KC_PROXY_HEADERS: xforwarded
-      # Identity store on the platform Postgres, so accounts and analyst-set passwords
-      # survive a recreate. Same host indirection as the backend: 127.0.0.1 through this
-      # service's own sidecar with the mesh enforcing, the service name without it. The
-      # username/password are a Vault lease rendered to /vault/secrets/kc-db.env — the
-      # entrypoint sources it before start; no credential sits in this file or in .env.
+      # Identity store on the platform Postgres, so accounts and analyst-set passwords survive a
+      # recreate. Same host indirection as the backend: 127.0.0.1 through this service's own sidecar
+      # with the mesh enforcing, the service name without it.
       KC_DB: postgres
       KC_DB_URL: "jdbc:postgresql://${IR_DB_HOST_APP:-db}:5432/keycloak"
       IR_VAULT: "${IR_VAULT:-1}"
@@ -543,10 +534,9 @@ services:
     # carrying the upstream it is waiting for. With the proxy owning the namespace, Keycloak
     # can restart until the upstream opens without breaking the thing it needs.
     network_mode: "service:keycloak-sidecar"
-    # ONLY the namespace owner. Naming db or the agent here hands compose a reason to walk
-    # into the data tier: `up -d keycloak` recreated the database under its attached proxy,
-    # and identity then dialed a listener serving a dead namespace. Start ordering against
-    # db and the rendered credential is deploy.sh's staging and the entrypoint's wait.
+    # ONLY the namespace owner. Naming db or the agent here hands compose a reason to walk into the
+    # data tier: `up -d keycloak` recreated the database under its attached proxy, and identity then
+    # dialed a listener serving a dead namespace.
     depends_on: [keycloak-sidecar]
     restart: on-failure
 
@@ -611,10 +601,9 @@ services:
       - consul-data:/consul/data
     networks: [internal]
 
-  # ---------- SSO ingress ----------------------------------------------
-  # OIDC → forward-auth. Traefik asks /oauth2/auth on every request; unauthenticated
-  # users are redirected to /oauth2/start, which drives the Keycloak login and returns to
-  # /oauth2/callback. All same-origin with the app.
+  # ---------- SSO ingress ---------------------------------------------- OIDC → forward-auth.
+  # Traefik asks /oauth2/auth on every request; unauthenticated users are redirected to
+  # /oauth2/start, which drives the Keycloak login and returns to /oauth2/callback.
   oauth2-proxy:
     # No dns settings here: this container shares its sidecar's network namespace, and podman
     # refuses dns options on a shared namespace — compose then reports success having created
@@ -631,11 +620,9 @@ services:
       - --redeem-url=http://keycloak:8080/realms/irplatform/protocol/openid-connect/token
       - --profile-url=http://keycloak:8080/realms/irplatform/protocol/openid-connect/userinfo
       - --oidc-jwks-url=http://keycloak:8080/realms/irplatform/protocol/openid-connect/certs
-      # RP-initiated logout: signing out of the app must also end the Keycloak SSO
-      # session, otherwise the next visit silently re-authenticates.
-      # oauth2-proxy makes this call itself, so it uses the internal address like the
-      # other server-to-server URLs above. The public URL points at the edge listener,
-      # which the enclave cannot reach — the call is refused and the IdP session survives.
+      # RP-initiated logout: signing out of the app must also end the Keycloak SSO session, otherwise
+      # the next visit silently re-authenticates. oauth2-proxy makes this call itself, so it uses the
+      # internal address like the other server-to-server URLs above.
       - --backend-logout-url=http://keycloak:8080/realms/irplatform/protocol/openid-connect/logout?id_token_hint={id_token}
       - --client-id=ir-platform
       - --client-secret=ir-platform-oidc-secret-dev
@@ -644,7 +631,7 @@ services:
       - --reverse-proxy=true
       # Which addresses may assert X-Forwarded-*. Without this every connecting IP is trusted to
       # supply them, so anything that reaches the gate can claim any client address — and this
-      # platform derives attribution from those records. Only the ingress ever connects here.
+      # platform derives attribution from those records.
       - --trusted-proxy-ip=${ENCLAVE_SUBNET}
       - --email-domain=*
       - --scope=openid email profile
@@ -667,23 +654,18 @@ services:
       # invalidate a fresh one.
       # API paths answer 401 instead of redirecting to the IdP.
       #
-      # With --skip-provider-button every unauthenticated request 302s straight to Keycloak,
-      # and each 302 mints a per-request CSRF cookie. The app shell fires several API calls in
-      # parallel on load, so a single page view produced FOUR auth starts in one second —
-      # against the ceiling below, which evicted the oldest. The oldest is the navigation the
-      # analyst actually made, and it is that state the callback comes back with, so the flow
-      # ended in "403 Forbidden: CSRF cookie not found" after a long login. A forced password
-      # change is the reliable way to see it, because the flow stays open long enough for the
-      # rest of the shell to pile up behind it.
+      # With --skip-provider-button every unauthenticated request 302s straight to Keycloak, and each
+      # 302 mints a per-request CSRF cookie. The app shell fires several API calls in parallel on
+      # load, so a single page view produced FOUR auth starts in one second — against the ceiling
+      # below, which evicted the oldest.
       #
       # Navigation starts a flow; data calls never do. The SPA turns the 401 into one
       # sign-in (frontend/src/api.js), so a browser still lands on the login page.
       #
-      # `index.html` is here because DeployWatch re-fetches it every 30 seconds to notice a
-      # redeploy, and it is not under /api/. Left redirecting, one unauthenticated tab mints
-      # an attempt every 30s and exhausts the ceiling in a minute and a half — measured, and
-      # it is why a forced password change (which always takes longer than that) ended in
-      # "403 ... CSRF cookie was not found" even after data calls stopped minting.
+      # `index.html` is here because DeployWatch re-fetches it every 30 seconds to notice a redeploy,
+      # and it is not under /api/. Left redirecting, one unauthenticated tab mints an attempt every
+      # 30s and exhausts the ceiling in a minute and a half — measured, and it is why a forced
+      # password change (which always takes longer than that) ended in "403 ...
       #
       # The rule this encodes: a path the app POLLS is a data call however it is served.
       # Authenticated requests are unaffected — this changes only what an unauthenticated one
@@ -696,22 +678,18 @@ services:
       # "400 Request Header Or Cookie Too Large" and cannot retry past it, because every retry
       # sends the same oversized header.
       #
-      # Capped at the source rather than absorbed by a larger header buffer downstream. A
-      # buffer sized to fit unbounded growth is not a bound, and header buffers are
-      # per-connection memory: every analyst reaches the ingress through the broker from one
-      # source address, so the connection limit bounds them collectively rather than
-      # individually. Enlarging that memory to accommodate a fixable defect would trade a
-      # resource control (SRG-APP-000001-WSR-000001) for a workaround.
+      # Capped at the source rather than absorbed by a larger header buffer downstream. A buffer sized
+      # to fit unbounded growth is not a bound, and header buffers are per-connection memory: every
+      # analyst reaches the ingress through the broker from one source address, so the connection
+      # limit bounds them collectively rather than individually.
       #
-      # Eviction is oldest-first, and the flow in progress IS the oldest — so attempts piling
-      # up behind it displace exactly the one that has to survive. The ceiling bounds the
-      # cookie header; it is not what protects the flow, and it never was. --api-route is.
+      # Eviction is oldest-first, and the flow in progress IS the oldest — so attempts piling up
+      # behind it displace exactly the one that has to survive. The ceiling bounds the cookie header;
+      # it is not what protects the flow, and it never was.
       #
-      # Six rather than three. Three was set on the belief that no real flow needs more, which
-      # a live trace disproved: four top-level navigations inside three minutes, each a
-      # legitimate one, evicted a login that was still being completed. A person retries, a
-      # kiosk reopens, a tab is restored — re-navigation is normal, and a ceiling that treats
-      # the fourth as an attack breaks the fourth honest attempt instead.
+      # Six rather than three. Three was set on the belief that no real flow needs more, which a live
+      # trace disproved: four top-level navigations inside three minutes, each a legitimate one,
+      # evicted a login that was still being completed.
       #
       # Still a bound, and still a small one: each cookie is ~130 bytes, so six is under a
       # kilobyte against the 16k header buffer asserted in test/uat_srg_webtier.sh. The point
@@ -732,11 +710,9 @@ services:
       # one place leaves the other's default in force.
       - --cookie-expire=8h
       - --cookie-refresh=15m
-      # SERVER-SIDE session management (SRG-APP-000001-WSR-000002). The default cookie store
-      # puts the session itself in the client's cookie, which is the opposite of the control:
-      # nothing server-side can then invalidate it before it expires. With the Redis store the
-      # cookie is a reference and the session lives here, so signing out or cancelling a
-      # session ends it for real.
+      # SERVER-SIDE session management (SRG-APP-000001-WSR-000002). The default cookie store puts the
+      # session itself in the client's cookie, which is the opposite of the control: nothing server-
+      # side can then invalidate it before it expires.
       #
       # Reached at 127.0.0.1 through this container's OWN mesh sidecar — Redis binds loopback
       # only, so the gate is a mesh service like every other consumer, and its access to the
@@ -891,10 +867,8 @@ services:
     # Context is the PLATFORM root, not backend/, because the Dockerfile copies
     # `shared/sysstats.py` alongside the app — a narrower context cannot see it.
     #
-    # This was `../../backend`, which made every `COPY backend/...` look for
-    # backend/backend/... and fail. The build error was swallowed by the deployment, so the
-    # old image kept running and every backend change appeared to deploy while none of them
-    # did. A code fix that cannot reach the container is worse than no fix: it reads as done.
+    # This was `../../backend`, which made every `COPY backend/...` look for backend/backend/... and
+    # fail.
     build:
       context: ../..
       dockerfile: backend/Dockerfile
@@ -903,10 +877,9 @@ services:
     env_file: ../.env
     environment:
       POSTGRES_HOST: ${IR_DB_HOST_APP:-db}
-      # Sync workers, so each holds exactly one in-flight request: this count IS the app
-      # tier's concurrency. Three put the measured error-rate knee at 30-50 concurrent
-      # analysts — below the 50-analyst requirement. Sized to (2 x cores) + 1 on the
-      # 8-core reference host; override per deployment through deploy/.env.
+      # Sync workers, so each holds exactly one in-flight request: this count IS the app tier's
+      # concurrency. Three put the measured error-rate knee at 30-50 concurrent analysts — below the
+      # 50-analyst requirement.
       GUNICORN_WORKERS: ${IR_GUNICORN_WORKERS:-17}
       # Celery URLs come from settings defaults: redis://127.0.0.1:6379/0 — the ir-redis
       # upstream bound by this service's own sidecar.
@@ -993,9 +966,9 @@ services:
       # variable that refers to itself and passes the raw string through, which then fails
       # to parse at the far end. Override it in .env if a deployment needs longer.
       IR_VOL3_TIMEOUT: "10800"
-      # Captures are staged on DISK, not in the tmpfs. Volatility needs a seekable local
-      # file, and a real capture is far larger than any sane tmpfs — staging one in RAM
-      # either fails with ENOSPC or evicts the host. TMPDIR steers tempfile.mkdtemp here.
+      # Captures are staged on DISK, not in the tmpfs. Volatility needs a seekable local file, and a
+      # real capture is far larger than any sane tmpfs — staging one in RAM either fails with ENOSPC
+      # or evicts the host.
       TMPDIR: /scratch
       # Same Vault-issued secrets as the backend. The worker writes findings and reads
       # evidence, so it needs the custody key and the object store — and has no more claim to
@@ -1018,10 +991,9 @@ services:
     read_only: true
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
-    # Volatility writes a cache under $HOME. The root filesystem stays read-only — the
-    # cache gets a tmpfs instead, so the container keeps an immutable rootfs and the
-    # cache dies with the container rather than persisting between analyses.
-    # Small, short-lived writes only — capture staging goes to /scratch above.
+    # Volatility writes a cache under $HOME. The root filesystem stays read-only — the cache gets a
+    # tmpfs instead, so the container keeps an immutable rootfs and the cache dies with the
+    # container rather than persisting between analyses.
     tmpfs: ["/tmp", "/run", "/home/worker/.cache"]
 
   worker-sidecar:
@@ -1038,6 +1010,13 @@ services:
       - ../../hashicorp/consul/secrets/consul-ca.pem:/consul/tls/consul-ca.pem:ro,z
       - ../../hashicorp/consul/secrets/tokens/ir-worker.token:/consul/tls/token:ro,z
     restart: on-failure
+
+  # CONCEPT (Track W, awaiting testing): worker replicas are stamped pairs like the egress
+  # workers, never compose --scale.
+  # worker-2:         as `worker`, with ipv4_address ${IR_IP_WORKER2}, its own scratch
+  #                   volume (worker-2-scratch), and IR_HEALTH_REPORT_ROLE=worker-2.
+  # worker-2-sidecar: as `worker-sidecar`, network_mode "service:worker-2",
+  #                   -sidecar-for ir-worker-2, token ir-worker-2.token.
 
   # ---------- the only bridge to the DMZ --------------------------------
   # Initiates OUTBOUND to the DMZ receiver, pulls verified bundles, closes. Holds the

@@ -32,7 +32,14 @@ root = pathlib.Path(sys.argv[1])
 max_ratio = float(sys.argv[2])
 strict = sys.argv[3] == "1"
 
-MARK = {".sh": "#", ".py": "#", ".yml": "#", ".yaml": "#", ".hcl": "#", ".hujson": "//"}
+MARK = {".sh": "#", ".py": "#", ".yml": "#", ".yaml": "#", ".hcl": "#", ".hujson": "//",
+        ".js": "//", ".jsx": "//"}
+# Dockerfiles have no suffix; matched by name below.
+DOCKER = ("Dockerfile",)
+# LENGTH: a comment block is capped at two sentences. The constraint a comment exists to
+# state fits in two; a third is narrative, and narrative goes stale.
+MAX_SENTENCES = 2
+_SENT = __import__("re").compile(r"[.!?](?:\s|$)")
 # Migrations carry a generated header with a date; it is the tool's, not a development marker.
 SKIP = ("node_modules", "/archive/", "/test/results/", "/.git/", "/corpus/", "/change_logs/",
         "/migrations/")
@@ -64,6 +71,7 @@ PATTERNS = [(rx, kind, flags[0] if flags else re.I) for rx, kind, *flags in PATT
 
 findings = collections.defaultdict(list)
 dense = []
+blocks_seen = []
 
 for p in sorted(root.rglob("*")):
     if not p.is_file():
@@ -72,7 +80,8 @@ for p in sorted(root.rglob("*")):
     if any(k in s for k in SKIP):
         continue
     mark = MARK.get(p.suffix)
-    if mark is None and p.name not in (".env", ".env.example"):
+    if mark is None and p.name not in (".env", ".env.example") \
+            and not p.name.startswith(DOCKER):
         continue
     mark = mark or "#"
     try:
@@ -123,7 +132,46 @@ for p in sorted(root.rglob("*")):
     if total > 20 and com / total > ceiling:
         dense.append((rel, com, code, com / total))
 
+    # LENGTH: each contiguous run of PROSE is capped at MAX_SENTENCES.
+    #
+    # A run, not a whole block: a header is prose plus a synopsis and often a numbered list,
+    # and a list item is its own statement rather than a continuation of the paragraph above
+    # it. Counting a block whole cannot be satisfied without deleting the list.
+    cur = None
+    for n, line in enumerate(lines, 1):
+        t = line.strip()
+        body = t[len(mark):] if t.startswith(mark) else None
+        prose = (body is not None and not t.startswith("#!")
+                 and body.strip()
+                 and (set(body.strip()) - set("=-*"))
+                 and not re.match(r"^(\s{2,}|[-*]\s|\d[.)]\s|\./|\$|sudo |podman |"
+                                  r"usage:|Usage:|[A-Z_]{3,}=|shellcheck|noqa|eslint|https?://)",
+                                  body))
+        if prose:
+            if cur is None:
+                cur = [n, []]
+            cur[1].append(body.strip())
+        else:
+            if cur is not None:
+                blocks_seen.append((rel, cur[0], " ".join(cur[1])))
+                cur = None
+    if cur is not None:
+        blocks_seen.append((rel, cur[0], " ".join(cur[1])))
+
+long_blocks = [(rel, ln, len(_SENT.findall(txt)))
+               for rel, ln, txt in blocks_seen
+               if len(_SENT.findall(txt)) > MAX_SENTENCES]
+
 BAD = "\033[1;31m"; OK = "\033[1;32m"; HD = "\033[1;36m"; DIM = "\033[0;37m"; OFF = "\033[0m"
+
+print(f"\n{HD}== Prose runs over {MAX_SENTENCES} sentences{OFF}")
+if not long_blocks:
+    print(f"  {OK}every prose run fits in {MAX_SENTENCES} sentences{OFF}")
+else:
+    per = collections.Counter(rel for rel, _, _ in long_blocks)
+    for rel, count in per.most_common():
+        worst = max(n for r, _, n in long_blocks if r == rel)
+        print(f"  {BAD}{rel}{OFF}  {count} run(s), longest {worst} sentences")
 
 print(f"\n{HD}== Narrative in comments{OFF}")
 n_narr = sum(len(v) for v in findings.values())

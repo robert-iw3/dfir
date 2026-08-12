@@ -1,20 +1,12 @@
-// Headscale ACL policy for the IR Platform — DENY BY DEFAULT.
-//
-// An analyst workstation may reach the bastion ONLY on the brokered frontend port.
-// There are NO subnet routes in this design, so a workstation can never address an
-// internal host directly (not Postgres, not MinIO, not the API, not Keycloak) — its
-// sole path is the bastion's brokered port below, which lands on the SSO-gated
-// frontend. Operator DB access, when needed, is brokered separately by Boundary.
+// Headscale ACL policy for the IR Platform — DENY BY DEFAULT: an analyst workstation may reach
+// the bastion ONLY on the brokered frontend port. There are NO subnet routes in this design, so a
+// workstation can never address an internal host directly.
 {
   "acls": [
     {
-      // The SSO-gated platform frontend (Traefik :443), brokered by the bastion.
-      //
-      // ONE port. The bastion holds N independent Boundary sessions rather than one — a
-      // single shared session is a fleet-wide failure domain that drops every analyst at
-      // once when it dies — but those listen on loopback behind the distributor, and this
-      // is the distributor. A workstation cannot choose a session, cannot address one
-      // directly, and cannot pin itself to one and re-create the shared failure domain.
+      // The SSO-gated platform frontend (Traefik :443), brokered by the bastion. ONE port: the
+      // bastion's N Boundary sessions listen on loopback behind the distributor, so a workstation
+      // cannot choose or pin a session and re-create the shared failure domain.
       "action": "accept",
       "src": ["analyst@"],
       "dst": ["bastion@:8443"]

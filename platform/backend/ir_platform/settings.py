@@ -134,10 +134,9 @@ REST_FRAMEWORK = {
         "rest_framework.authentication.SessionAuthentication",
     ],
     "DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.IsAuthenticated"],
-    # Every access refusal becomes an audit row (SRG-APP-000805-WSR-000140). Set here rather
-    # than in each permission class: the next permission class added would not log, and the
-    # gap would be found by needing the record and not having it. DRF routes every refusal
-    # through this one handler, so it catches the ones nobody thought about.
+    # Every access refusal becomes an audit row (SRG-APP-000805-WSR-000140). Set here rather than in
+    # each permission class: the next permission class added would not log, and the gap would be
+    # found by needing the record and not having it.
     "EXCEPTION_HANDLER": "cases.denials.audited_exception_handler",
 }
 
@@ -166,17 +165,9 @@ CELERY_TASK_TRACK_STARTED = True
 CELERY_TASK_ACKS_LATE = True
 CELERY_WORKER_PREFETCH_MULTIPLIER = 1  # long memory-analysis tasks: fair dispatch.
 
-# How long the broker waits for an acknowledgement before assuming the task was lost and
-# handing it to another worker.
-#
-# This must exceed the longest task, and with Redis it silently does not: the default is
-# one hour, while a Volatility pass over a real capture runs for well over that. The result
-# is not a warning but a second identical analysis starting an hour into the first — each
-# staging its own copy of a 24 GB image and then competing with the other for the same
-# disk, which is what makes the object store start refusing reads.
-#
-# Derived from the analysis timeout so the two cannot drift apart: whatever the deepest
-# pass is allowed to take, the broker waits longer than that before redelivering.
+# How long the broker waits for an acknowledgement before assuming the task was lost and handing
+# it to another worker. This must exceed the longest task, and with Redis it silently does not:
+# the default is one hour, while a Volatility pass over a real capture runs for well over that.
 CELERY_BROKER_TRANSPORT_OPTIONS = {
     "visibility_timeout": int(_env("IR_VOL3_TIMEOUT", "10800")) + 3600,
 }

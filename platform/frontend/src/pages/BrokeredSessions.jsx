@@ -151,7 +151,7 @@ export default function BrokeredSessions() {
             <tr key={s.id}>
               <td>
                 <span className="health-dot" style={{
-                  background: s.active ? "var(--good)" : "var(--muted)",
+                  background: s.active ? "var(--good)" : "var(--text-dim)",
                 }} />{" "}
                 {s.status}
               </td>

@@ -1,18 +1,8 @@
 # ===========================================================================
-# MULTI-HOST OVERLAY — loaded by deploy.sh only when IR_MESH_MULTIHOST=1.
-#
-# Publishes each mesh sidecar's public listener on the HOST, so a proxy on another host can
-# dial it. The port is published on the SERVICE, not the sidecar: they share one network
-# namespace and only its owner can publish from it.
-#
-# Distinct host ports, because an enclave host may run several of these services and eight
-# claims on 21000 collide. The port published here must match IR_MESH_PORT_<SVC>, which
-# register-mesh.sh advertises to the catalog — a mismatch means remote proxies dial a port
-# nothing answers. Inside every namespace Envoy still binds 21000; the mapping is the host's.
-#
-# Traffic on these ports is Connect mTLS: a dialer without a certificate from Consul's CA gets
-# a handshake failure, not data. Publishing them widens reachability, not authorization —
-# which is why the single-host deployment never loads this file.
+# MULTI-HOST OVERLAY — loaded only when IR_MESH_MULTIHOST=1: publishes each sidecar's public
+# listener on the HOST (on the SERVICE, which owns the shared namespace) at distinct ports
+# matching IR_MESH_PORT_<SVC> in the catalog. Traffic is Connect mTLS, so publishing widens
+# reachability, not authorization — which is why single-host never loads this file.
 # ===========================================================================
 services:
   db:

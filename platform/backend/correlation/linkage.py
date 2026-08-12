@@ -64,10 +64,10 @@ LINK_THRESHOLD = 0.35
 # penalty scales smoothly rather than cliff-edging, because intrusions dwell.
 #
 # A year, because that is how long targeted intrusions dwell. At thirty days the factor
-# collapsed every low-and-slow campaign: corpus S is one operator returning over eight
-# months, adjacent hosts up to 56 days apart, and EVERY pair scored the 0.2 floor — the
-# campaign did not form at all, so it had no patient zero, no fingerprint and a technique
-# sequence that stopped at the first host. One constant, ten symptoms.
+# collapsed every low-and-slow campaign: corpus S is one operator returning over eight months,
+# adjacent hosts up to 56 days apart, and EVERY pair scored the 0.2 floor — the campaign did not
+# form at all, so it had no patient zero, no fingerprint and a technique sequence that stopped
+# at the first host.
 #
 # The two hosts compared here are each host's first CONFIRMING evidence (`intrusion_first` in
 # engine.py), not their first activity — the estate's own baseline sits on every endpoint at
@@ -106,25 +106,8 @@ def rarity(host_count, population):
     return max(0.0, min(1.0, log((population + 1) / (host_count + 0.5)) / log(population + 1)))
 
 
-# The floor rarity may fall to for a node that is CONFIRMING COMPROMISE EVIDENCE ON EVERY
-# HOST THAT CARRIES IT.
-#
-# Rarity assumes that something on many hosts is the environment. That assumption is a
-# hypothesis about benign presence, and adjudication has already tested it on every carrier:
-# no ordinary software is adjudicated a confirmed compromise on all twenty machines it sits
-# on. Where the hypothesis is refuted everywhere, the environment penalty is measuring
-# nothing — and it is measuring nothing hardest exactly when an event is large.
-#
-# A ransomware event is where that shows. The ransom note, the appended extension and the
-# deployment task are on EVERY host the event reached, so the more endpoints it encrypted the
-# less its own signature argued that they were related: on a 24-host fleet a note on 12 of
-# them scored 0.31 against a 0.35 threshold, and a single event reported as fourteen
-# unrelated incidents.
-#
-# A floor rather than an exemption. At 0.5 an artifact adjudicated True Positive on every
-# carrier reaches 0.425 and links, while a bare INDICATOR reaches 0.275 and still does not —
-# so a commodity binary dropped by two unrelated operators, which is confirmed on both and
-# distinctive of neither, cannot merge them on its hash alone.
+# The floor rarity may fall to for a node that is CONFIRMING COMPROMISE EVIDENCE ON EVERY HOST
+# THAT CARRIES IT. Rarity assumes that something on many hosts is the environment.
 CONFIRMED_RARITY_FLOOR = 0.5
 
 
@@ -260,15 +243,8 @@ def build_links(crun, compromised, host_first, edges, population=None, first_sta
     for (a, b), contributions in pairs.items():
         contributions.sort(key=lambda c: -c["weight"])
         top = contributions[0]["weight"]
-        # Corroboration is truncated to keep the record a readable size. A CONTRADICTED
-        # contribution is never dropped by that truncation, whatever it ranks.
-        #
-        # Discounting a movement is what pushes it down the order, so the discount hides
-        # itself — the same concealment that once put it below the pair's top contribution,
-        # now pushing it past the sixth. On the corpus's contradiction edge the pair carries
-        # 19 contributions and the confirmed-everywhere rarity floor lifted three artifacts
-        # above it, so the movement fell out of the stored factors: the host still banded
-        # down, and the reason it banded down was no longer in the record.
+        # Corroboration is truncated to keep the record a readable size. A CONTRADICTED contribution is
+        # never dropped by that truncation, whatever it ranks.
         keep = contributions[1:6]
         keep += [c for c in contributions[6:] if (c.get("contradiction") or 1.0) < 1.0]
         # The strongest link decides membership; the rest are corroboration. Summing instead

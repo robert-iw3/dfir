@@ -103,10 +103,9 @@ def overview():
         svc_checks = [c for c in checks if c.get("ServiceName") == name or c.get("ServiceID")]
         statuses = {c.get("Status") for c in svc_checks}
         if not statuses:
-            # No check DEFINED is not the same as a check that has not reported. These
-            # registrations declare none — liveness is the platform health page's job — so the
-            # honest answer is that the mesh is not watching, not that something is wrong.
-            # Rendering it as "unknown" put a grey dot beside seven healthy services.
+            # No check DEFINED is not the same as a check that has not reported. These registrations declare
+            # none — liveness is the platform health page's job — so the honest answer is that the mesh is
+            # not watching, not that something is wrong.
             status = "unchecked"
         else:
             status = ("critical" if "critical" in statuses
@@ -139,4 +138,45 @@ def overview():
         "services": out,
         "intentions": rules if rules is not None else [],
         "intentions_readable": rules is not None,
+        "observed": _observed(),
     }
+
+
+# The self-reporting components, mapped to the mesh identity their sidecar carries. Only
+# these can testify: a sidecar's admin interface binds loopback inside the shared namespace,
+# so each component reads its own proxy and nobody else's.
+_REPORTER_MESH_NAMES = {"backend (api)": "ir-backend"}
+
+
+def _observed():
+    """First-person upstream evidence, from the components that can give it.
+
+    {source: {destination: {connect_fail, cx_total, cx_active}}} — what each reporting
+    component's OWN sidecar counted. Policy (the intentions above) says who MAY connect;
+    this says who TRIED and what happened, which is what turns a default-deny cell from an
+    assumption into an observation. Coverage is exactly the self-reporting components — the
+    matrix labels the rows it has evidence for rather than implying a fleet-wide view.
+    """
+    from .models import ComponentHealth
+
+    observed = {}
+    for ch in ComponentHealth.objects.all():
+        # Reporter extras land under metrics["extra"] — sysstats.collect nests them there,
+        # the same place the component-health view reads log_storage from.
+        ups = ((ch.metrics or {}).get("extra") or {}).get("mesh_upstreams")
+        if not ups:
+            continue
+        if ch.component in _REPORTER_MESH_NAMES:
+            src = _REPORTER_MESH_NAMES[ch.component]
+        elif ch.component.startswith("worker"):
+            src = "ir-worker"
+        else:
+            continue
+        # Several workers report under one mesh identity; counters sum across replicas
+        # because the matrix cell is about the PAIR, not about which replica dialed.
+        row = observed.setdefault(src, {})
+        for dest, counters in ups.items():
+            cell = row.setdefault(dest, {"connect_fail": 0, "cx_total": 0, "cx_active": 0})
+            for k in cell:
+                cell[k] += int(counters.get(k, 0))
+    return observed

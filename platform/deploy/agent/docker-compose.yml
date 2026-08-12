@@ -1,20 +1,9 @@
 # ===========================================================================
-# TIER: remediation agent — the executor for admin-requested repairs.
-#
-# Its OWN compose project, deliberately: the mesh-reattach repair runs `deploy.sh enclave`,
-# and an executor living inside the enclave project could be recreated by the very deploy it
-# is running — killing the repair mid-flight. Nothing in this project is ever touched by a
-# repair.
-#
-# The security posture:
-#   * network_mode: none — it has no address, accepts nothing, and dials nothing. It reaches
-#     the platform API the same way the repairs reach the runtime: exec through the socket.
-#   * The runtime socket is the ONLY authority it holds, and the only input that reaches it
-#     is an action NAME from the queue, matched against the allow-list in its own script.
-#   * pid: host — the deploy scripts verify mesh namespaces by reading /proc/<pid>/ns, and
-#     those are host pids.
-#
-#   deploy.sh agent   (exports IR_RUNTIME_SOCKET, IR_PLATFORM_DIR, IR_AGENT_HOST)
+# TIER: remediation agent — the executor for admin-requested repairs, in its OWN project so the
+# mesh-reattach repair (which runs `deploy.sh enclave`) can never recreate its executor mid-
+# flight. network_mode none + pid host: it holds only the runtime socket, the only input is an
+# action NAME matched against its own allow-list, and namespace checks read /proc/<pid>/ns which
+# are host pids.
 # ===========================================================================
 services:
   remediation-agent:

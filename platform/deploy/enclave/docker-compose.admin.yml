@@ -1,11 +1,6 @@
-# Enclave administrative access — opened on demand, closed when the task is done.
-#
-# Not part of the deployment. `admin/adminctl.sh up enclave` starts it; management
-# interfaces are unreachable at every other moment.
-#
-# This container joins the enclave network ONLY. It has no membership in the DMZ networks,
-# so it cannot reach a DMZ service regardless of what is listed below — the tier isolation
-# is the network membership, not the target list.
+# Enclave administrative access — `admin/adminctl.sh up enclave` opens it on demand; management
+# interfaces are unreachable at every other moment. It joins the enclave network ONLY: the tier
+# isolation is the network membership, not the target list.
 services:
   adminfwd:
     # Carries socat already: these tiers have no internet gateway to install it from.

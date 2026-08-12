@@ -1,19 +1,7 @@
 #!/bin/sh
-# Reconcile the controller's worker registry to exactly the worker that should be there.
-#
-# Run inside the controller container:  boundary_workers.sh [expected-worker-name]
-# Exits non-zero when the expected worker is not registered.
-#
-# WHY THIS IS ITS OWN GATE. A target with no worker is authorized normally — the controller mints
-# a session and hands back a token — and the connection then hangs with nothing to carry it. The
-# failure looks like a network problem at the far end of the path, several tiers from the worker
-# that never registered.
-#
-# WHY IT DELETES. A worker's registration outlives the process: rename it, move it to another
-# tier, or replace it, and the old row stays, still advertising an address nothing serves. The
-# controller hands sessions to workers it believes are registered, so a stale row makes some
-# fraction of sessions hang while the rest work — the hardest shape of failure to read. Like the
-# grants in boundary_bootstrap.sh, this converges on the intended set rather than accumulating.
+# Reconcile the controller's worker registry to exactly the worker that should be there. Run
+# inside the controller container:  boundary_workers.sh [expected-worker-name] Exits non-zero
+# when the expected worker is not registered.
 set -eu
 
 # All expected worker names, as arguments. The registry converges on exactly this set: a

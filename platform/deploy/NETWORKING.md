@@ -182,9 +182,16 @@ Caveats, each of which has bitten:
   mismatch.
 - Do not choose a range that overlaps the host's own LAN (home networks are usually
   `192.168.x`): the bridge would shadow the real network on that host.
-- Keep static addresses in a high block (`.201+` here). The runtime's allocator hands out
-  dynamic addresses from the bottom of the subnet, and a static address inside the dynamic
-  range can be claimed by an unrelated container while the pinned one is down.
+- The dynamic pool is **bounded**, by `ENCLAVE_DYNAMIC_RANGE` (`10.89.1.128/26` here) on the
+  network's `ip_range`, and every pinned address sits outside it. Convention alone is not
+  enough: the allocator hands out addresses from the bottom of the subnet and climbs, so
+  "keep statics high" only holds until enough containers exist — it reached `.197` here, and
+  with the backend down an unpinned agent took `.204`. The backend then could not start at
+  all, reporting `IPAM error: requested ip address is already allocated`, which names no
+  service and points at no file. `mesh_addr_check` now rejects any pinned address inside the
+  pool, and the deploy refuses to proceed when the **live** network was created without the
+  range — editing `ip_range` never reaches a network that already exists, so it must be
+  removed and recreated (`podman network rm <proj>_internal`) for the bound to take effect.
 - On multiple hosts, `IR_MESH_ADDR_*` is the value that matters and the sidecar's public port
   (21000) must be reachable on that host address — publish it only in that deployment shape,
   never on a single host, where the enclave bridge already carries it.

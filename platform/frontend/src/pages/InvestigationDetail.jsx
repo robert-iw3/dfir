@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { api } from "../api.js";
 import { can, useAuth } from "../auth.jsx";
 import { useData, Loading, Empty } from "../components/common.jsx";
+import { StatTiles, KillChainChord } from "../components/charts.jsx";
 
 const NOTE_KINDS = [
   ["observation", "Observation"], ["analysis", "Analysis"], ["decision", "Decision"],
@@ -198,6 +199,10 @@ export default function InvestigationDetail() {
   // stitched together from what the investigation payload happens to embed.
   const { data: record, reload: reloadRecord } = useData(
     () => api.investigationRecord(id), [id]);
+  // Server aggregates, never client sums over paged rows — the charts render what the
+  // platform computed and every mark drills to the filtered table behind it.
+  const { data: stats } = useData(() => api.investigationStats(id), [id]);
+  const { data: coverage } = useData(() => api.investigationCoverage(id), [id]);
   if (!data) return <Loading error={error} />;
   const runs = data.runs ?? [];
   // Hosts an entry can be filed against — the ones this investigation actually collected.
@@ -230,17 +235,79 @@ export default function InvestigationDetail() {
         {can(user, "admin") && <button className="btn" style={{ background: "var(--bad)" }} onClick={del}>Delete</button>}
       </div>
 
+      <h2>Shape of the intrusion</h2>
+      <StatTiles tiles={stats && [
+        { label: "Findings", value: stats.total_findings, accent: "var(--accent)",
+          onOpen: () => navigate(`/findings?investigation=${id}`) },
+        { label: "Confirmed", value: stats.confirmed_findings, accent: "var(--good)",
+          sub: "true + likely true positive",
+          onOpen: () => navigate(`/findings?investigation=${id}&verdict=${encodeURIComponent("True Positive,Likely True Positive")}`) },
+        { label: "Indeterminate", value: stats.indeterminate_findings, accent: "var(--warn)",
+          sub: "not decided — not confirmed",
+          onOpen: () => navigate(`/findings?investigation=${id}&verdict=Indeterminate`) },
+        { label: "Hosts affected", value: (stats.hosts || []).length, accent: "var(--accent-2, var(--accent))",
+          onOpen: () => navigate("/hosts") },
+        coverage && { label: "Never collected", value: (coverage.implicated_not_collected || []).length,
+          accent: (coverage.implicated_not_collected || []).length ? "var(--bad)" : "var(--text-dim)",
+          sub: "implicated by evidence" },
+      ]} />
+
+      <div className="panel" style={{ padding: 20 }}>
+        <h3 style={{ margin: "0 0 4px" }}>Kill chain</h3>
+        <p className="chart-note">
+          Every host against every attack stage it reached. Ribbon width is how much of the
+          evidence that pairing carries; stage color runs cool-to-hot as the intrusion
+          progresses. Hover an arc to isolate it, click a ribbon for the findings behind it.
+        </p>
+        <KillChainChord stats={stats} investigationId={id} />
+      </div>
+
+      {(coverage?.implicated_not_collected || []).length > 0 && (
+        <div className="panel" style={{ padding: 20 }}>
+          <h3 style={{ margin: "0 0 4px" }}>Never collected</h3>
+          <p className="chart-note">
+            The evidence on other machines implicates these hosts and nobody collected them,
+            so they have no row below and nothing here rests on their own data. This is the
+            most expensive place in an investigation to be wrong.
+          </p>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+            {coverage.implicated_not_collected.map((name) => (
+              <span key={name} className="mono"
+                    style={{ padding: "5px 10px", borderRadius: 6, fontSize: 12,
+                             border: "1px dashed var(--bad)", color: "var(--bad)" }}>
+                {name}</span>
+            ))}
+          </div>
+        </div>
+      )}
+
       <h2>Collection Runs</h2>
       {runs.length === 0 ? <Empty>No runs.</Empty> : (
         <div className="panel">
           <table>
             <thead>
-              <tr><th>Host</th><th>Kind</th><th>Status</th><th>Compromised</th><th>TPs</th><th>Findings</th><th>Custody</th>{can(user, "analyst", "admin") && <th></th>}</tr>
+              <tr><th>Host</th><th>Membership</th><th>Kind</th><th>Status</th><th>Compromised</th><th>TPs</th><th>Findings</th><th>Custody</th>{can(user, "analyst", "admin") && <th></th>}</tr>
             </thead>
             <tbody>
               {runs.map((r) => (
                 <tr key={r.id}>
                   <td><Link to={`/runs/${r.id}`}>{r.host.hostname}</Link></td>
+                  <td>{(() => {
+                    // How certain this host's campaign membership is, from the same
+                    // aggregate the chord reads — a host outside every campaign carries no
+                    // claim rather than a low one.
+                    const band = (stats?.hosts || [])
+                      .find((h) => h.host === r.host.hostname)?.confidence_band || "";
+                    const color = { confirmed: "var(--good)", probable: "var(--accent)",
+                                    possible: "var(--warn)" }[band] || "var(--text-dim)";
+                    return (
+                      <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                        <span style={{ width: 8, height: 8, borderRadius: 2, background: color }} />
+                        <span style={{ color: band ? "var(--text)" : "var(--text-dim)" }}>
+                          {band || "no claim"}</span>
+                      </span>
+                    );
+                  })()}</td>
                   <td>{r.run_kind || "initial"}</td>
                   <td><span className={`status-pill status-${r.overall_status}`}>{r.overall_status || "—"}</span></td>
                   <td>{r.compromised ? <span className="sev-high">yes</span> : <span className="status-completed">no</span>}</td>

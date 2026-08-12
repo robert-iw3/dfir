@@ -23,8 +23,8 @@ networks:
     name: ir-dmzlink
 
 services:
-  # Untrusted-facing evidence receiver. Verifies custody, holds opaque blobs for the
-  # enclave to pull. Deliberately NOT on any enclave-bound network.
+  # Untrusted-facing evidence receiver: verifies custody, holds opaque blobs for the enclave to
+  # pull. Deliberately NOT on any enclave-bound network.
   receiver:
     build:
       context: ../..
@@ -48,22 +48,11 @@ services:
     ports:
       - "${RECEIVER_PORT}:8090"
 
-  # The bastion's tailnet node. This is the WireGuard endpoint an analyst workstation
-  # connects to, and the only member of the tailnet on this side.
-  #
-  # A real tun device, not userspace networking: the tunnel has to be a network interface
-  # for the broker to bind to it, and for "the workstation cannot address an internal host"
-  # to be a routing fact rather than a claim. /dev/net/tun is world-writable on the host, so
-  # a rootless container can open it; NET_ADMIN is scoped to this container's own namespace
-  # and lets it create wg/tun inside that namespace only.
-  #
-  # It dials the control plane at HEADSCALE_ADDR, which is a NAME: the DMZ resolver forwards
-  # in-zone lookups to the runtime, so `headscale` resolves to wherever that container is now
-  # and survives a network recreate.
-  #
-  # It advertises no routes. There is deliberately no `--advertise-routes` here: subnet
-  # routes are exactly what would let a workstation reach Postgres or MinIO directly, and
-  # their absence is what makes the ACL's deny-by-default meaningful.
+  # The bastion's tailnet node — the WireGuard endpoint workstations connect to, with a real tun
+  # device so the broker can bind it and non-reachability stays a routing fact. NET_ADMIN is scoped
+  # to this namespace only, HEADSCALE_ADDR is a name so it survives a network recreate, and no
+  # routes are advertised — subnet routes are exactly what would let a workstation reach Postgres
+  # directly.
   bastion:
     image: docker.io/tailscale/tailscale:v1.98.10
     hostname: bastion
@@ -89,11 +78,9 @@ services:
       - /dev/net/tun:/dev/net/tun
     cap_add: [NET_ADMIN, NET_RAW]
     networks:
-      # The broker shares this namespace, so the analyst-facing address and name belong to
-      # the bastion now. Both paths then land on the same session listener: over the tunnel
-      # via the tailnet interface, or over the edge network by name for a workstation not
-      # yet enrolled. The tunnel is the intended route; this keeps enrollment from being a
-      # chicken-and-egg problem.
+      # The broker shares this namespace, so the analyst-facing address and name belong to the bastion:
+      # tunnel traffic and not-yet-enrolled workstations land on the same session listener. That keeps
+      # enrollment from being a chicken-and-egg problem.
       edge:
         # The analyst-facing name resolves HERE, never to an internal host. No pinned address:
         # the DMZ resolver rewrites the platform name to `bastion` and the runtime answers with
@@ -101,19 +88,10 @@ services:
         aliases: [ir-platform.local]
       dmzlink:
 
-  # The analyst's route into the enclave: a Boundary session held open on the brokered port.
-  #
-  # This is the whole of the DMZ's part in brokered access — a CLIENT. No worker runs here: a
-  # worker has to reach the target, and giving a DMZ container a route onto the enclave's internal
-  # network is the reach this tier split exists to deny. The egress worker sits in the enclave
-  # instead, and this dials it across the link.
-  #
-  # Shares the bastion's network namespace, so the listener binds the tailnet interface — the
-  # analyst reaches it over WireGuard and by no other path. The bastion has no route to the
-  # enclave's internal network; the session does.
-  #
-  # Holds no key material beyond the analyst credential it authenticates with. The controller,
-  # the database, the grants and the encryption roots are all in the enclave.
+  # The analyst's route into the enclave: a Boundary session held open on the brokered port — a
+  # CLIENT only, since a worker here would need the enclave route this tier split denies. It shares
+  # the bastion's namespace so the listener binds the tailnet interface, and holds no key material
+  # beyond the analyst credential.
   broker:
     image: docker.io/hashicorp/boundary:0.21.3
     network_mode: "service:bastion"
@@ -129,10 +107,8 @@ services:
       BOUNDARY_PROJECT_ID: ${BOUNDARY_PROJECT_ID:-}
       BOUNDARY_ANALYST_LOGIN: ${BOUNDARY_ANALYST_LOGIN:-analyst}
       BOUNDARY_ANALYST_PASSWORD: ${BOUNDARY_ANALYST_PASSWORD}
-      # Independent sessions on LOOPBACK ports, one each. One shared session is a fleet-wide
-      # failure domain: it dies under connection churn and drops every analyst together. The
-      # distributor beside this container owns the analyst-facing port and spreads the fleet
-      # over these. See planning/SCALE-50-WORKSTATIONS.md.
+      # Independent sessions on loopback ports, one each: a single shared session is a fleet-wide
+      # failure domain under connection churn. See planning/SCALE-50-WORKSTATIONS.md.
       BROKER_SESSION_BASE: ${BROKER_SESSION_BASE}
       BROKER_SESSIONS: ${BROKER_SESSIONS}
     volumes:
@@ -146,17 +122,9 @@ services:
     # shown to stall holding no listener at all.
     restart: unless-stopped
 
-  # The analyst-facing port, and the only way to a brokered session.
-  #
-  # The broker holds N independent sessions so one dying costs a share of the fleet rather than
-  # all of it, but every workstation resolves the same name to the same port. This spreads new
-  # connections across the sessions and redispatches past one that has died. It also bounds the
-  # rate of new connections: concurrent setups corrupt a session client's WebSocket.
-  #
-  # Holds no credentials and terminates no TLS: mode tcp, byte-for-byte pass-through, so the
-  # analyst's connection stays encrypted from the workstation to the enclave's SSO ingress
-  # and this process cannot read a byte of it. It shares the bastion's namespace and reaches
-  # the sessions over loopback — it gains no route the broker did not already have.
+  # The analyst-facing port: spreads new connections across the broker's sessions, redispatches past
+  # dead ones, and bounds the setup rate (concurrent setups corrupt a session client's WebSocket).
+  # mode tcp, byte-for-byte — the analyst's TLS stays end-to-end and this process reads none of it.
   distributor:
     image: docker.io/library/haproxy:3.4.3-alpine
     network_mode: "service:bastion"
@@ -191,11 +159,8 @@ services:
       - ../../hashicorp/access/certs:/etc/headscale/certs:ro,z
       - ../../hashicorp/access/policy.hujson:/etc/headscale/policy.hujson:ro,z
       - headscale-data:/var/lib/headscale
-    # Published, because analyst workstations are separate MACHINES. A workstation on its own
-    # laptop cannot join this host's container network and cannot address a container IP — it
-    # reaches the control plane at the DMZ's routable address, which is what HEADSCALE_ADDR
-    # carries. 3478/udp is STUN, used for the direct path; without it nodes fall back to
-    # relaying every packet.
+    # Published because workstations are separate machines reaching the DMZ's routable address
+    # (HEADSCALE_ADDR). 3478/udp is STUN for the direct path; without it every packet relays.
     ports:
       - "${HEADSCALE_PORT}:8080"
       - "${HEADSCALE_STUN_PORT}:3478/udp"

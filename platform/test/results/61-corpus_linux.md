@@ -2,7 +2,7 @@
 
 *What passing proves:* A Linux-native intrusion correlates through the production path on the Linux hunts' own vocabulary and verdict ceiling: persistence names reach the graph, two hosts reached without any movement record join on tradecraft alone, an unrelated compromise on the same fleet stays separate, and the estate's own units and accounts bind nothing.
 
-- Run: `uat_corpus_linux.sh` — 2026-08-09 02:03:37Z
+- Run: `uat_corpus_linux.sh` — 2026-08-12 14:24:28Z
 
 **Preconditions**
 
@@ -12,7 +12,7 @@
 | ✅ PASS | ir-enclave_puller_1 running |
 | ✅ PASS | ir-enclave_backend_1 running |
 | ✅ PASS | ir-enclave_worker_1 running |
-| ✅ PASS | collector image rebuilt from current source |
+| ✅ PASS | collector image current with collector/ |
 | ✅ PASS | the collector runs the full forensics collection (--deep) |
 | ✅ PASS | 22 Linux endpoint scenarios generated |
 | ✅ PASS | manifest published to the backend for comparison |
@@ -76,9 +76,9 @@
 |---|---|
 | ✅ PASS | all 8 Rust Fox hosts are one campaign |
 | ✅ PASS | build-02 is a member with no movement record anywhere |
-| ✅ PASS | and it is held by persistence_shell_init evidence, not movement (weight 0.5094) |
+| ✅ PASS | and it is held by persistence_shell_init evidence, not movement (weight 0.5086) |
 | ✅ PASS | ci-runner-01 is a member with no movement record anywhere |
-| ✅ PASS | and it is held by persistence_preload evidence, not movement (weight 0.4625) |
+| ✅ PASS | and it is held by persistence_cron evidence, not movement (weight 0.4613) |
 | ✅ PASS | dev-ws-02 — an unrelated compromise on the same fleet — does not join Rust Fox |
 | ✅ PASS | dev-ws-03 — an unrelated compromise on the same fleet — does not join Rust Fox |
 | ✅ PASS | the routine bastion-01 -> dev-ws-02 admin session is DECLINED (weight 0.2499, verdict factor 0.25) |
@@ -103,7 +103,7 @@
 
 | Result | Assertion — with evidence |
 |---|---|
-| · | deployment host population at correlation time: 95 |
+| · | deployment host population at correlation time: 92 |
 | ✅ PASS | Rust Fox is not attributed to the Windows actor — no habit is shared |
 | ✅ PASS | INC-CORPUS-A still classifies 12 compromised with a larger fleet around it |
 | ✅ PASS | INC-CORPUS-B still classifies 4 compromised with a larger fleet around it |

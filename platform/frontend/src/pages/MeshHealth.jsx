@@ -29,19 +29,49 @@ function StatusDot({ status }) {
     // "unchecked" means the registration defines no health check — the mesh is not watching
     // this service's liveness, which the Platform Health page covers instead. Distinct from
     // "unknown", which means a check exists and has not reported.
-    status === "unchecked" ? "var(--accent)" : "var(--muted)";
+    status === "unchecked" ? "var(--accent)" : "var(--text-dim)";
   const label =
     status === "unchecked" ? "in the mesh; liveness is not checked here" : status;
   return <span className="health-dot" style={{ background: color }} title={label} />;
 }
 
-/** One cell of the authorization matrix. */
-function Cell({ action, self }) {
+/** One cell of the authorization matrix: the policy, plus what the source's own sidecar
+ * counted where a component testifies. Policy says who MAY connect; the counter says who
+ * TRIED and what happened, which turns a default-deny cell from an assumption into an
+ * observation. */
+function Cell({ action, self, obs }) {
   if (self) {
     return <td className="mesh-cell mesh-self" title="a service reaching itself is not a mesh decision">·</td>;
   }
+  const fails = obs?.connect_fail || 0;
+  const ok = Math.max(0, (obs?.cx_total || 0) - fails);
   if (action === "allow") {
-    return <td className="mesh-cell mesh-allow" title="allowed by an explicit rule">✓</td>;
+    if (fails > 0) {
+      return <td className="mesh-cell mesh-warn"
+                 title={`allowed, but failing in practice — ${fails} of ${obs.cx_total} attempts from the source's own sidecar failed`}>
+               ✓<span className="mesh-obs">{fails}✕</span></td>;
+    }
+    if (ok > 0) {
+      return <td className="mesh-cell mesh-allow"
+                 title={`allowed, and observed carrying traffic — ${ok} connection(s) counted by the source's own sidecar`}>
+               ✓<span className="mesh-obs">{ok}</span></td>;
+    }
+    return <td className="mesh-cell mesh-allow" title="allowed by an explicit rule; no traffic observed">✓</td>;
+  }
+  // A successful connection on a pair the policy does not allow is the divergence this page
+  // exists to surface — it outranks whatever the rule claims.
+  if (ok > 0) {
+    return <td className="mesh-cell mesh-breach"
+               title={`POLICY DIVERGENCE — ${ok} connection(s) succeeded on a pair the policy does not allow`}>
+             !<span className="mesh-obs">{ok}</span></td>;
+  }
+  if (fails > 0) {
+    const base = action === "deny"
+      ? "denied by an explicit rule"
+      : "no rule names this pair — the destination's default applies";
+    return <td className={`mesh-cell ${action === "deny" ? "mesh-deny" : "mesh-default"}`}
+               title={`${base} — and denied in practice: the source's sidecar counted ${fails} refused attempt(s)`}>
+             {action === "deny" ? "✕" : "–"}<span className="mesh-obs">{fails}</span></td>;
   }
   if (action === "deny") {
     return <td className="mesh-cell mesh-deny" title="denied by an explicit rule">✕</td>;
@@ -175,7 +205,8 @@ export default function MeshHealth() {
               <tr key={src}>
                 <th style={{ textAlign: "right", whiteSpace: "nowrap" }}>{src.replace(/^ir-/, "")}</th>
                 {names.map((dst) => (
-                  <Cell key={dst} self={src === dst} action={ruleFor(src, dst)} />
+                  <Cell key={dst} self={src === dst} action={ruleFor(src, dst)}
+                        obs={data.observed?.[src]?.[dst]} />
                 ))}
               </tr>
             ))}
@@ -186,7 +217,20 @@ export default function MeshHealth() {
         <span className="mesh-key mesh-allow">✓</span> explicit allow ·{" "}
         <span className="mesh-key mesh-deny">✕</span> explicit deny ·{" "}
         <span className="mesh-key mesh-default">–</span> no rule; the destination’s default
-        applies (default-deny)
+        applies (default-deny) ·{" "}
+        <span className="mesh-key mesh-warn">✓n✕</span> allowed but failing ·{" "}
+        <span className="mesh-key mesh-breach">!</span> traffic where policy allows none
+      </p>
+      <p className="muted" style={{ marginTop: 4 }}>
+        {Object.keys(data.observed || {}).length > 0 ? (
+          <>A count beside a glyph is first-person evidence — connections the source&apos;s own
+          sidecar counted. Rows that testify: {Object.keys(data.observed).sort().map((s, i) => (
+            <span key={s}>{i > 0 && ", "}<code>{s}</code></span>
+          ))}; every other cell carries policy only.</>
+        ) : (
+          <>No component has reported first-person sidecar counters yet — every cell above is
+          policy only, not an observation of traffic.</>
+        )}
       </p>
     </div>
   );

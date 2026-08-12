@@ -64,21 +64,7 @@ grep -q '"sealed": *false' <<<"${vs}" && ok "unsealed" \
 
 # Unsealed BECAUSE THE SERVER DOES IT, not because a deploy happened to run recently. Vault
 # seals on every restart by design, and restarts have causes a deploy never sees — a crash, an
-# operator, or the mesh repair recreating a sidecar and taking its service with it. Unsealing
-# only at deploy time leaves the platform answering health checks and serving nothing: no
-# dynamic database credential, no custody HMAC, no mesh authentication.
-#
-# Restarted here rather than read off the container's command, because a command that names
-# the unseal script proves it was configured, not that the unprivileged server can read the
-# key — which is exactly where this failed: root-owned 0600 state, server running as uid 65535.
-# The signing keys are IDENTITY FOR DATA AT REST, and the deploy must not touch them.
-# `vault kv put` replaces a whole secret and vault-setup runs every deploy, so generating
-# defaults inline minted a new audit HMAC, custody HMAC and Django secret on every bring-up:
-# every audit signature and every custody seal already written stopped verifying, and the
-# platform reported its own tamper-evidence as broken with nothing having tampered.
-#
-# Asserted by RUNNING the provisioning path again and comparing, not by reading the script:
-# the failure was a live overwrite, and only a live overwrite can prove it is gone.
+# operator, or the mesh repair recreating a sidecar and taking its service with it.
 say "The signing keys survive provisioning — rotation is never a side effect of deploying"
 kv_fp() { ${RUNTIME} exec "$1" sh -c \
     'printf "%s|%s" "${IR_AUDIT_HMAC_KEY}" "${IR_CUSTODY_HMAC_KEY}" | sha256sum | cut -c1-32' 2>/dev/null; }
@@ -195,11 +181,7 @@ ${RUNTIME} exec "${BACKEND}" python -c \
 say "Rotation — executed, not assumed"
 # Issuing a credential once proves the engine works on a fresh deployment. Rotation is the other
 # half of the claim: the OLD credential dies immediately, a NEW one is issued, and the platform
-# converges onto it while staying up. This runs the operational procedure itself — the same
-# script an operator runs on schedule or on compromise — and only if nothing is mid-analysis,
-# because rotation restarts the worker.
-# head -1, and no `|| echo 0`: grep -c PRINTS its zero and then exits non-zero on no match,
-# so the fallback appended a second zero and the arithmetic test choked on "0\n0".
+# converges onto it while staying up.
 busy="$(${RUNTIME} exec ir-enclave_worker_1 sh -c 'ps -eo args | grep -c "[a]nalyze_memory_linux"' 2>/dev/null | head -1)"
 busy="${busy:-0}"
 if [[ "${busy:-0}" -gt 0 ]]; then

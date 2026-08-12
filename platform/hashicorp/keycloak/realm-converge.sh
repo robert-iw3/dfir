@@ -2,11 +2,9 @@
 # ==============================================================================
 # Realm converge — makes realm-irplatform.json the enforced configuration on EVERY deploy.
 #
-# With the identity store on Postgres, `--import-realm` applies only on first start; an
-# existing realm is never updated by it. Without this script a changed password policy,
-# brute-force threshold or session lifetime would deploy cleanly and change nothing.
-# Same principle as Consul's config entries: a bootstrap that never updates an existing
-# object is not configuration management.
+# With the identity store on Postgres, `--import-realm` applies only on first start; an existing
+# realm is never updated by it. Without this script a changed password policy, brute-force
+# threshold or session lifetime would deploy cleanly and change nothing.
 #
 #   realm settings   converged from the file (password policy, brute force, lifetimes, theme)
 #   clients          partialImport with OVERWRITE — a changed client definition applies
@@ -64,12 +62,7 @@ else
     echo "[realm-converge] FAILED to converge clients" >&2; rc=1
 fi
 
-# Groups: additive only.
-#
-# Captured, THEN matched. Piped into `grep -q` the existence check is a race it loses: grep
-# exits on the first match, the writer takes SIGPIPE, and under `set -o pipefail` the pipeline
-# reports 141 — indistinguishable from "not found". A group that exists is then created again,
-# Keycloak refuses the duplicate, and convergence reports a failure that is entirely its own.
+# Groups: additive only. Captured, THEN matched.
 while IFS= read -r g; do
     [[ -n "${g}" ]] || continue
     found="$(kcadm get groups -r "${REALM}" -q "search=${g}" --fields name 2>/dev/null)"

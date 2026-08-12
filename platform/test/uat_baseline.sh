@@ -1,22 +1,12 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# BASELINE UAT — the collector path through every component, verified both ways.
+# BASELINE UAT — the collector path through every component, verified both ways. Closes out the
+# current baseline.
 #
-# Closes out the current baseline. Each hop is asserted in the direction evidence
-# travels AND in the direction it must not:
 #
-#   collector → receiver (DMZ) → [enclave PULLS] → object store → analysis → web app
 #
-# The forward assertions prove the path carries a real capture. The reverse ones prove
-# the boundary still holds: the receiver cannot reach the enclave, the endpoint cannot
-# learn the enclave's capacity, and nothing initiates inward.
 #
-# Static and analysis collection are both exercised. Memory acquisition needs
-# CAP_SYS_ADMIN over the host's /proc/iomem, which a rootless container cannot hold —
-# where that is the case the collector must SAY so rather than silently substitute a
-# synthetic sample, and that is asserted here as a first-class property.
 #
-# Runs container-scoped only. Nothing here modifies the host.
 # ==============================================================================
 set -uo pipefail
 
@@ -86,8 +76,14 @@ if [[ -n "${REPORT_DIR}" ]]; then
     ok "collection produced $(basename "${REPORT_DIR}")/"
 else
     bad "collection produced no report directory"
+    # The WHY dies with the temp workdir unless it is said here: carry the collector's own
+    # last words into the report, or the failure is undiagnosable after the run.
+    info "collector output (tail): $(tail -5 "${WORK}/collect.log" 2>/dev/null | tr '\n' ' ' | cut -c1-400)"
 fi
 
+# Empty when collection failed; every consumer below must degrade to a failing assertion
+# rather than an unbound-variable abort that takes the rest of the suite's evidence with it.
+NAME=""
 HOST_ID="${REPORT_DIR}/_host_identity.json"
 if [[ -f "${HOST_ID}" ]]; then
     SRC="$(python3 -c "import json;print(json.load(open('${HOST_ID}')).get('hostname_source',''))")"
@@ -162,8 +158,7 @@ HUGE="$(${RUNTIME} run --rm --network ir-dmzlink \
 say "Transport — evidence does not cross the wire in the clear"
 # A bundle carries a memory image: every credential, key, token and open file the host had in
 # RAM. The custody seal proves it was not ALTERED in transit and does nothing to stop it being
-# READ, so confidentiality is a separate control and needs its own assertion. Endpoints under
-# suspicion sit on segments the responder neither controls nor trusts.
+# READ, so confidentiality is a separate control and needs its own assertion.
 if [[ "${RECEIVER_URL:-}" == https://* ]]; then
     ok "the configured receiver URL is https (${RECEIVER_URL})"
 else
@@ -332,12 +327,10 @@ n_theme="$(${RUNTIME} logs ir-enclave_keycloak_1 2>&1 | grep -c "Failed to find 
     || bad "${n_theme} theme-load failure(s) — the theme is not reaching the container"
 
 say "Manifests describe what is actually here"
-# The code graph is GENERATED from source and is a manifest: services, the script graph, the
-# API surface, and which UAT proves which service. It went stale unnoticed once — two services
-# and two UATs existed in the tree and not in the graph — because nothing failed when it
-# drifted. Asserted here so a run catches it rather than someone noticing.
 #
-# --check only COMPARES; it never rewrites, so this stays read-only like the rest of the suite.
+# The code graph is GENERATED from source and is a manifest: services, the script graph, the API
+# surface, and which UAT proves which service. It went stale unnoticed once — two services and
+# two UATs existed in the tree and not in the graph — because nothing failed when it drifted.
 GRAPH_GEN="$(cd "${PLATFORM}/.." && pwd)/gen_code_graph.py"
 if [[ ! -f "${GRAPH_GEN}" ]]; then
     bad "gen_code_graph.py not found — the code graph cannot be verified"
@@ -347,11 +340,10 @@ else
     bad "the code graph is STALE — run gen_code_graph.py (a service, script, route or UAT changed)"
 fi
 
-# The documentation is a manifest too, and it drifts the same way — silently, because a dead
-# link and a stale diagram both render perfectly. Three links in the documentation index
-# pointed at files a tree move had relocated, and stayed broken because nothing asserted them.
 #
-# Read-only: it resolves links and checks inventory coverage, and writes nothing.
+# The documentation is a manifest too, and it drifts the same way — silently, because a dead
+# link and a stale diagram both render perfectly. Three links in the documentation index pointed
+# at files a tree move had relocated, and stayed broken because nothing asserted them.
 DOCS_CHECK="${PLATFORM}/ci/docs-check.sh"
 if [[ ! -f "${DOCS_CHECK}" ]]; then
     bad "ci/docs-check.sh not found — documentation integrity cannot be verified"
@@ -373,11 +365,9 @@ else
     bad "comment style: narrative comments or over-dense files — run ci/comment-style-check.sh"
 fi
 
-# The runtime's lock pool. Volumes, containers and pods draw from one fixed allocation of
-# 2048; six of this platform's images declare VOLUME, so every container recreate that does
-# not bind those paths mints an anonymous volume that nothing removes. Exhausting the pool
-# stops the runtime creating ANY container while everything already running keeps serving —
-# the platform reads healthy and every redeploy, restart and test fails at once.
+# The runtime's lock pool. Volumes, containers and pods draw from one fixed allocation of 2048;
+# six of this platform's images declare VOLUME, so every container recreate that does not bind
+# those paths mints an anonymous volume that nothing removes.
 LOCK_POOL="${IR_RUNTIME_LOCK_POOL:-2048}"
 vols="$(${RUNTIME} volume ls -q 2>/dev/null | wc -l)"
 ctrs="$(${RUNTIME} ps -aq 2>/dev/null | wc -l)"

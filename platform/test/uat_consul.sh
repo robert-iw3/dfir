@@ -3,8 +3,7 @@
 # CONSUL UAT — service authorization is explicit, default-deny, and enforced.
 #
 # A layer independent of network reachability. The enclave's internal network lets every service
-# address every other; that is a property of the segment, not a policy. Mesh intentions state
-# which service may talk to which and deny the rest by rule.
+# address every other; that is a property of the segment, not a policy.
 #
 # What passing proves:
 #   1. Consul runs in the enclave with Connect enabled and a leader elected
@@ -181,8 +180,7 @@ done
 # ============================================================ 7. enforcement, not evaluation
 say "The policy is ENFORCED on the wire, not merely evaluated"
 # Everything above proves Consul answers the authorization question correctly. It does not prove
-# anything stops the connection, and those are different claims. Connect enforces in the Envoy
-# sidecar; with no sidecar a denied pair connects directly and the intention is a document.
+# anything stops the connection, and those are different claims.
 n_svcs="$(ccli catalog services | grep -c .)"
 [[ "${n_svcs:-0}" -gt 1 ]] \
     && ok "platform services are registered in the catalog (${n_svcs} entries)" \
@@ -219,19 +217,8 @@ else
 fi
 
 # The worker's leg, proven by the queue answering — celery only responds to `inspect ping` if
-# the worker process holds a live broker connection, so this is dispatch through the mesh.
-#
-# The output is CAPTURED and then matched, never piped into `grep -q`.
-#
-# `grep -q` exits the moment it matches, which closes the pipe and sends SIGPIPE to
-# `podman exec`. Under `set -o pipefail` that failure becomes the pipeline's status, so a
-# SUCCESSFUL ping reports as "the broker connection is broken" — the assertion fails hardest
-# exactly when the thing it tests is working.
-#
-# Retried as well, because a worker recreated moments ago has genuinely not connected yet:
-# the deploy replaces it whenever its database credential is superseded, so running this
-# suite straight after a deploy lands in that window. Bounded, so a broker that is really
-# down still fails rather than hanging.
+# the worker process holds a live broker connection, so this is dispatch through the mesh. The
+# output is CAPTURED and then matched, never piped into `grep -q`.
 WORKER_PONG=0
 for _ in $(seq 1 10); do
     ping_out="$(${RUNTIME} exec ir-enclave_worker_1 \

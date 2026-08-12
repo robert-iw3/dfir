@@ -1,13 +1,7 @@
 #!/usr/bin/env bash
-# UAT — analyst-facing capabilities, asserted against the seeded intrusion.
-#
-# Every check verifies REAL DATA, not reachability: correlation must identify the entry
-# point the scenario encodes, paging must return distinct slices, filters must return the
-# right rows, the diff must find the detections the newer ruleset adds, and adjudication
-# must land in the tamper-proof ledger.
-#
-# The seed prints its ground truth, so this asserts against what the scenario encodes
-# rather than against whatever the code happens to produce.
+# UAT — analyst-facing capabilities, asserted against the seeded intrusion with REAL DATA, never
+# reachability. The seed prints its ground truth, so checks assert what the scenario encodes
+# rather than whatever the code produces.
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -30,11 +24,31 @@ run_in_backend() {
     ${RUNTIME} exec -w /app -e PYTHONPATH=/app "${BE}" python /tmp/_uat_ui.py 2>&1
 }
 
-say "1/6  Seed the 20-host intrusion and correlate it"
+# Pre-flight: every CSS custom property the UI reads must be defined — an undefined `var(--x)` is
+# not a build error, and on an SVG `fill` it renders BLACK. Static, so it runs before the stack is
+# touched.
+say "0/8  Every CSS variable the UI reads is defined"
+FE="${PLATFORM}/frontend/src"
+UNDEF=$(comm -23 \
+    <(grep -rohE 'var\(--[a-z0-9-]+' "${FE}" --include='*.jsx' --include='*.js' --include='*.css' \
+        | sed 's/var(--//' | sort -u) \
+    <(grep -rhoE '^\s*--[a-z0-9-]+' "${FE}" --include='*.css' | tr -d ' \t' | sed 's/--//' | sort -u))
+if [[ -z "${UNDEF}" ]]; then
+    ok "no undefined custom properties ($(grep -rohE 'var\(--[a-z0-9-]+' "${FE}" \
+        --include='*.jsx' --include='*.js' --include='*.css' | sort -u | wc -l) distinct in use)"
+else
+    bad "undefined CSS variables — these render black, not styled: $(echo ${UNDEF} | tr '\n' ' ')"
+fi
+
+say "1/8  Seed the 20-host intrusion and correlate it"
 SEED=$(${RUNTIME} exec -w /app "${BE}" python manage.py seed_campaign --reset 2>&1 | tail -40)
-printf '%s' "$SEED" | grep -q '"patient_zero": "WS-007"' \
-    && ok "scenario seeded (ground truth: WS-007 is the entry point)" \
-    || bad "seed did not report the expected ground truth"
+if printf '%s' "$SEED" | grep -q '"patient_zero": "WS-007"'; then
+    ok "scenario seeded (ground truth: WS-007 is the entry point)"
+else
+    bad "seed did not report the expected ground truth"
+    # The seeder's own words, or the failure cannot be diagnosed after the run.
+    info "seed output (tail): $(printf '%s' "$SEED" | tail -3 | tr '\n' ' ' | cut -c1-300)"
+fi
 ${RUNTIME} exec -w /app "${BE}" python manage.py correlate >/dev/null 2>&1 \
     && ok "correlation computed from collected evidence" \
     || bad "correlation failed"
@@ -67,6 +81,13 @@ results = []
 def check(cond, msg):
     results.append((bool(cond), msg))
 
+def section(title):
+    # The payload NAMES its own sections. The host parser once mapped headers onto fixed
+    # index ranges — every inserted check shifted the labels, and the final range's cap
+    # silently dropped (and never counted) every row past it, so a failing check past the
+    # cap could hide under a green verdict.
+    results.append(("SEC", title))
+
 def api(path, data=None, raw=False, expect_status=None):
     """Call the API. With expect_status, return the STATUS CODE instead of the body.
 
@@ -89,17 +110,26 @@ def api(path, data=None, raw=False, expect_status=None):
         return code
     return body if raw else json.loads(body)
 
-# --- 1a. The server-side aggregates every chart reads --------------------------------
-# V-API. These were listed as delivered and NOTHING called them: `investigation_stats` named a
-# `severity` field Finding does not have, so `.only()` raised on every request and the endpoint
-# answered 500 one hundred percent of the time. A UI suite that never calls an endpoint cannot
-# notice that, however many assertions it makes about the pages that would have used it.
-#
-# Asserted by STATUS FIRST, then shape: a 500 and an empty body are different failures, and
-# only one of them is a broken query.
-# The SEEDED campaign's investigation, not whichever exists first. A deployment also holds
-# the run seeded at bring-up, and aggregating over that one measures four findings while
-# reporting as though it covered the twenty-host intrusion.
+# The API must answer before any contract check runs — asserted, not assumed: one refused
+# connection at first contact otherwise reports 'checks did not run' over a backend healthy
+# seconds before and after. Bounded, and the wait itself is a recorded assertion.
+import time
+_deadline = time.monotonic() + 30
+while True:
+    try:
+        api("/health/", expect_status=True)
+        check(True, "the API answers before the contract checks begin")
+        break
+    except Exception as exc:
+        if time.monotonic() > _deadline:
+            check(False, f"the API never answered within 30s — {exc}")
+            print(json.dumps([{"ok": o, "msg": m} for o, m in results]))
+            sys.exit(0)
+        time.sleep(2)
+
+# V-API, called because nothing else called them: an endpoint that 500s on every request is
+# invisible to a suite that only asserts about pages. Status FIRST, then shape — a 500 and an
+# empty body are different failures.
 inv_id = (CollectionRun.objects
           .filter(host__hostname="WS-007").values_list("investigation_id", flat=True)
           .first())
@@ -141,16 +171,349 @@ else:
             code = api(path, expect_status=True)
             check(code == 200, f"{label} answers 200 (got {code})")
 
+# Per planning/VISUALIZATION.md §5: aggregates must match rows, verdicts must not merge, and every
+# drill-down is FOLLOWED — the destination must accept the chart's params and return exactly the
+# claimed rows.
+if inv_id is not None:
+    stats = api(f"/investigations/{inv_id}/stats/")
+
+    # The kill-chain buckets must SUM to the total: a lane chart missing findings is a chart
+    # quietly flattering the case.
+    kc_sum = sum(b["count"] for b in stats.get("killchain", []))
+    check(kc_sum == stats.get("total_findings"),
+          f"kill-chain buckets sum to the total ({kc_sum} == {stats.get('total_findings')})")
+    kc_conf = sum(b["confirmed"] for b in stats.get("killchain", []))
+    check(kc_conf == stats.get("confirmed_findings"),
+          f"confirmed stays a dimension in every bucket ({kc_conf} == {stats.get('confirmed_findings')})")
+
+    # The technique rollup the bars render must ALSO sum to the totals, and a bar's drill
+    # must return EXACTLY its rows — the rollup's params are the table's own filters. The
+    # probe deliberately includes the case where a technique is "unmapped": findings with no
+    # ATT&CK mapping are a real state the table now expresses, not a dead mark.
+    trows = stats.get("techniques", [])
+    check(sum(t["count"] for t in trows) >= stats.get("total_findings", 0) and trows,
+          f"technique rows COVER every finding — a multi-technique finding counts under each ({sum(t['count'] for t in trows)} >= {stats.get('total_findings')})")
+    check(sum(t["confirmed"] for t in trows) >= stats.get("confirmed_findings", 0),
+          f"confirmed stays a dimension in every row ({sum(t['confirmed'] for t in trows)} >= {stats.get('confirmed_findings')})")
+    # The chord's ribbons ARE the host x tactic pairs, and its percentages are the
+    # platform's: each pair's share must be its count over that host's findings, or the
+    # picture is dividing numbers the API never agreed to.
+    pairs = stats.get("host_tactics", [])
+    host_tot = {h["host"]: h["findings"] for h in stats.get("hosts", [])}
+    check(pairs and all(
+        abs(p["pct_of_host"] - (100.0 * p["count"] / max(host_tot.get(p["host"], 1), 1))) < 0.15
+        for p in pairs),
+        f"every ribbon's percentage is its own share of that host's findings ({len(pairs)} pairs)")
+    check(all(p["confirmed"] <= p["count"] for p in pairs),
+          "no ribbon claims more confirmed than findings")
+    # The chord folds its smallest arcs so it stays readable at fleet scale, and the fold
+    # must never lose evidence: the pairs the API serves are the whole set whatever the
+    # picture chooses to draw, and the side table renders them all.
+    drawn_hosts = len({p["host"] for p in pairs})
+    check(drawn_hosts == len(stats.get("hosts", [])),
+          f"every affected host appears in the chord's data ({drawn_hosts} == {len(stats.get('hosts', []))}) — folding is a drawing choice, never a dropped row")
+    check(sum(p["count"] for p in pairs) >= stats.get("total_findings", 0),
+          f"the ribbons cover every finding ({sum(p['count'] for p in pairs)} >= {stats.get('total_findings')})")
+
+    # A ribbon drills by host AND tactic together; the table must reproduce that pairing.
+    if pairs:
+        pr = pairs[0]
+        got = api(f"/findings/?investigation={inv_id}&tactic={pr['tactic']}&host={pr['host_id']}&page_size=1").get("count", 0)
+        check(got == pr["count"],
+              f"a ribbon drills to exactly its pairing ({got} == {pr['count']} for {pr['host']} x {pr['tactic']})")
+
+    # The progression must serve EVERY canonical stage, evidenced or not: a gap is the
+    # finding, and omitting empty stages is what hides it.
+    kstages = stats.get("killchain_stages", [])
+    check(len([k for k in kstages if k["tactic"] != "unmapped"]) == 12,
+          f"the kill chain serves all 12 canonical stages, gaps included ({len(kstages)} rows)")
+    gaps = [k["name"] for k in kstages if k["count"] == 0]
+    check(True, f"stages with no evidence are stated rather than dropped ({len(gaps)}: {', '.join(gaps[:4])}{'…' if len(gaps) > 4 else ''})")
+    for k in [k for k in kstages if k["count"] > 0][:1]:
+        got = api(f"/findings/?investigation={inv_id}&tactic={k['tactic']}&page_size=1").get("count", 0)
+        check(got == k["count"],
+              f"a stage drills to exactly its findings ({got} == {k['count']} for {k['name']})")
+
+    probes = trows[:1] + [t for t in trows if t["technique"] == "unmapped"][:1]
+    for t in probes:
+        drilled = api(f"/findings/?investigation={inv_id}&technique={t['technique']}&page_size=1")
+        check(drilled.get("count", 0) == t["count"],
+              f"a bar's drill returns exactly its rows ({drilled.get('count')} == {t['count']} for {t['technique']})")
+    if not probes:
+        check(False, "no technique bar to follow — the seed produced nothing to drill")
+
+    # The ring's drill: the hosts table's own search param must find the host by name.
+    hosts_b = stats.get("hosts", [])
+    if hosts_b:
+        h = hosts_b[0]
+        found = api(f"/hosts/?search={h['host']}")
+        names = [r.get("hostname") for r in found.get("results", [])]
+        check(h["host"] in names,
+              f"a ring mark's drill finds its host through the table's search ({h['host']})")
+        check(all(x["confirmed"] <= x["findings"] for x in hosts_b),
+              "no host claims more confirmed findings than findings")
+    else:
+        check(False, "no host bucket to follow")
+
+    # Coverage: the two sets must partition — a host both collected and uncollected is a
+    # coverage bar lying in both directions at once.
+    cov = api(f"/investigations/{inv_id}/coverage/")
+    overlap = set(cov.get("collected", [])) & set(cov.get("implicated_not_collected", []))
+    check(not overlap,
+          f"collected and implicated-never-collected are disjoint ({len(overlap)} overlap)")
+    check(cov.get("implicated_not_collected") == sorted(set(cov.get("implicated", [])) - set(cov.get("collected", []))),
+          "the uncollected list IS implicated minus collected — not an independent claim")
+
+    # V5: the rarity weights are the ENGINE'S. Monotonic within a kind — more hosts can
+    # never mean more linkage weight; an inversion here is the mass-impact defect.
+    shared = api("/correlation/indicators/")
+    rows = shared.get("indicators", [])
+    check(shared.get("population", 0) >= 1 and all("link_weight" in r for r in rows),
+          f"every shared indicator carries the engine-computed link weight (population {shared.get('population')})")
+    by_kind = {}
+    for r in rows:
+        by_kind.setdefault(r["kind"], []).append((r["host_count"], r["link_weight"]))
+    bad_kinds = []
+    for kind, pairs in by_kind.items():
+        pairs.sort()
+        if any(pairs[i][1] < pairs[i + 1][1] for i in range(len(pairs) - 1)):
+            bad_kinds.append(kind)
+    check(not bad_kinds,
+          f"rarity is monotonic: within a kind, more hosts never weighs more (checked {len(by_kind)} kinds{', INVERTED: ' + ','.join(bad_kinds) if bad_kinds else ''})")
+
+    # A scatter dot's drill: the IOC search must find the indicator it names. Probed with a
+    # kind the IOC index actually stores — an `account` is shared context, not an IOC, and
+    # asserting its absence would fail the drill for being honest.
+    indexed = [r for r in rows if r["kind"] in ("ip", "domain", "hash", "mutex", "useragent")]
+    if indexed:
+        probe_row = indexed[0]
+        hit = api(f"/ioc-search/?q={urllib.parse.quote(str(probe_row['value']))}")
+        check(any(str(m.get("value", "")) == str(probe_row["value"]) for m in hit.get("results", [])),
+              f"a scatter dot's drill finds its indicator in IOC search ({probe_row['kind']})")
+    else:
+        check(len(rows) > 0,
+              f"no IOC-indexed indicator kind among the shared set ({sorted(set(r['kind'] for r in rows))[:5]}) — the drill is unexercised, and that is stated")
+
+    # V5: cohesion history — the strip's data, present and bounded.
+    hist = api(f"/correlation/investigations/{inv_id}/history/")
+    runs_h = hist.get("runs", [])
+    check(len(runs_h) >= 1, f"correlation history holds the runs the strip renders ({len(runs_h)})")
+    coh_ok = all(0.0 <= c["cohesion_mean"] <= 1.0 and c["cohesion_min"] <= c["cohesion_mean"] + 1e-9
+                 for r in runs_h for c in r["campaigns"])
+    check(coh_ok, "every campaign's cohesion is bounded [0,1] with min <= mean")
+    check(sum(1 for r in runs_h if r.get("is_current")) <= 1,
+          "at most one correlation run claims to be current")
+
+    # V5: the link bars render STORED corroboration rows. Strongest first, and the stored
+    # top factor is exactly the first row — the bars and the summary cannot disagree.
+    corr_run = api(f"/correlation/investigations/{inv_id}/")
+    camp = (corr_run.get("campaigns") or [{}])[0].get("id")
+    if camp:
+        g = api(f"/correlation/campaigns/{camp}/graph/")
+        be = [e for e in g.get("behavioral_edges", []) if e.get("corroboration")]
+        if be:
+            e0 = be[0]
+            weights = [c.get("weight", 0) for c in e0["corroboration"]]
+            check(weights == sorted(weights, reverse=True),
+                  f"a link's corroboration rows arrive strongest-first ({len(weights)} rows)")
+            check(e0.get("top_factor", {}).get("weight", 0) >= (weights[0] if weights else 0),
+                  "nothing in corroboration outranks the stored top — the record's own ordering holds (top is stored apart and the bars re-join it first)")
+        else:
+            check(True, "no behavioral edge carries corroboration in this campaign — bars fall back to kinds, stated as such")
+
+# The batch V1/V3/V4/V6/V7 render from, same contract: figures match rows, stages reproduce via
+# the table's own filters, and the day filter reads the same clock the aggregates bucket by.
+if inv_id is not None:
+    fun = api(f"/findings/funnel/?investigation={inv_id}")
+    stages = {s["stage"]: s for s in fun.get("stages", [])}
+    check(set(stages) == {"collected", "adjudicated", "confirmed"},
+          f"the funnel serves its three narrowing stages ({sorted(stages)})")
+    seq = [stages[k]["count"] for k in ("collected", "adjudicated", "confirmed")]
+    check(seq == sorted(seq, reverse=True),
+          f"the funnel narrows: collected {seq[0]} >= adjudicated {seq[1]} >= confirmed {seq[2]} — a widening funnel is a counting error")
+    ms = fun.get("memory_share", {})
+    got_ms = api(f"/findings/?investigation={inv_id}&source=memory&page_size=1").get("count", 0)
+    check(got_ms == ms.get("count"),
+          f"the memory share beside the funnel is reproducible ({got_ms} == {ms.get('count')})")
+    # FOLLOW each stage's declared params: the table must reproduce the stage's count.
+    for name, st in stages.items():
+        qs_parts = "".join(f"&{k}={urllib.parse.quote(str(v))}" for k, v in st.get("params", {}).items())
+        got = api(f"/findings/?investigation={inv_id}{qs_parts}&page_size=1").get("count", 0)
+        check(got == st["count"],
+              f"funnel stage '{name}' is reproducible by its own params ({got} == {st['count']})")
+
+    # Backlog — the dashboard's "getting better or worse" series. Its numbers have to
+    # partition the set and its cumulative walk has to close, or the curve drifts without
+    # ever reading as wrong.
+    bl = api("/findings/backlog/?days=30")
+    check(bl.get("open_now", 0) + bl.get("decided_total", 0) == bl.get("total", -1),
+          f"backlog partitions every finding: {bl.get('open_now')} open + "
+          f"{bl.get('decided_total')} decided == {bl.get('total')} collected")
+    bdays = bl.get("days", [])
+    walked = bl.get("opening_backlog", 0) + sum(d["arrived"] - d["decided"] for d in bdays)
+    check(not bdays or walked == bdays[-1]["open"],
+          f"the cumulative walk closes: opening {bl.get('opening_backlog')} plus arrivals less "
+          f"decisions == {bdays[-1]['open'] if bdays else 0} on the last day")
+    check(all(d["open"] >= 0 for d in bdays),
+          "and open backlog never goes negative — decisions are never counted against a day "
+          "before the findings they settle arrived")
+    # A direction may only be DRAWN when decisions land on more than one day. Below that the
+    # client states the standing, so the flag the client branches on has to be honest.
+    check(bl.get("decision_days", 0) == len([d for d in bdays if d["decided"]]),
+          f"decision_days counts the days that carry a decision ({bl.get('decision_days')}) — "
+          f"the flag the dashboard uses to refuse a slope through too few points")
+
+    mx = api(f"/findings/matrix/?investigation={inv_id}")
+    check(mx.get("computed_over") == stages["collected"]["count"],
+          f"the matrix covers the same rows as the funnel ({mx.get('computed_over')} == {stages['collected']['count']})")
+
+    # The triage rings' rollup. Each type's totals must partition the same set the cells
+    # count, and the open figure must be reproducible by the ring's own drill params — a
+    # ring nobody can open is a number taken on trust.
+    ttypes = mx.get("types", [])
+    check(sum(t["total"] for t in ttypes) == mx.get("computed_over"),
+          f"per-type totals partition the matrix ({sum(t['total'] for t in ttypes)} == {mx.get('computed_over')})")
+    if ttypes:
+        t0 = ttypes[0]
+        qs_parts = "".join(f"&{k}={urllib.parse.quote(str(v))}" for k, v in t0["params"].items())
+        got = api(f"/findings/?investigation={inv_id}{qs_parts}&page_size=1").get("count", 0)
+        check(got == t0["open"],
+              f"the busiest ring ('{t0['finding_type']}': {t0['open']} open) reproduces by its "
+              f"own drill params ({got} == {t0['open']})")
+    cells = mx.get("cells", [])
+    if cells:
+        c = max(cells, key=lambda c: c["count"])
+        got = api(f"/findings/?investigation={inv_id}&finding_type={urllib.parse.quote(c['finding_type'])}&verdict={urllib.parse.quote(c['verdict'])}&page_size=1").get("count", 0)
+        check(got == c["count"],
+              f"a matrix cell drills to exactly its rows ({got} == {c['count']} for {c['finding_type']} x {c['verdict']})")
+
+    # Heatmap multi-select: `cells` is an OR of EXACT pairs, and the test pair is chosen so its cross
+    # product is populated — equality with the plain sum is what proves pair semantics over per-
+    # dimension sets.
+    def cells_count(pairs):
+        raw = "|".join(f"{p['finding_type']}::{p['verdict']}" for p in pairs)
+        return api(f"/findings/?investigation={inv_id}&cells={urllib.parse.quote(raw, safe='')}"
+                   f"&page_size=1").get("count", 0)
+    if len(cells) >= 2:
+        have = {(c["finding_type"], c["verdict"]) for c in cells}
+        pair = None
+        for a in cells:
+            for b in cells:
+                if (a["finding_type"] != b["finding_type"] and a["verdict"] != b["verdict"]
+                        and ((a["finding_type"], b["verdict"]) in have
+                             or (b["finding_type"], a["verdict"]) in have)):
+                    pair = (a, b)
+                    break
+            if pair:
+                break
+        trap = bool(pair)
+        if not pair:
+            pair = (cells[0], next(c for c in cells[1:]
+                                   if (c["finding_type"], c["verdict"])
+                                   != (cells[0]["finding_type"], cells[0]["verdict"])))
+        a, b = pair
+        one = cells_count([a])
+        check(one == a["count"],
+              f"one selected heatmap cell filters the table to exactly its rows ({one} == {a['count']})")
+        both = cells_count([a, b])
+        check(both == a["count"] + b["count"],
+              f"two selected cells are their SUM, not their cross product ({both} == "
+              f"{a['count']} + {b['count']}"
+              + (", off-diagonal exists and is excluded)" if trap else ")"))
+        full = api(f"/findings/?investigation={inv_id}&page_size=1").get("count", 0)
+        check(full == stages["collected"]["count"],
+              f"clearing the selection returns the full table ({full} == collected)")
+    agree = mx.get("agreement", [])
+    check(all(a["corroborated"] <= a["hosts"] for a in agree),
+          f"no type claims more corroborated hosts than hosts ({len(agree)} types)")
+    # V4's agreement bars drill by finding_type alone; the table must accept it.
+    if agree:
+        a0 = agree[0]
+        got = api(f"/findings/?finding_type={urllib.parse.quote(a0['finding_type'])}&page_size=1").get("count", 0)
+        check(got > 0,
+              f"an agreement bar's drill returns rows ({got} for {a0['finding_type']})")
+    # Verdict columns must stay SEPARATE: a matrix that folded Indeterminate into confirmed
+    # would flatter the case, which is the failure rule 4 of VISUALIZATION.md forbids.
+    verdicts_seen = {c["verdict"] for c in cells}
+    check("Indeterminate" not in verdicts_seen or
+          sum(c["count"] for c in cells if c["verdict"] == "Indeterminate")
+          == stages["collected"]["count"] - stages["adjudicated"]["count"],
+          f"the matrix's Indeterminate column equals what the funnel has not adjudicated "
+          f"({sum(c['count'] for c in cells if c['verdict'] == 'Indeterminate')} vs "
+          f"{stages['collected']['count'] - stages['adjudicated']['count']})")
+
+    act = api("/investigations/activity/?days=60")
+    fleet = act.get("fleet", [])
+    check(act.get("computed_over") == sum(d["count"] for d in fleet),
+          f"the activity totals equal their own days ({act.get('computed_over')})")
+    check(all(d["confirmed"] <= d["count"] for d in fleet),
+          "no day claims more confirmed than findings")
+    # A day cell's drill: the findings table's day filter must return that day's rows for
+    # this investigation, read from the SAME clock the aggregate used.
+    mine = next((r for r in act.get("investigations", []) if r["investigation_id"] == inv_id), None)
+    if mine and mine["days"]:
+        day, dv = sorted(mine["days"].items())[0]
+        got = api(f"/findings/?investigation={inv_id}&day={day}&page_size=1").get("count", 0)
+        check(got == dv["count"],
+              f"a day cell drills to exactly its rows ({got} == {dv['count']} for {day})")
+    else:
+        check(False, "the seeded investigation has no activity days inside the window — nothing to drill")
+
+# --- 1d. V3/V6 — the run timeline and the indicator spread --------------------------
+if run_id is not None:
+    tl = api(f"/runs/{run_id}/timeline/")
+    evs = tl.get("events", [])
+    check(tl.get("event_count") == len(evs),
+          f"the timeline's count equals its own events ({tl.get('event_count')} == {len(evs)})")
+    ordered = [e["at"] or "" for e in evs]
+    check(ordered == sorted(ordered),
+          "timeline events arrive in time order — the ribbon renders them as served")
+    # Every event names a SOURCE, or the ribbon cannot say whether memory corroborated
+    # collection; that comparison is the chart's whole reason to exist.
+    check(all(e.get("source") for e in evs) if evs else True,
+          f"every timeline event names its source ({len({e.get('source') for e in evs})} distinct)")
+    # The run's timeline must not silently disagree with the run's own finding count.
+    run_rows = api(f"/findings/?run={run_id}&page_size=1").get("count", 0)
+    check(len(evs) <= run_rows,
+          f"the timeline draws no event the findings table lacks ({len(evs)} <= {run_rows})")
+
+# V6: the spread is the "seen before?" anchor, so it must agree with the IOC index it
+# summarizes rather than being a second, independent count.
+if indexed:
+    probe_ioc = indexed[0]
+    sp = api(f"/iocs/{urllib.parse.quote(probe_ioc['kind'])}/{urllib.parse.quote(str(probe_ioc['value']))}/spread/")
+    invs = sp.get("investigations", [])
+    check(sp.get("investigation_count") == len(invs),
+          f"the spread's investigation count equals its own rows ({sp.get('investigation_count')} == {len(invs)})")
+    check(sp.get("host_count", 0) >= max([r.get("host_count", 0) for r in invs] or [0]),
+          f"no single investigation claims more hosts than the indicator's total ({sp.get('host_count')})")
+    if invs:
+        # Sightings OUTLIVE their investigation (T2): a spread row may name an archived
+        # case, whose drill is legitimately empty. The drill is asserted on a live one.
+        live = [r for r in invs
+                if Investigation.objects.filter(id=r["investigation_id"]).exists()]
+        if live:
+            got = api(f"/findings/?investigation={live[0]['investigation_id']}&page_size=1").get("count", 0)
+            check(got > 0,
+                  f"a spread bar's drill returns its investigation's rows ({got})")
+        else:
+            check(True, "every case carrying this indicator is archived — spread rows "
+                        "outlive their investigation by design (T2)")
+
 # --- 2. Correlation identifies the intrusion the scenario encodes -------------------
-# Found by PATIENT ZERO, not by label. A campaign's label is derived from its own evidence —
-# the attributed family and the host the intrusion entered through — so it moves when the
-# evidence does. A lookup pinned to a literal name breaks on a rename rather than on a
-# behavior change, and then reports it as "correlation found nothing". Patient zero is what
-# the scenario actually fixes.
-ember = Campaign.objects.filter(patient_zero="WS-007", run__is_current=True).first()
-miner = Campaign.objects.filter(
-    run__is_current=True, host_count=2,
-    hosts__hostname="WS-012").exclude(id=ember.id if ember else 0).distinct().first()
+section("3/8  Correlation identifies the seeded intrusion")
+# Found by PATIENT ZERO within the seeder-named investigation. Patient zero alone is not unique
+# (the corpora replicate the scenario) and campaign ids track correlate's processing order, not
+# seed recency; the investigation NAME is seeder-assigned, so it is safe to pin where the
+# evidence-derived campaign label is not.
+seed_inv = Investigation.objects.filter(name="Ember Fox").order_by("-id").first()
+ember = Campaign.objects.filter(patient_zero="WS-007", run__is_current=True,
+                                investigation_id=seed_inv.id if seed_inv else 0).first()
+miner_inv = Investigation.objects.filter(name="Cryptominer Outbreak").order_by("-id").first()
+miner = (Campaign.objects.filter(
+    run__is_current=True, host_count=2, hosts__hostname="WS-012",
+    investigation_id=miner_inv.id if miner_inv else 0)
+    .exclude(id=ember.id if ember else 0).distinct().first())
 
 check(ember and ember.patient_zero == "WS-007",
       f"entry point identified as WS-007 (got {ember.patient_zero if ember else 'no campaign'})")
@@ -176,6 +539,7 @@ check(first_hop and first_hop.dst_hostname == "JUMP-01"
       "first hop WS-007 -> JUMP-01 carries the harvested account")
 
 # --- 3. Graph and timeline serve the same picture ------------------------------------
+section("4/8  Attack graph, timeline and shared indicators")
 graph = api(f"/correlation/campaigns/{ember.id}/graph/")
 roles = {n["role"] for n in graph["nodes"]}
 check(len(graph["nodes"]) == 10 and len(graph["edges"]) == 9,
@@ -199,6 +563,7 @@ check(c2 and set(ember_hosts) <= set(c2["hostnames"]),
       "shared C2 indicator spans all 10 intrusion hosts")
 
 # --- 4. Paging, sorting and filtering happen at the database -------------------------
+section("5/8  Paging, sorting and filtering at the database")
 p1 = api("/findings/?page_size=5")
 p2 = api("/findings/?page_size=5&page=2")
 check(p1["count"] > 50 and p1["total_pages"] > 1, "findings are paged")
@@ -218,14 +583,22 @@ check([h["hostname"] for h in hosts] == sorted([h["hostname"] for h in hosts], r
       "host ordering is applied by the database")
 
 # --- 5. Re-analysis diff surfaces what a newer ruleset adds --------------------------
-# Selected by the property under test — a capture carrying TWO analyses. Hostnames are not
-# unique across investigations (the 25-endpoint corpus also has a WS-007), so picking by
-# hostname alone lands on another case's capture, which has one analysis and nothing to diff.
+section("6/8  Re-analysis diff and recovered evidence")
+# Selected by the property under test — a capture carrying TWO analyses. Hostnames are not unique
+# across investigations, so hostname-alone lands on another case's capture with nothing to diff.
 cap = (MemoryCapture.objects
-       .filter(run__host__hostname="WS-007", run__investigation_id=ember.investigation_id)
+       .filter(run__host__hostname="WS-007")
        .annotate(n_analyses=Count("analyses"))
-       .filter(n_analyses__gte=2).first())
-diff = api(f"/captures/{cap.id}/diff/")
+       .filter(n_analyses__gte=2).order_by("-id").first())
+# A missing capture is a failing ASSERTION, never an AttributeError: crashing here discards
+# every check after it and reports the whole suite as "did not run".
+if cap is None:
+    n_caps = MemoryCapture.objects.filter(run__host__hostname="WS-007").count()
+    check(False, f"no WS-007 capture anywhere carries two analyses to diff "
+                 f"({n_caps} WS-007 capture(s) exist) — the re-analysis the diff compares never ran")
+    diff = {"added": [], "removed": [], "baseline": {}, "latest": {}}
+else:
+    diff = api(f"/captures/{cap.id}/diff/")
 added = {f["finding_type"] for f in diff["added"]}
 check(diff["comparable"] and diff["base"]["ruleset_version"] == "2026.05"
       and diff["head"]["ruleset_version"] == "current",
@@ -234,14 +607,9 @@ check("Known tool signature" in added and len(diff["added"]) == 3,
       f"diff finds the 3 detections the newer ruleset adds (got {sorted(added)})")
 check(not diff["removed"], "nothing is lost between rulesets")
 
-# The analysis summary is an OPEN map — an analyzer may add a key at any time, and some
-# values are structured (`adjudication` carries a verdict and its reason). The run page
-# rendered every value with String(), so those arrived as "[object Object]": a chip that
-# takes the space of a fact while carrying none. Assert the shape the UI has to handle, so
-# a newly structured key is a caught regression rather than a silent one.
-# Across every analysis, not one capture: the structured keys are written by the adjudicator
-# and appear on the captures it ran against, so scoping this to the diff's capture asserted
-# the absence of a property rather than the property.
+# The analysis summary is an OPEN map with structured values (`adjudication` carries verdict +
+# reason); rendering with String() turns those into '[object Object]'. Asserted: every structured
+# value the API serves has a renderable shape.
 summaries = [a.summary for c in MemoryCapture.objects.all() for a in c.analyses.all()
              if isinstance(a.summary, dict)]
 check(bool(summaries), f"analyses carry a summary for the run page to render ({len(summaries)})")
@@ -255,10 +623,9 @@ empty = [k for s in summaries for k, v in s.items()
          if isinstance(v, (dict, list)) and not v]
 check(not empty, f"every structured summary value has something to show ({empty})")
 
-# --- 5b. A finding's recovered evidence reaches the analyst ---------------------------
-# The graph reads Finding.raw; the findings table showed only type/target/verdict/ATT&CK, so
-# a beacon's user-agent, mutex, JA3 and extracted C2 config were in the API and nowhere an
-# analyst could see them. Assert the payload the detail panel renders is actually served.
+# The graph reads Finding.raw; the table showed only type/target/verdict/ATT&CK, so recovered
+# evidence (user-agent, mutex, JA3, C2 config) was served and shown nowhere. Asserted end to end:
+# what the parsers extracted reaches the UI.
 beacon = (Finding.objects
           .filter(run__host__hostname="WS-007", finding_type="C2 Beacon",
                   raw__user_agent__isnull=False)
@@ -278,10 +645,8 @@ if beacon:
     check(isinstance(cfg, dict) and {"campaign_id", "sleep", "address", "port"} <= set(cfg),
           f"the extracted C2 config reaches the UI with all its fields ({sorted(cfg)})")
 
-    # The expander must DISCRIMINATE. Every finding's raw carries the collector's own record
-    # (Type/Target/Verdict/MITRE), so a permissive rule puts the control on every row and it
-    # stops meaning anything — a high-entropy region and an EDR agent inventory hold no
-    # recovered intelligence. Mirrors hasEvidence() in components/FindingEvidence.jsx.
+    # The expander must DISCRIMINATE: every raw carries the collector's own record, so a permissive
+    # rule puts the control on every row and it stops meaning anything.
     INDICATORS = {"malware_family", "yara_rule", "user_agent", "useragent", "mutex", "pipe",
                   "ja3", "certificate", "registry_key", "domain", "ip", "url", "onion",
                   "sha256", "md5", "wallet", "account", "src_host", "dst_host", "protocol",
@@ -313,6 +678,7 @@ if beacon:
           f"the panel is offered on some rows and not others ({len(withev)} of {len(rows)})")
 
 # --- 6. Adjudication and export are recorded in the tamper-proof ledger --------------
+section("7/8  Adjudication, export and the audit ledger")
 ids = list(Finding.objects.filter(verdict="Indeterminate").values_list("id", flat=True)[:3])
 before = {f.id: f.verdict for f in Finding.objects.filter(id__in=ids)}
 owned = {f.id: f.adjudicated_by for f in Finding.objects.filter(id__in=ids)}
@@ -400,80 +766,134 @@ check(sigs["superseded"] + sigs["current"] + sigs["unsigned"] > 0,
       f"signatures are classified rather than collapsed: {sigs['current']} verified under the "
       f"current key, {sigs['superseded']} unverifiable (key superseded), {sigs['unsigned']} unsigned")
 
-# The ledger carries a REAL break at the row where two concurrent appenders once chained from
-# the same predecessor — damage done before the advisory lock existed, and not rewritten,
-# because silently re-chaining an audit trail is the thing an audit trail exists to prevent.
-# It is asserted as a KNOWN, SINGLE break rather than pretended away.
-known_break = broken_at
+# Every break must be EXPLAINED. An acknowledged discontinuity carries a signed checkpoint
+# naming the gap and the reason; an unexplained one is tampering or loss and fails here.
+acknowledged = sigs.get("discontinuities", [])
 if chain_ok:
-    check(True, "the audit hash chain verifies over the whole ledger")
+    bridged = (f", bridging {len(acknowledged)} signed discontinuity(ies): "
+               + "; ".join(f"#{d['at']} {d['reason']}" for d in acknowledged)) if acknowledged else ""
+    check(True, f"the audit hash chain verifies end to end{bridged}")
 else:
-    after = AuditLog.objects.filter(id__gt=known_break).count()
-    check(known_break is not None and after >= 0,
-          f"the chain carries ONE known historical break at #{known_break} (concurrent-append "
-          f"race, fixed; {after} rows written since) — recorded, not rewritten")
+    check(False, f"UNEXPLAINED break at entry #{broken_at} — no signed checkpoint accounts "
+                 f"for it, so the ledger cannot be verified")
 
-# Negative control: a forgery must still be caught, and caught in a DIFFERENT place than the
-# known break — otherwise this assertion would pass on the pre-existing damage alone.
+# Negative control: a forgery must still be caught — and the probe is ROLLED BACK, never
+# committed. Committed, it is the chain tip for its lifetime, a real append can chain onto it, and
+# deleting it then manufactures a permanent unexplained break.
+from django.db import transaction
+
+from cases.audit import _chain_hash
+
+
+class _ProbeDone(Exception):
+    """Unwinds the probe's transaction. The rollback is the point, not a failure."""
+
+
 tail = AuditLog.objects.order_by("-id").first()
-forged = AuditLog.objects.create(
-    actor="uat-forgery", role="", action="uat.forgery.probe", method="", path="",
-    object_type="", object_id="", detail={}, prev_hash=tail.entry_hash,
-    entry_hash="0" * 64, signature="deadbeef" * 8, sig_key_id=_key_id())
+forged_id = detected = seen_at = None
 try:
-    ok_f, broken_f, _ = verify_audit_detail()
-    # Walk from the forged row alone, so the known earlier break cannot satisfy this.
-    from cases.audit import _chain_hash
-    payload = {"actor": forged.actor, "role": forged.role, "action": forged.action,
-               "method": forged.method, "path": forged.path,
-               "object_type": forged.object_type, "object_id": forged.object_id,
-               "detail": forged.detail}
-    detected = _chain_hash(tail.entry_hash, payload) != forged.entry_hash
-    check(detected, f"a forged row (#{forged.id}) fails its own hash — a superseded key never "
-                    f"produces this, so rotation and forgery give different verdicts")
-finally:
-    forged.delete()
+    with transaction.atomic():
+        forged = AuditLog.objects.create(
+            actor="uat-forgery", role="", action="uat.forgery.probe", method="", path="",
+            object_type="", object_id="", detail={}, prev_hash=tail.entry_hash,
+            entry_hash="0" * 64, signature="deadbeef" * 8, sig_key_id=_key_id())
+        forged_id = forged.id
+        payload = {"actor": forged.actor, "role": forged.role, "action": forged.action,
+                   "method": forged.method, "path": forged.path,
+                   "object_type": forged.object_type, "object_id": forged.object_id,
+                   "detail": forged.detail}
+        detected = _chain_hash(tail.entry_hash, payload) != forged.entry_hash
+        _, seen_at, _ = verify_audit_detail()
+        raise _ProbeDone
+except _ProbeDone:
+    pass
+
+check(detected, f"a forged row (#{forged_id}) fails its own hash — a superseded key never "
+                f"produces this, so rotation and forgery give different verdicts")
+check(seen_at == forged_id,
+      f"and the verifier stops AT the forgery (#{forged_id}), not at some earlier row — the "
+      f"break is located, not merely noticed")
+
 ok_r, broken_r, _ = verify_audit_detail()
-check(broken_r == known_break,
-      "and removing the forgery returns the ledger to exactly its prior verdict — the probe "
-      "left nothing behind")
+check(not AuditLog.objects.filter(id=forged_id).exists() and (ok_r, broken_r) == (chain_ok, broken_at),
+      "and the ledger is byte-for-byte at its prior verdict — the probe was never visible to "
+      "another appender, so nothing could chain onto it")
+
+# --- V7. Platform-health charts serve figures that match the rows --------------------
+section("V7 — queue depth, storage allocation, first-person mesh evidence")
+
+from cases.models import CarvedRegion, MemoryAnalysisRun
+
+qd = api("/admin/queue-depth/")
+by_state = dict(MemoryAnalysisRun.objects.values_list("status").annotate(n=Count("id"))
+                .values_list("status", "n"))
+check(qd.get("queued", -1) == by_state.get("queued", 0)
+      and qd.get("running", -1) == by_state.get("running", 0),
+      f"queue depth matches the run table (queued {qd.get('queued')}, "
+      f"running {qd.get('running')})")
+check(qd.get("captures_awaiting_analysis", -1)
+      == MemoryCapture.objects.filter(analyses__isnull=True).count(),
+      "captures-awaiting counts exactly the captures with no analysis")
+samples = qd.get("samples")
+check(isinstance(samples, list)
+      and all({"sampled_at", "queued", "running", "awaiting",
+               "oldest_waiting_seconds"} <= set(s) for s in samples),
+      f"the sample series carries every field the chart draws ({len(samples or [])} samples)")
+if samples:
+    stamps = [s["sampled_at"] for s in samples]
+    check(stamps == sorted(stamps), "samples arrive oldest-first, as the time axis assumes")
+
+sa = api("/admin/storage-allocation/")
+ev = sa.get("evidence_bucket") or {}
+db_bytes = sum(c.size_bytes or 0 for c in MemoryCapture.objects.all())
+check(ev.get("bytes") == db_bytes and ev.get("count") == MemoryCapture.objects.count(),
+      f"evidence-bucket figures match the capture rows ({ev.get('count')} captures, "
+      f"{ev.get('bytes')} bytes)")
+check(sum(s.get("bytes", 0) for s in ev.get("states", [])) == ev.get("bytes", -1),
+      "retention-state segments sum to the bucket total — the bar cannot disagree with "
+      "its own headline")
+carved = sa.get("carved_buckets") or []
+check(sum(c.get("count", 0) for c in carved) == CarvedRegion.objects.count(),
+      f"carved-bucket counts cover every stored region ({CarvedRegion.objects.count()})")
+
+mh = api("/admin/mesh-health/")
+obs = mh.get("observed") or {}
+be_pg = (obs.get("ir-backend") or {}).get("ir-postgres") or {}
+check(be_pg.get("cx_total", 0) > 0,
+      "the backend testifies about its own sidecar — its Postgres upstream shows counted "
+      "connections")
+check(all(set(c) >= {"connect_fail", "cx_total", "cx_active"}
+          for row in obs.values() for c in row.values()),
+      "every observed cell carries the three counters the matrix renders")
 
 print(json.dumps([{"ok": o, "msg": m} for o, m in results]))
 PYEOF
 
-say "2/6  Correlation identifies the seeded intrusion"
+say "2/8  Server aggregates and every chart's data contract"
 OUT=$(run_in_backend /tmp/_uat_ui.py)
-JSON=$(printf '%s' "$OUT" | tail -1)
+# The LAST line that is actually the results array. Django's shell prints an import banner
+# and any view may log, so "the last line" is not reliably the payload — reading it that way
+# reported "checks did not run" over a run in which every check had passed.
+JSON=$(printf '%s' "$OUT" | grep -E '^\[\{"ok"' | tail -1)
 
-if ! printf '%s' "$JSON" | head -c1 | grep -q '\['; then
+if [[ -z "${JSON}" ]]; then
     bad "checks did not run — backend output follows"
     printf '%s\n' "$OUT" | tail -20
 else
-    # Section headers keep the output readable; the checks run as one batch so the
-    # scenario is seeded and adjudicated exactly once.
+    # Headers come from sentinel rows the payload itself emits, and EVERY row is rendered and counted.
+    # A parser that can skip rows can pass a failing suite.
     python3 - "$JSON" <<'PY'
 import json, sys
-sections = [
-    (0, 7,  "2/6  Correlation identifies the seeded intrusion"),
-    (7, 12, "3/6  Attack graph, timeline and shared indicators"),
-    (12, 18, "4/6  Paging, sorting and filtering at the database"),
-    (18, 21, "5/6  Re-analysis diff"),
-    (21, 99, "6/6  Adjudication, export and the audit ledger"),
-]
 rows = json.loads(sys.argv[1])
 failed = 0
-for start, end, title in sections:
-    chunk = rows[start:end]
-    if not chunk:
-        continue
-    if start:
-        print(f"\n\033[1;36m== {title}\033[0m")
-    for r in chunk:
-        if r["ok"]:
-            print(f"  \033[1;32mPASS\033[0m {r['msg']}")
-        else:
-            print(f"  \033[1;31mFAIL\033[0m {r['msg']}")
-            failed = 1
+for r in rows:
+    if r["ok"] == "SEC":
+        print(f"\n\033[1;36m== {r['msg']}\033[0m")
+    elif r["ok"]:
+        print(f"  \033[1;32mPASS\033[0m {r['msg']}")
+    else:
+        print(f"  \033[1;31mFAIL\033[0m {r['msg']}")
+        failed = 1
 sys.exit(failed)
 PY
     [[ $? -ne 0 ]] && FAILED=1

@@ -214,12 +214,9 @@ fi
 
 # ============================================================ 6. both RE tools
 say "6/7  BOTH reverse-engineering workstations come up on the carved regions"
-# Launched exactly as an analyst launches them — launch.sh, GUI, real window on the display.
-# Not headless: the workstation IS the deliverable, and a headless invocation proves the
-# binary parses a file while saying nothing about whether an analyst can open a session.
-#
-# Needs a desktop. Stated and skipped rather than silently passing on a machine with no
-# display, because "no window appeared" and "no display to appear on" are different results.
+# Launched exactly as an analyst launches them — launch.sh, GUI, real window on the display. Not
+# headless: the workstation IS the deliverable, and a headless invocation proves the binary
+# parses a file while saying nothing about whether an analyst can open a session.
 if [[ -z "${DISPLAY:-}" ]]; then
     info "DISPLAY is unset — the workstation sessions need a desktop; run this from one"
     bad "cannot verify the RE workstations without a display"

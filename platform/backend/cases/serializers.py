@@ -182,12 +182,10 @@ class CollectionRunDetailSerializer(CollectionRunSerializer):
         qs = obj.findings.all()
         by = lambda field: {r[field] or "Unknown": r["n"] for r in
                             qs.values(field).annotate(n=Count("id")).order_by("-n")}
-        # Two different states hide behind a single Indeterminate verdict, and telling them
-        # apart is the difference between a number that moves and one that never does.
-        # The engine's most frequent conclusion is Undetermined — a real conclusion, drawn
-        # from evidence that did not converge — and it maps to the same Indeterminate a
-        # promoted lead starts at. Counting them together makes an adjudicated host look
-        # untouched.
+        # Two different states hide behind a single Indeterminate verdict, and telling them apart is the
+        # difference between a number that moves and one that never does. The engine's most frequent
+        # conclusion is Undetermined — a real conclusion, drawn from evidence that did not converge —
+        # and it maps to the same Indeterminate a promoted lead starts at.
         indeterminate = qs.filter(verdict="Indeterminate")
         judged = indeterminate.filter(raw__adjudication__isnull=False).count()
         return {

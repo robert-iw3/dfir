@@ -1,9 +1,7 @@
 #!/usr/bin/env bash
-# Verify every image build's inputs resolve, without building anything.
-#
-# A path that stopped resolving after a tree move is otherwise found by starting a
-# multi-minute build and watching it die part-way. This answers the same question in
-# seconds, so it belongs beside the code-graph and SRG-tracker checks.
+# Verify every image build's inputs resolve, without building anything. A path that stopped
+# resolving after a tree move is otherwise found by starting a multi-minute build and watching
+# it die part-way.
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

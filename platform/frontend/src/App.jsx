@@ -4,6 +4,7 @@ import { AuthProvider, can, useAuth } from "./auth.jsx";
 import { PrefsProvider, usePrefs } from "./components/prefs.jsx";
 import DeployWatch from "./components/DeployWatch.jsx";
 import ErrorBoundary from "./components/ErrorBoundary.jsx";
+import { Loading, Ring } from "./components/common.jsx";
 import {
   IconAudit, IconComponents, IconCorrelation, IconDashboard, IconFindings, IconHealth, IconHosts,
   IconInvestigations, IconReversing, IconSearch, IconUsers,
@@ -86,10 +87,36 @@ function Sidebar() {
   );
 }
 
+function PlatformDown() {
+  return (
+    <div className="app">
+      <div className="main">
+        <div className="panel" style={{ maxWidth: 520, margin: "12vh auto", padding: 24 }}>
+          <h2 style={{ marginTop: 0 }}>The platform is not answering</h2>
+          <p>
+            It is restarting or briefly unreachable. You are still signed in — this is not a
+            sign-out, and nothing you submitted has been lost.
+          </p>
+          <div className="waiting" style={{ marginTop: 18 }} role="status" aria-live="polite">
+            <Ring />
+            <span className="chart-note" style={{ margin: 0 }}>
+              Reconnecting automatically every few seconds. This page returns on its own.
+            </span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function Shell() {
-  const { user, ready } = useAuth();
+  const { user, ready, down } = useAuth();
   const { pathname } = useLocation();
-  if (!ready) return <div className="app"><div className="main"><div className="empty">Loading…</div></div></div>;
+  if (!ready) return <div className="app"><div className="main"><Loading /></div></div>;
+  // Unreachable is not unauthenticated. On a kiosk the analyst has no local password, so a
+  // sign-in form here would be a dead end; this says what is actually wrong and keeps
+  // retrying on its own.
+  if (down && !user) return <PlatformDown />;
   if (!user) return <Login />;
   return (
     <div className="app">

@@ -2,7 +2,7 @@
 
 *What passing proves:* A campaign that dwells for 238 days correlates as one, with four members carrying no movement record and every indicator rotated away — while two unrelated endpoints running the same unsanctioned tool 190 days apart stay separate, and the host whose delivery evidence aged out reports that it could not be established rather than that nothing was found.
 
-- Run: `uat_corpus_slow.sh` — 2026-08-09 02:18:58Z
+- Run: `uat_corpus_slow.sh` — 2026-08-12 14:38:37Z
 
 **Preconditions**
 
@@ -12,7 +12,7 @@
 | ✅ PASS | ir-enclave_puller_1 running |
 | ✅ PASS | ir-enclave_backend_1 running |
 | ✅ PASS | ir-enclave_worker_1 running |
-| ✅ PASS | collector image rebuilt from current source |
+| ✅ PASS | collector image current with collector/ |
 | ✅ PASS | the collector runs the full forensics collection (--deep) |
 | ✅ PASS | 20 endpoint scenarios generated |
 | ✅ PASS | manifest published to the backend for comparison |
@@ -71,7 +71,7 @@
 | ✅ PASS | all 7 hosts touched over 238 days are ONE campaign (7 found) |
 | ✅ PASS | the 4 endpoints reached over the VPN — no movement record — are members |
 | ✅ PASS | the two shadow-IT endpoints 190 days apart are NOT in the campaign |
-| ✅ PASS | and the pair is DECLINED on its own merits (weight 0.2973, temporal 0.584) |
+| ✅ PASS | and the pair is DECLINED on its own merits (weight 0.2968, temporal 0.584) |
 | ✅ PASS | patient zero is the first host touched, 238 days before the last (RD-WS-04) |
 | ✅ PASS | no clean endpoint appears in any campaign (11 clean) |
 
@@ -90,7 +90,7 @@
 | ✅ PASS | the host whose logs rotated carries its undetermined-scan finding (1) |
 | ✅ PASS | and it is adjudicated Indeterminate rather than treated as a clean result (Indeterminate) |
 | ✅ PASS | RD-WS-04 is still a campaign member despite its thinner evidence |
-| · | RD-WS-04: band=probable why=link to IT-WS-01 at 0.44 with 11 evidence kind(s) |
+| · | RD-WS-04: band=probable why=link to IT-WS-01 at 0.43 with 11 evidence kind(s) |
 
 **L4 — the sequence is the operator's eight months, in order**
 
@@ -107,7 +107,7 @@
 
 | Result | Assertion — with evidence |
 |---|---|
-| · | deployment host population at correlation time: 95 |
+| · | deployment host population at correlation time: 92 |
 | ✅ PASS | INC-CORPUS-A still classifies 12 compromised with a fourth fleet present |
 | ✅ PASS | no INC-CORPUS-A campaign reaches a Glass Heron endpoint |
 | ✅ PASS | INC-CORPUS-B still classifies 4 compromised with a fourth fleet present |

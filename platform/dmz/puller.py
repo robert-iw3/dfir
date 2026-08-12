@@ -26,15 +26,8 @@ import urllib.request
 import sysstats  # shared platform/shared/sysstats.py
 
 RECEIVER = os.environ.get("RECEIVER_URL", "https://receiver:8090").rstrip("/")
-# The receiver's certificate, pinned as this puller's only trust anchor.
-#
-# The bundles coming inward are memory images from hosts under suspicion. Verifying the server
-# is what keeps the enclave from pulling one out of an impostor on the DMZ segment and treating
-# it as evidence — and this is the one direction that crosses the tier boundary, so it is the
-# connection least able to rely on the network being trustworthy.
-#
-# Pinned rather than trusting the system store: there is exactly one server this should ever
-# talk to, and a public CA would vouch for anyone who obtained a certificate for that name.
+# The receiver's certificate, pinned as this puller's only trust anchor. The bundles coming
+# inward are memory images from hosts under suspicion.
 RECEIVER_CA = os.environ.get("RECEIVER_CA_BUNDLE", "")
 
 

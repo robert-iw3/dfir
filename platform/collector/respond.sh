@@ -1,21 +1,6 @@
 #!/usr/bin/env bash
-# ONE COMMAND, RUN ON THE SUSPECTED ENDPOINT, AS ROOT.
-#
+# ONE COMMAND, RUN ON THE SUSPECTED ENDPOINT, AS ROOT: collect, seal, ship to the DMZ receiver.
 #   sudo ./respond.sh --receiver https://dmz.example.net:8090 --incident INC-2026-0043
-#
-# Collects the host, captures its memory, seals the chain of custody, and ships the sealed
-# bundle to the DMZ receiver. Nothing else is needed and nothing is reported back here: the
-# endpoint is the thing under suspicion, so it learns no more about the platform than the
-# address it uploads to.
-#
-# This exists because the steps have an order, a privilege requirement and a failure mode that
-# are all easy to get wrong under pressure, and the person running it is standing at a possibly
-# compromised machine during an incident. Getting the sequence wrong wastes the collection.
-#
-# THE TWO CONTAINERS ARE SEPARATE ON PURPOSE. Collection runs privileged, sees the host
-# filesystem and /proc, and has NO network. Shipping has a network and NO view of the host. A
-# single container with both would be one exploit away from reading the host and calling out;
-# splitting them means neither capability sits next to the other. Do not merge them.
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -30,11 +15,8 @@ HOSTNAME_OVERRIDE="${IR_HOSTNAME:-}"
 KEEP_EVIDENCE=0
 SHIP_ONLY=0
 COLLECT_ONLY=0
-# Container network for the shipping step. Empty means the runtime's default, which is what a
-# real endpoint uses: the receiver is on other hardware, reached over the ordinary network.
-# Needed only where the receiver is co-located on a container network — single-host validation
-# — because a rootless published port is not reachable from another container on the default
-# bridge, so the two have to share a network.
+# Container network for the shipping step — empty means the runtime default, which is what a real
+# endpoint uses to reach a receiver on other hardware.
 SHIP_NETWORK="${IR_SHIP_NETWORK:-}"
 # The receiver's certificate. Defaults to the one this checkout generated, so a single-host
 # validation run verifies properly instead of teaching operators to skip verification.
@@ -137,11 +119,8 @@ if (( ! COLLECT_ONLY )); then
 fi
 
 if ! "${RUNTIME}" image exists "${IMAGE}" 2>/dev/null; then
-    # Collection runs as root, so it reads ROOT's image store — a separate store from the one a
-    # rootless build writes to. The image being "missing" is therefore the expected result of
-    # having built it normally, and an operator who can see it in their own `podman images` gets
-    # told it does not exist. Check the invoking user's store and give the transfer command
-    # rather than leaving them to work out why.
+    # Collection runs as root and reads ROOT's image store, a different store from a rootless build's
+    # — 'missing' is the expected result of building rootless, not an error.
     if [[ -n "${SUDO_USER:-}" ]] \
        && sudo -u "${SUDO_USER}" "${RUNTIME}" image exists "${IMAGE}" 2>/dev/null; then
         die "${IMAGE} exists in ${SUDO_USER}'s image store but not root's, and collection runs as
@@ -194,14 +173,8 @@ if (( ! SHIP_ONLY )); then
 
     "${RUNTIME}" "${collect_args[@]}" "${IMAGE}" || die "collection failed — see the output above"
 
-    # Hand ownership to whoever invoked sudo. The ship below runs as root too, so this is not
-    # what makes the transfer work — it is what makes the evidence usable afterwards without
-    # root: inspecting the manifest, re-sending by hand, or copying it to removable media.
-    #
-    # It matters because the capture is written 0400 by root while every other artifact is
-    # world-readable. Anyone who later ships these files unprivileged reads a few hundred of
-    # them and fails on the single one that counts, which presents as a transfer fault rather
-    # than a permissions one.
+    # Hand ownership to whoever invoked sudo — not what makes the transfer work, but what makes the
+    # evidence usable afterwards without root.
     owner_uid="${SUDO_UID:-0}"
     owner_gid="${SUDO_GID:-0}"
     if [[ "${owner_uid}" != "0" ]]; then
@@ -226,15 +199,8 @@ ship_args=(run --rm -v "${EVIDENCE}:/evidence:ro")
 [[ -n "${SHIP_NETWORK}" ]] && ship_args+=(--network "${SHIP_NETWORK}") \
     && info "shipping on network ${SHIP_NETWORK}"
 
-# The receiver's certificate, pinned as the trust anchor for this upload.
-#
-# Verification is what stops the collector handing this host's memory — its credentials, keys
-# and open files — to whoever answers on that address. On a segment the responder does not
-# control, an impostor receiver is a realistic outcome rather than a theoretical one, and the
-# custody seal would not help: it proves the bundle was not ALTERED, not that it was not READ.
-#
-# Pinned rather than trusting the system CA store, because there is exactly one server this
-# should ever talk to and a public CA would vouch for anyone holding a certificate for the name.
+# The receiver's certificate, pinned as the trust anchor for this upload: verification is what
+# stops this host's memory being handed to whoever answers on that port.
 if [[ -n "${CA_CERT}" ]]; then
     [[ -r "${CA_CERT}" ]] || die "--ca-cert ${CA_CERT} is not readable; without it the upload
         cannot verify the receiver, and evidence must not be sent to an unverified server."
@@ -270,9 +236,8 @@ if grep -q '"verified": *true' <<<"${ship_out}"; then
 fi
 
 say "Not shipped"
-# Distinguish "the client died" from "the receiver said no". They look the same in a transcript
-# and lead to completely different investigations: one is local resources, the other is the far
-# end. An OOM kill in particular prints only `Killed` and reads as a rejection.
+# Distinguish 'the client died' from 'the receiver said no' — they look identical in a transcript
+# and lead to different investigations.
 if grep -qE '\bKilled\b|Cannot allocate memory|out of memory' <<<"${ship_out}"; then
     warn "the upload process was killed locally — the receiver never answered."
     printf '    This is the endpoint running out of memory, not the receiver refusing anything.\n'

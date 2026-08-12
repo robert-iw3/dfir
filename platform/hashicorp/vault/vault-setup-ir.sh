@@ -1,34 +1,7 @@
 #!/usr/bin/env bash
-# Provision Vault for the IR Platform. Idempotent; state in /vault/state.
-#
-#  - init + unseal
-#  - AUDIT DEVICE, before anything else that touches a secret
-#  - database secrets engine -> platform Postgres, role `ir-platform` issuing
-#    short-lived login users that act as the fixed owner role `ir_app`
-#  - KV v2 `ir/config` with the app's non-DB secrets (Django key, HMAC keys, MinIO)
-#  - AppRole `ir-platform` (+ least-privilege policy) for the Vault Agent
-#  - revokes the initial root token when provisioning completes
-#
-# Against HashiCorp's production hardening guidance, with the deviations named:
-#
-#   Audit device        ENABLED first, so no privileged operation goes unrecorded. On a forensics
-#                       platform this is not optional — Vault holds the custody key, and an
-#                       unaudited secrets store cannot support a chain of custody it is part of.
-#   Root token          REVOKED once provisioning succeeds. It exists only for initial setup.
-#                       A re-run detects a completed provision and never needs it again.
-#   TLS                 Enabled, TLS 1.2 floor, on the listener. Clients pin the CA.
-#   disable_mlock       TRUE, and deliberately: HashiCorp "strongly recommends" it WITH
-#                       integrated storage (raft). Swap should be off on the host instead.
-#   Least privilege     The ir-app policy names four explicit paths. No globs.
-#   Short TTLs          Database credentials 1h/24h; agent tokens 1h/24h.
-#   secret_id           BOUNDED (ttl + num_uses) rather than unlimited.
-#   Unseal keys         Fed on STDIN, never as arguments — an argument is visible in the process
-#                       list and in shell history.
-#
-#   DEVIATION: key shares. Defaults to 1/1 because unsealing is automated and additional shares
-#   held in the same place add ceremony without adding safety. Set IR_VAULT_KEY_SHARES /
-#   IR_VAULT_KEY_THRESHOLD for split custody, which is only meaningful with
-#   IR_VAULT_AUTO_UNSEAL=0 so no copy is stored.
+# Provision Vault for the IR Platform — idempotent, state in /vault/state: init + unseal, database
+# secrets engine (dynamic Postgres credentials for app and Keycloak), KV for static secrets,
+# AppRoles for the agents, audit device, and root-token revocation at the end.
 set -euo pipefail
 
 export VAULT_ADDR="${VAULT_ADDR:-https://vault:8200}"
@@ -52,12 +25,9 @@ init_status() {
   echo "$out" | python3 -c "import json,sys;print(str(json.load(sys.stdin)['$1']).lower())" 2>/dev/null || echo unknown
 }
 
-# The unseal material is read at EVERY start by the server itself, which runs unprivileged
-# (uid 65535). Root-owned 0600 means only `podman exec --user root` can read it, which makes
-# unsealing a deployment step rather than a property of the server coming back — and a Vault
-# restarted by anything other than a deploy then stays sealed, answering health checks and
-# serving nothing. Ownership moves to the account that needs it; the mode does not change, so
-# the key is still readable by exactly one identity.
+# The unseal material is read at every start by the unprivileged server (uid 65535); root-owned
+# 0600 means only `podman exec --user root` reads it, and under rootless podman that is the
+# invoking host user.
 own_unseal_material() {
   chmod 600 "$STATE/vault-init.json"
   chown "$(id -u vault 2>/dev/null || echo 65535)":"$(id -g vault 2>/dev/null || echo 65535)" \
@@ -76,13 +46,8 @@ fi
 # causes — a restart that stays sealed — appears far from here and long afterwards.
 [ -s "$STATE/vault-init.json" ] && own_unseal_material
 
-# Unsealed here so provisioning can proceed; vault-unseal.sh does the same job on every restart.
-# Via the sys/unseal API so the key never appears on a command line: the CLI's only
-# non-interactive form takes the key as an argument, which lands it in the process list.
-#
-# A function, and called again from the reconcile loop below, because the deployment can recreate
-# Vault after this point — it comes back sealed, and a one-time unseal here would leave every
-# later call answering 503.
+# Unsealed here so provisioning can proceed (vault-unseal.sh covers restarts), via the sys/unseal
+# API so the key never appears on a command line.
 unseal_if_sealed() {
   [ "$(init_status sealed)" = "true" ] || return 0
   python3 - "$STATE/vault-init.json" "$VAULT_ADDR" "$VAULT_CACERT" <<'PY'
@@ -112,12 +77,8 @@ unseal_if_sealed || { echo "FAIL: could not unseal"; exit 1; }
 DB_CONN="postgresql://{{username}}:{{password}}@${IR_VAULT_DB_HOST:-${POSTGRES_HOST:-db}}:${POSTGRES_PORT:-5432}/${POSTGRES_DB:-ir_platform}?sslmode=disable"
 KC_CONN="postgresql://{{username}}:{{password}}@${IR_VAULT_DB_HOST:-${POSTGRES_HOST:-db}}:${POSTGRES_PORT:-5432}/${KEYCLOAK_POSTGRES_DB:-keycloak}?sslmode=disable"
 
-# Reconciled on EVERY run, before the early exit below. Written once, a stale connection URL
-# leaves the platform running on already-issued leases and looking healthy, then failing the
-# first time it must mint or revoke a credential — which is exactly when it is needed.
-# A deployment provisioned before the provisioner AppRole existed has no way to reconcile
-# anything, because the root token is already revoked. Mint one through break-glass, create the
-# role, and revoke — once per such deployment, never again.
+# Reconciled on EVERY run, before the early exit: a stale connection URL leaves the platform on
+# already-issued leases, healthy-looking until the next rotation fails.
 if [ -f "$PROVISIONED" ] && [ ! -f "$STATE/provisioner_role_id" ]; then
   echo "==> creating the reconciliation AppRole (break-glass, one time)"
   BGT=$(python3 /opt/vault/breakglass-root.py 2>/dev/null || true)
@@ -218,13 +179,8 @@ if [ -f "$PROVISIONED" ] && [ -f "$STATE/provisioner_role_id" ]; then
     printf '      %s\n' "$ERR" | tail -4 >&2
   fi
 
-  # The agents' secret_ids, reissued every deploy.
-  #
-  # They carry a TTL (72h by default), so the credential on the state volume is perishable
-  # while the file holding it is not. Once it expires the agent authenticates forever against
-  # a secret_id Vault no longer knows, stops rendering, and the leased Postgres role it last
-  # wrote is revoked out from under the app tier — which then cannot start, with nothing in
-  # the deploy saying why. Minting a fresh one every run is what makes the TTL survivable.
+  # The agents' secret_ids are reissued every deploy: they carry a TTL, so the credential on the
+  # state volume is perishable by design.
   echo "==> reissuing the agent credentials"
   SID_DENIED=0
   for role in ir-platform ir-keycloak; do
@@ -408,15 +364,8 @@ for i in $(seq 1 20); do
   sleep 3
 done
 
-# Same shape as the application's: each dynamic user is a member of the stable owner role and
-# acts as it, so objects survive rotation. Keycloak runs its own schema migrations at start-up,
-# so stable ownership matters here for the same reason it does for Django's.
-#
-# Longer TTLs than the application's, deliberately: Keycloak pools connections and reads its
-# credential once at start — it cannot pick up a re-rendered file without a restart. At
-# max_ttl the user is dropped and every pooled connection dies mid-session. So the lease is
-# sized to outlive any deploy cadence (every deploy recreates the Vault group and mints a
-# fresh lease); the agent renews within max_ttl as usual.
+# Same shape as the application's: each dynamic user acts as the stable owner role, so objects
+# survive rotation — Keycloak migrates its own schema at start-up under whatever user it holds.
 vault write database/roles/keycloak \
   db_name=keycloak \
   creation_statements="CREATE ROLE \"{{name}}\" WITH LOGIN PASSWORD '{{password}}' VALID UNTIL '{{expiration}}' IN ROLE kc_app; ALTER ROLE \"{{name}}\" SET role = 'kc_app';" \
@@ -426,21 +375,9 @@ vault write database/roles/keycloak \
 echo "==> KV v2: ir/config (non-DB app secrets)"
 vault secrets enable -path=ir kv-v2 2>/dev/null || echo "    kv already enabled"
 
-# GENERATED ONCE, THEN PRESERVED FOREVER.
-#
-# `vault kv put` replaces the whole secret, and this script runs on every deploy. Generating
-# defaults inline therefore MINTED NEW KEYS EVERY TIME:
-#
-#   audit_hmac_key    every existing audit row's signature stops verifying — the platform
-#                     reports its own tamper-evidence as BROKEN, and cannot tell a rotated
-#                     key from an actual forgery
-#   custody_hmac_key  every existing custody seal stops verifying — on a forensic platform
-#                     that is the evidentiary chain for material already collected
-#   django_secret_key every issued session and signed token is invalidated
-#
-# These are identity for data already at rest. A value that exists is kept; only a MISSING
-# one is created. Rotation is a deliberate act with a migration behind it, never a side
-# effect of redeploying — so an explicit IR_KV_* override still wins, and says so.
+# GENERATED ONCE, THEN PRESERVED: `kv put` replaces the whole secret and this runs every deploy,
+# so regenerate-if-absent is the only safe shape — regenerating the custody HMAC key would orphan
+# every seal ever written.
 kv_get() { vault kv get -field="$1" ir/config 2>/dev/null || true; }
 kv_keep() { # field  env-override  entropy-bytes
     local field="$1" override="$2" bytes="$3"
@@ -479,9 +416,8 @@ path "auth/token/renew-self"      { capabilities = ["update"] }
 EOF
 
 vault auth enable approle 2>/dev/null || echo "    approle already enabled"
-# Bounded rather than unlimited. A secret_id with no TTL and no use limit is a permanent
-# credential sitting on a volume; these expire, and the agent re-reads a fresh one at deploy.
-# bind_secret_id keeps possession of the role_id alone insufficient to authenticate.
+# Bounded rather than unlimited: a secret_id with no TTL is a permanent credential on a volume.
+# These expire; the agent re-reads a fresh one at deploy.
 vault write auth/approle/role/ir-platform \
   token_policies=ir-app token_ttl=1h token_max_ttl=24h \
   bind_secret_id=true \
@@ -549,12 +485,8 @@ done
 
 > "$PROVISIONED"
 
-# "Once you complete initial Vault setup, you should revoke the initial root token to reduce risk
-# of exposure." Nothing above is needed again: the agent authenticates by AppRole, unsealing uses
-# the unseal key, and a re-run exits early on the marker written above.
-#
-# The root token is removed from the state file as well as revoked. Leaving a revoked token on
-# disk invites someone to conclude the file is harmless — it still holds the unseal key.
+# Root token revoked at the end, per Vault's own guidance: nothing above is needed again — the
+# agents hold AppRoles and unsealing uses the key shares.
 if [ "${IR_VAULT_REVOKE_ROOT:-1}" = "1" ]; then
   echo "==> revoking the initial root token"
   if vault token revoke -self >/dev/null 2>&1; then

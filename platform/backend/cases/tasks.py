@@ -126,13 +126,9 @@ def _store_carved(capture, carve_dir, analysis_run):
 def analyze_capture(self, capture_id, ruleset_version=""):
     capture = MemoryCapture.objects.get(pk=capture_id)
 
-    # Refuse to analyze a capture that is already being analyzed.
-    #
-    # Killing the worker mid-analysis leaves the task un-acked, so the broker redelivers it
-    # when the worker comes back — and if anyone queued a replacement in the meantime, both
-    # run. Two passes over the same capture each stage their own copy of it and then
-    # compete for the same disk, which is what makes the object store start refusing reads.
-    # The second one is never wanted: it is the same evidence at the same ruleset.
+    # Refuse to analyze a capture that is already being analyzed. Killing the worker mid-analysis
+    # leaves the task un-acked, so the broker redelivers it when the worker comes back — and if
+    # anyone queued a replacement in the meantime, both run.
     active = (MemoryAnalysisRun.objects
               .filter(capture=capture, status="running")
               .order_by("id").first())
@@ -164,12 +160,10 @@ def analyze_capture(self, capture_id, ruleset_version=""):
             )
         storage.download_to(capture.object_key, local)
 
-        # Prefer the toolkit's full Volatility pass. It needs a symbol table matching the
-        # captured kernel, which the enclave cannot fetch itself — when one is absent an
-        # administrator is asked for it and this run proceeds at reduced depth, labeled
-        # as such so the UI never implies a full analysis happened.
-        # Parsed defensively: a malformed value must not be the reason a capture gets a
-        # shallower analysis. Misconfiguration should be loud, not silently degrading.
+        # Prefer the toolkit's full Volatility pass. It needs a symbol table matching the captured
+        # kernel, which the enclave cannot fetch itself — when one is absent an administrator is asked
+        # for it and this run proceeds at reduced depth, labeled as such so the UI never implies a full
+        # analysis happened.
         raw_timeout = os.environ.get("IR_VOL3_TIMEOUT", "10800")
         try:
             vol_timeout = int(raw_timeout)
@@ -232,10 +226,8 @@ def analyze_capture(self, capture_id, ruleset_version=""):
         run.finished_at = timezone.now()
         run.save()
 
-        # Adjudication. The toolkit's investigation engine runs on the analyzer's own
-        # report folder and decides which processes are true positives; the platform does
-        # not make that call itself. This is the automated half of the workflow — without
-        # it an analyst would be handed a thousand unranked leads and asked to start over.
+        # Adjudication. The toolkit's investigation engine runs on the analyzer's own report folder and
+        # decides which processes are true positives; the platform does not make that call itself.
         adjudication = investigation.adjudicate(run, report_dir)
         run.summary["adjudication"] = adjudication
         run.save(update_fields=["summary"])

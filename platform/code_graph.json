@@ -339,11 +339,6 @@
   },
   {
    "from": "deploy/deploy.sh",
-   "kind": "runs",
-   "to": "test/uat_baseline.sh"
-  },
-  {
-   "from": "deploy/deploy.sh",
    "kind": "drives",
    "to": "agent/remediation-agent"
   },
@@ -583,6 +578,11 @@
    "to": "enclave/worker"
   },
   {
+   "from": "hashicorp/consul/register-mesh.sh",
+   "kind": "drives",
+   "to": "enclave/worker-2"
+  },
+  {
    "from": "hashicorp/keycloak/provision-demo-users.sh",
    "kind": "drives",
    "to": "enclave/keycloak"
@@ -735,6 +735,11 @@
   {
    "from": "test/run_uats.sh",
    "kind": "drives",
+   "to": "dmz/distributor"
+  },
+  {
+   "from": "test/run_uats.sh",
+   "kind": "drives",
    "to": "dmz/headscale"
   },
   {
@@ -801,6 +806,11 @@
    "from": "test/uat_audit.sh",
    "kind": "runs",
    "to": "test/lib/report.sh"
+  },
+  {
+   "from": "test/uat_audit.sh",
+   "kind": "drives",
+   "to": "dmz/distributor"
   },
   {
    "from": "test/uat_audit.sh",
@@ -1490,6 +1500,11 @@
   {
    "from": "test/uat_audit.sh",
    "kind": "proves",
+   "to": "dmz/distributor"
+  },
+  {
+   "from": "test/uat_audit.sh",
+   "kind": "proves",
    "to": "enclave/backend"
   },
   {
@@ -1986,31 +2001,41 @@
    "brokeredSessions": "/brokered-sessions/"
   },
   "ComponentHealth": {
-   "componentHealth": "/admin/component-health/"
+   "componentHealth": "/admin/component-health/",
+   "queueDepth": "/admin/queue-depth/",
+   "storageAllocation": "/admin/storage-allocation/"
   },
   "Correlation": {
    "campaignGraph": "/correlation/campaigns/",
    "campaignTimeline": "/correlation/campaigns/",
    "campaignTradecraft": "/correlation/campaigns/",
    "correlation": "/correlation/investigations/",
+   "correlationHistory": "/correlation/investigations/",
    "investigations": "/investigations/",
    "recorrelate": "?",
    "sharedIndicators": "/correlation/indicators/"
   },
   "Dashboard": {
    "facets": "/facets/",
+   "findingsBacklog": "/findings/backlog/",
+   "findingsFunnel": "/findings/funnel/",
+   "queueDepth": "/admin/queue-depth/",
+   "stalledInvestigations": "/investigations/stalled/",
    "stats": "/stats/",
    "summary": "?"
   },
   "Findings": {
    "bulkVerdict": "?",
-   "exportUrl": "?"
+   "exportUrl": "?",
+   "findingsMatrix": "/findings/matrix/"
   },
   "InvestigationDetail": {
    "addNote": "/notes/",
    "deleteInvestigation": "/investigations/",
    "investigation": "/investigations/",
+   "investigationCoverage": "/investigations/",
    "investigationRecord": "?",
+   "investigationStats": "/investigations/",
    "requestRescan": "/rescans/",
    "retractNote": "/notes/"
   },
@@ -2018,7 +2043,8 @@
    "investigations": "/investigations/"
   },
   "IocSearch": {
-   "iocSearch": "/ioc-search/"
+   "iocSearch": "/ioc-search/",
+   "iocSpread": "?"
   },
   "MeshHealth": {
    "meshHealth": "/admin/mesh-health/"
@@ -2037,7 +2063,8 @@
    "run": "/runs/",
    "runAdjudication": "?",
    "runAdjudicationChain": "?",
-   "runCustody": "/runs/"
+   "runCustody": "/runs/",
+   "runTimeline": "/runs/"
   },
   "Users": {
    "createUser": "/users/",
@@ -2099,8 +2126,7 @@
     "hashicorp/keycloak/provision-demo-users.sh",
     "hashicorp/keycloak/realm-converge.sh",
     "hashicorp/vault/vault-unseal.sh",
-    "test/lib/evidence.sh",
-    "test/uat_baseline.sh"
+    "test/lib/evidence.sh"
    ]
   },
   "hashicorp/access/tailnet_bootstrap.sh": {
@@ -2128,7 +2154,8 @@
     "enclave/puller",
     "enclave/redis",
     "enclave/vault",
-    "enclave/worker"
+    "enclave/worker",
+    "enclave/worker-2"
    ],
    "runs": []
   },
@@ -2176,6 +2203,7 @@
     "agent/remediation-agent",
     "dmz/broker",
     "dmz/coredns",
+    "dmz/distributor",
     "dmz/headscale",
     "dmz/receiver",
     "enclave/backend",
@@ -2199,6 +2227,7 @@
   },
   "test/uat_audit.sh": {
    "drives": [
+    "dmz/distributor",
     "enclave/backend"
    ],
    "runs": [
@@ -2906,6 +2935,7 @@
  },
  "uat_coverage": {
   "uat_audit.sh": [
+   "dmz/distributor",
    "enclave/backend"
   ],
   "uat_baseline.sh": [

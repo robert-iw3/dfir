@@ -3,6 +3,7 @@ import { Link, useParams } from "react-router-dom";
 import { api } from "../api.js";
 import { can, useAuth } from "../auth.jsx";
 import { useData, Loading, Empty, verdictBadge } from "../components/common.jsx";
+import { ActivityArea } from "../components/charts.jsx";
 import DataTable from "../components/DataTable.jsx";
 import FindingEvidence, { hasEvidence } from "../components/FindingEvidence.jsx";
 
@@ -209,6 +210,8 @@ export default function RunDetail() {
   // analysis ran. It is fetched separately from the run summary because it is the surface
   // an analyst works from, and it is bounded where the finding list is not.
   const { data: adj } = useData(() => api.runAdjudication(id), [id], { refreshMs: 20000 });
+  // Server aggregate: the ribbon renders the run's own events, in the order they happened.
+  const { data: timeline } = useData(() => api.runTimeline(id), [id]);
   // One chain's events at a time — the list only carries counts.
   const [chain, setChain] = useState(null);
   // Which finding's recovered evidence is expanded. One at a time: the panel is detail an
@@ -225,6 +228,15 @@ export default function RunDetail() {
         <span className={`status-${data.overall_status}`}>{data.overall_status || "—"}</span> ·{" "}
         {data.tp_count} TP · {data.custody_verified ? "custody ✓" : "custody unverified"}
       </p>
+
+      <h2>Activity</h2>
+      <div className="panel" style={{ padding: 20 }}>
+        <p className="chart-note">
+          What this machine produced, by the source that saw it. Where collector and memory
+          rise together the finding is corroborated; where one rises alone it is not.
+        </p>
+        <ActivityArea timeline={timeline} />
+      </div>
 
       <h2>Custody</h2>
       <CustodyPanel runId={id} />

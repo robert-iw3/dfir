@@ -76,11 +76,8 @@ class Session:
         self.origin = f"{u.scheme}://{u.netloc}"
         self.cookies = {}
         self._lock = threading.Lock()
-        # One connection PER THREAD, not per Session. `http.client` is not thread-safe: two
-        # threads writing the same socket interleave their requests and corrupt the TLS
-        # stream, surfacing as `SSL: UNEXPECTED_EOF_WHILE_READING` — which reads exactly like
-        # the platform dropping connections. A browser behaves the same way: one cookie jar,
-        # several connections when it has several requests in flight.
+        # One connection PER THREAD, not per Session: http.client is not thread-safe, and two threads on
+        # one socket interleave requests and corrupt the TLS stream.
         self._tl = threading.local()
 
     @property
@@ -151,11 +148,8 @@ class Session:
                     # is not, so it surfaces as the failure it was.
                     if attempt == 4 or (sent and method not in ("GET", "HEAD")):
                         raise
-                    # NO backoff on the first retry. The common case is a kept-alive
-                    # connection the server closed while the agent was reading the page —
-                    # every browser reconnects immediately, and sleeping here bills the
-                    # harness's own wait to the platform as latency. Backoff applies from the
-                    # second attempt, where the platform really is refusing.
+                    # NO backoff on the first retry: the common case is a kept-alive connection the server closed mid-
+                    # idle, where an immediate reconnect succeeds.
                     if attempt > 1:
                         time.sleep(0.4 * (attempt - 1) + random.random() * 0.4)
             self._absorb(resp.headers)
@@ -372,10 +366,8 @@ class Run:
             code, ms, _, err = agent.req("POST", "/api/notes/", note)
             self.record(phase, "rbac_refusal", code, ms, err)
             with self.lock:
-                # A 5xx is NOT an authorization decision — the request never reached the
-                # check. Counting it as a failure to refuse reports a server error as a
-                # confidentiality finding, which is the most alarming possible way to be
-                # wrong. It is excluded from both sides and counted separately.
+                # A 5xx is NOT an authorization decision — the request never reached the check, and counting it as
+                # a failure-to-refuse reports a server error as a permission slip.
                 if code >= 500 or code == 0 or code == 429:
                     self.rbac_unserved += 1
                 else:
@@ -515,11 +507,8 @@ def provision(cfg):
             "p50": pct(ok_ms, 50), "p95": pct(ok_ms, 95),
             "admin_login_ms": round(ms or 0),
         },
-        # The accounts that WERE created, never all-or-nothing. Emptying this on a partial
-        # result throws away every account that exists and takes the phases below with it: the
-        # export grant has nobody, the agents have no fleet, and teardown has nothing to
-        # remove — four failures reported for one cause. Whether the count fell short is a
-        # separate assertion, and it is made separately.
+        # The accounts that WERE created, never all-or-nothing: emptying this on a partial result throws
+        # away existing accounts and takes the later phases with it.
         "users": made,
     }))
     return 0 if created == n else 1
@@ -555,18 +544,13 @@ def main():
     window = cfg.get("activity_seconds", 60)
     print(f"[load] activity: {len(live)} agents for {window}s", file=sys.stderr)
 
-    # THINK TIME. Without it each agent loops as fast as the platform answers, which at 50
-    # agents generated ~1,700 requests/second — thirty-five per analyst per second. No analyst
-    # reads a page thirty-five times a second, and the number that measures is what a fleet
-    # actually does: open a view, read it, act. A hot loop measures how hard the harness can
-    # push, and every latency and error figure downstream inherits that instead of the fleet.
+    # THINK TIME: without it each agent loops as fast as the platform answers, and the run measures
+    # the harness rather than an analyst workload.
     think = cfg.get("think_seconds", 3.0)
 
     def loop(agent):
-        # Staggered start. Every agent otherwise begins its first iteration in the same
-        # instant, so iteration zero is a synchronised fleet-wide burst and its latency is
-        # the queue depth of that burst rather than what an analyst experiences. Analysts do
-        # not click in lockstep; the phases they are measured in should not either.
+        # Staggered start: otherwise iteration zero is a synchronized fleet-wide burst and its latency is
+        # an artifact of the harness.
         if think > 0:
             time.sleep(random.random() * think)
         i, end = 0, time.monotonic() + window
@@ -617,10 +601,8 @@ def main():
         total = sum(summary[c]["n"] for c in summary) or 1
         err_pct = 100.0 * errs / total
         out[tag] = summary
-        # The knee is where the platform stops meeting its service level, not where a single
-        # request failed. Any error ending the ramp reported "capacity: none" with read p95 at
-        # a sixth of the ceiling — a verdict about one request, not about capacity. The budget
-        # is a RATE, and it is stated in the result so the number is readable.
+        # The knee is where the platform stops meeting its service level, not where a single request
+        # failed — any-error-ends-the-ramp reported 'capacity: none' over healthy latencies.
         budget = cfg.get("ramp_error_budget_pct", 1.0)
         if err_pct > budget or worst > ceiling:
             degraded = {"step": s, "read_p95": worst, "errors": errs,

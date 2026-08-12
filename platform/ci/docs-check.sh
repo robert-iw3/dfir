@@ -41,9 +41,9 @@ mapfile -t DOCS < <(
 echo
 echo "${C_HD}== Link resolution (${#DOCS[@]} documents)${C_OFF}"
 
-# Relative links only. An http(s) target is not this script's business — reaching the network
-# to validate it would make the gate fail when the network is down, which trains everyone to
-# ignore it. Anchors are stripped: the file is what must exist.
+# Relative links only. An http(s) target is not this script's business — reaching the network to
+# validate it would make the gate fail when the network is down, which trains everyone to ignore
+# it.
 for doc in "${DOCS[@]}"; do
     dir="$(dirname "${doc}")"
     rel="${doc#"${ROOT}"/}"

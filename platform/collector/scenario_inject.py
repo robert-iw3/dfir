@@ -34,12 +34,11 @@ def main(scenario_path, out_dir):
     with open(scenario_path) as fh:
         sc = json.load(fh)
 
-    # The scenario REPLACES the toolkit's own output, it does not merge with it. The toolkit
-    # runs against this container, not the endpoint being simulated, so its hunt findings are
-    # environment noise — and on a synthetic capture the platform preserves collector verdicts
-    # (the on-host adjudication is authoritative when memory is a placeholder), which would
-    # carry that noise through as real detections. The scenario is the controlled finding set;
-    # the toolkit's finding files are removed so ingest reads only it.
+    # The scenario REPLACES the toolkit's own output, it does not merge with it. The toolkit runs
+    # against this container, not the endpoint being simulated, so its hunt findings are environment
+    # noise — and on a synthetic capture the platform preserves collector verdicts (the on-host
+    # adjudication is authoritative when memory is a placeholder), which would carry that noise
+    # through as real detections.
     for pat in ("Adjudication_*.json", "Combined_Findings_*.json", "*_Findings_*.json"):
         for stale in glob.glob(os.path.join(out_dir, pat)):
             os.remove(stale)
@@ -53,11 +52,10 @@ def main(scenario_path, out_dir):
     with open(os.path.join(out_dir, "Principals.json"), "w") as fh:
         json.dump(sc.get("principals") or [], fh, indent=1)
 
-    # Host identity is NOT rewritten here. The collector already resolves it from
-    # IR_MACHINE_ID / IR_HOSTNAME before any hunt runs (collect.sh resolve_machine_id), so the
-    # corpus passes those two variables and the identity is native — not surgery on a file the
-    # custody seal then has to cover. A distinct machine id per endpoint is what keeps the
-    # enclave from merging all 25 into one host.
+    # Host identity is NOT rewritten here. The collector already resolves it from IR_MACHINE_ID /
+    # IR_HOSTNAME before any hunt runs (collect.sh resolve_machine_id), so the corpus passes those
+    # two variables and the identity is native — not surgery on a file the custody seal then has to
+    # cover.
 
     # The scenario travels with the bundle — a corpus bundle states what it is.
     with open(os.path.join(out_dir, "_scenario.json"), "w") as fh:

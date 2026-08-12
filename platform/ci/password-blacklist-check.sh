@@ -2,10 +2,8 @@
 # ==============================================================================
 # BANNED PASSWORD LIST — SRG-APP-000835-WSR-000200, SRG-APP-000840-WSR-000210.
 #
-# Two controls, one mechanism, distinguished only by what triggers an update: a schedule
-# (835) and a suspicion of compromise (840). So the list is not the interesting part — the
-# RECORD is. A list that exists proves nothing about either control; a record saying when it
-# was last reviewed, and why, is what makes both falsifiable.
+# Two controls, one mechanism, distinguished only by what triggers an update: a schedule (835)
+# and a suspicion of compromise (840). So the list is not the interesting part — the RECORD is.
 #
 #   ci/password-blacklist-check.sh                    # assert list, policy and record
 #   ci/password-blacklist-check.sh --record "reason"  # stamp a review

@@ -9,8 +9,7 @@
 # and a single brokered port means a single firewall rule at the DMZ boundary.
 http:
   routers:
-    # 1. The IdP's login endpoints. No forward-auth: this is what you use *to* log in.
-    #    Only the realm's own paths — the admin console and master realm are refused below.
+    # 1. The IdP's login endpoints, no forward-auth — this is what you log in WITH.
     idp-login:
       rule: "PathPrefix(`/realms/irplatform`) || PathPrefix(`/resources/`)"
       entryPoints: [websecure]
@@ -20,8 +19,8 @@ http:
         options: default
       middlewares: [sec-headers, ratelimit, inflight]
 
-    # 2. Keycloak admin console / master realm / admin REST — denied to the analyst side.
-    #    Administration is an MGMT-VLAN activity (deploy/NETWORKING.md row 7).
+    # 2. Keycloak admin console / master realm / admin REST — denied to the analyst side;
+    # administration is an MGMT-VLAN activity (deploy/NETWORKING.md row 7).
     idp-deny:
       rule: "PathPrefix(`/admin`) || PathPrefix(`/realms/master`)"
       entryPoints: [websecure]
@@ -31,8 +30,8 @@ http:
         options: default
       middlewares: [deny-all]
 
-    # 3. oauth2-proxy's own endpoints (callback, sign-in, sign-out). Must bypass the
-    #    forward-auth middleware or the login target would itself require login.
+    # 3. oauth2-proxy's own endpoints must bypass forward-auth, or the login target would itself
+    # require login.
     sso-endpoints:
       rule: "PathPrefix(`/oauth2/`)"
       entryPoints: [websecure]
@@ -42,9 +41,8 @@ http:
         options: default
       middlewares: [sec-headers, ratelimit, inflight]
 
-    # 4. Everything else = the application, served through the SSO gate. oauth2-proxy
-    #    redirects unauthenticated users to Keycloak, handles the callback, then proxies
-    #    to the SPA with the authenticated identity attached as headers.
+    # 4. Everything else is the application through the SSO gate: unauthenticated users redirect to
+    # Keycloak, then are proxied on callback.
     ir-web:
       rule: "PathPrefix(`/`)"
       entryPoints: [websecure]
@@ -82,12 +80,8 @@ http:
         referrerPolicy: "no-referrer"
         permissionsPolicy: "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
 
-    # The React bundle is mobile code (SRG-APP-000206-WSR-000128). The policy codifies what is
-    # already true — the application loads no third-party origin — so a bundle that starts
-    # reaching one is refused by the browser rather than silently trusted.
-    #
-    # Applied to the application only. The identity provider serves its own login page with its
-    # own policy, and overriding it here would break the form this gate depends on.
+    # The React bundle is mobile code (SRG-APP-000206-WSR-000128): the CSP codifies what is already
+    # true — no third-party origin — so a bundle that starts reaching one is blocked, not just noted.
     app-csp:
       headers:
         contentSecurityPolicy: >-
@@ -110,20 +104,16 @@ http:
         amount: 100
 
 tls:
-  # SRG-APP-000014-WSR-000006 and SRG-APP-000439-WSR-000188. Stated rather than defaulted: the
-  # default suite list follows the library and changes with the image, and an explicit list is
-  # also what removes export and null ciphers — they are absent because they are not named.
-  #
-  # TLS 1.2 minimum, AEAD suites only, forward secrecy on every suite. TLS 1.3 suites are not
-  # configurable in Go and are always available above this floor.
+  # SRG-APP-000014-WSR-000006 / -000439-WSR-000188: the cipher suites are stated rather than
+  # defaulted, because the library's default list changes with the image and an explicit list is
+  # auditable.
   options:
     default:
-      # Client certificates are requested only when smartcard logon is enabled, and requested
-      # rather than required: demanding one at the handshake refuses the connection before
-      # Keycloak can offer any other authenticator, so a user without a card — including the
-      # administrator who would fix it — cannot reach the login page at all. Accept or reject
-      # belongs in the authentication flow, where it is auditable.
-      # __CLIENT_AUTH__
+      # Client certificates are requested only when smartcard logon is enabled, and requested rather
+      # than required: demanding one at the handshake refuses the connection before Keycloak can offer
+      # any other authenticator, so a user without a card — including the administrator who would fix
+      # it — cannot reach the login page at all. Accept or reject belongs in the authentication flow,
+      # where it is auditable.
       minVersion: VersionTLS12
       sniStrict: true
       cipherSuites:

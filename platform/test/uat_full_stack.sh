@@ -1,15 +1,10 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# CAPSTONE UAT — the consolidated deployment, end to end.
+# CAPSTONE UAT — the consolidated deployment, end to end. The segment UATs each prove one
+# property.
 #
-# The segment UATs each prove one property. This proves the WHOLE end-state vision
-# with all tiers deployed together as they would be on separate hardware:
 #
-#   collector (endpoint) → DMZ receiver → [enclave PULLS] → MinIO + PostgreSQL
-#     → sandboxed analysis → SSO-gated web app → analyst workstation (brokered)
 #
-# It asserts real DATA FLOW (evidence ingested and renderable), not just reachability,
-# and re-asserts the segmentation guarantees across the consolidated tiers.
 # ==============================================================================
 set -uo pipefail
 
@@ -131,11 +126,21 @@ assert_data_flow ir-enclave_backend_1 "${IR_BROKER_TOKEN}" 4
 # Counted from `finding_count`, not from an embedded list: a Volatility pass yields thousands
 # of findings, so the serializer reports analyses by shape and the detail is paginated
 # separately. Reading a `findings` array here would assert a response the API does not send.
+# THIS suite's run, resolved by the hostname it collected — never a hardcoded id, which
+# names whatever happened to ingest first on this database.
 for i in $(seq 1 40); do
     RUN=$(be python -c "
 import urllib.request as u, json
-r=u.Request('http://127.0.0.1:8000/api/runs/1/',headers={'Authorization':'Token ${IR_BROKER_TOKEN}'})
-d=json.load(u.urlopen(r,timeout=8))
+def get(p):
+    r=u.Request('http://127.0.0.1:8000/api'+p,headers={'Authorization':'Token ${IR_BROKER_TOKEN}'})
+    return json.load(u.urlopen(r,timeout=8))
+h=get('/hosts/?search=${HOST}')
+rows=h.get('results',h) if isinstance(h,dict) else h
+rows=[x for x in rows if x.get('hostname')=='${HOST}']
+runs=get('/hosts/%d/runs/'%rows[0]['id']) if rows else []
+runs=runs.get('results',runs) if isinstance(runs,dict) else runs
+rid=max((r['id'] for r in runs),default=None)
+d=get('/runs/%d/'%rid) if rid else {}
 caps=d.get('captures',[])
 print(sum(a.get('finding_count',0) for c in caps for a in c.get('analyses',[])))" 2>/dev/null)
     [[ "${RUN:-0}" -gt 0 ]] && break; sleep 3
@@ -172,10 +177,9 @@ for t in "backend 8000 API" "db 5432 database" "minio 9000 object store"; do
 done
 RES=$(c "$WS" dig +short +time=2 +tries=1 ir-platform.local A 2>/dev/null | head -1)
 [[ -n "$RES" ]] && ok "platform name resolves to the broker (${RES})" || bad "platform name did not resolve"
-# Asserted as "no address comes back", not as an rcode. The container runtime runs its own
-# DNS proxy at the network gateway and forwards to the resolver named by --dns; that proxy
-# rewrites the resolver's REFUSED into NXDOMAIN, so a client can never observe the policy's
-# own rcode. What matters for exfil is that no name outside the zone resolves.
+# Asserted as "no address comes back", not as an rcode. The container runtime runs its own DNS
+# proxy at the network gateway and forwards to the resolver named by --dns; that proxy rewrites
+# the resolver's REFUSED into NXDOMAIN, so a client can never observe the policy's own rcode.
 ANS=$(c "$WS" dig +short +time=2 +tries=1 exfil.attacker.example A 2>/dev/null | grep -c .)
 PUB=$(c "$WS" dig +short +time=3 +tries=1 example.com A 2>/dev/null | grep -c .)
 [[ "${ANS:-1}" == "0" && "${PUB:-1}" == "0" ]] \
@@ -194,17 +198,9 @@ for _ in $(seq 1 12); do
         [[ $(dig +short +time=2 +tries=1 "${PLATFORM_HOST}" 2>/dev/null | grep -c .) -gt 0 ]] && break
     sleep 5
 done
-# A ROPC token request does NOT exercise the callback — an issuer/host bug once hid behind
-# a green SSO UAT for exactly that reason. This drives the true authorization-code flow.
 #
-# Each account is re-provisioned to its deployed state first (initial password from .env,
-# replacement forced at first login); the login completes that forced change — the path a
-# real analyst walks — then sign-out is proven on the rotated password, and the account is
-# restored to provisioned state afterward.
-# The brokered path is ONE Boundary session, supervised: when it expires the broker logs
-# "session ended — re-establishing" and opens another. A login landing in that window gets a
-# connection reset, which says nothing about identity. Retried ONLY on connection-level
-# failure — an auth error is returned as-is, or this would mask the thing being tested.
+# A ROPC token request does NOT exercise the callback — an issuer/host bug once hid behind a
+# green SSO UAT for exactly that reason. This drives the true authorization-code flow.
 via_broker() {  # <driver.py> <args...>
     local driver="$1"; shift
     local out
@@ -218,11 +214,10 @@ via_broker() {  # <driver.py> <args...>
     printf '%s' "${out}"
 }
 
-# THROWAWAY accounts, one per role, created and deleted here.
 #
-# NOT `provision-demo-users.sh --force default-<role>`: that deletes and recreates the real
-# account, resetting every password an analyst set to the .env default with a forced change
-# pending. A regression test must not destroy the state the platform guarantees it keeps.
+# THROWAWAY accounts, one per role, created and deleted here. NOT `provision-demo-users.sh
+# --force default-<role>`: that deletes and recreates the real account, resetting every password
+# an analyst set to the .env default with a forced change pending.
 kc() {
     ${RUNTIME} exec -i ir-enclave_keycloak_1 sh -c '
         /opt/keycloak/bin/kcadm.sh config credentials --server http://127.0.0.1:8080 \
@@ -278,17 +273,12 @@ STILL="$(kc get users -r irplatform --fields username 2>/dev/null | grep -c '"us
     || bad "demo accounts are missing after the login suite (${STILL})"
 
 say "8a/9  A dead sign-in callback offers the analyst a way back"
-# The failure an analyst actually hits: an expired or evicted CSRF cookie, or Keycloak
-# recreated mid-flow, produces a callback it no longer recognizes. Refreshing resubmits the
-# same dead callback, and in the kiosk there is no address bar — so a page with no link out
-# stranded the analyst until an operator restarted the browser container.
 #
-# Triggered for real, not read from the template: a login-actions URL with a bogus code is
-# exactly the shape of the expired callback, and what Keycloak RENDERS for it is the thing
-# under test.
+# The failure an analyst actually hits: an expired or evicted CSRF cookie, or Keycloak recreated
+# mid-flow, produces a callback it no longer recognizes. Refreshing resubmits the same dead
+# callback, and in the kiosk there is no address bar — so a page with no link out stranded the
+# analyst until an operator restarted the browser container.
 #
-# Fetched from the BACKEND: the Keycloak image ships no curl, so probing from inside it
-# returned nothing and the assertion would have "passed" on an empty page.
 DEAD=$(${RUNTIME} exec ir-enclave_backend_1 python3 -c "
 import urllib.request as u
 url = ('http://keycloak:8080/realms/irplatform/login-actions/authenticate'

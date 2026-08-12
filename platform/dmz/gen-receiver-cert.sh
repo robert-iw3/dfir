@@ -3,15 +3,13 @@
 #
 # Separate from the platform's web certificate on purpose. That one is presented to analysts
 # inside the tunnel; this one is presented to machines the responder does not trust, on networks
-# the responder does not control. They have different trust anchors, different lifetimes and
-# different blast radii, and issuing one certificate for both would tie the evidence path's
-# security to the console's.
+# the responder does not control.
 #
 # Self-signed by default so a deployment is secure out of the box rather than secure once
 # somebody gets around to it. The collector pins THIS FILE as its trust anchor, so a self-signed
-# leaf is a complete answer for a closed evidence path: there is exactly one server the collector
-# should ever talk to, and pinning it is stronger than trusting a public CA that would vouch for
-# anyone. A site with its own PKI drops in an issued cert and key instead; nothing else changes.
+# leaf is a complete answer for a closed evidence path: there is exactly one server the
+# collector should ever talk to, and pinning it is stronger than trusting a public CA that would
+# vouch for anyone.
 #
 #   ./gen-receiver-cert.sh [--force]
 set -euo pipefail
@@ -20,8 +18,7 @@ CERTS="${IR_RECEIVER_CERT_DIR:-${HERE}/certs}"
 
 # Every name and address an endpoint might legitimately dial. A responder points the collector
 # at whatever the DMZ is reachable as from the endpoint's segment, and a certificate that does
-# not cover that name fails verification — which, correctly, aborts the shipment. Sites add
-# their DMZ's public hostname here via IR_RECEIVER_SANS.
+# not cover that name fails verification — which, correctly, aborts the shipment.
 PRIMARY="${IR_RECEIVER_HOST:-receiver}"
 EXTRA_SANS="${IR_RECEIVER_SANS:-}"
 

@@ -110,12 +110,8 @@ if [[ -n "${OTHER}" ]]; then
     fi
 fi
 
-# The session runs the same way launch.sh runs it, minus the GUI.
-# Assertions below count matches with `grep -c` rather than testing `grep -q`.
-# A quiet grep exits on its first match and closes the pipe under podman; with pipefail the
-# resulting SIGPIPE makes the pipeline report failure even though the pattern matched. Every
-# check here reads "contained" from a matched pattern, so that false negative reports intact
-# boundaries as breached — the most misleading way a security test can fail.
+# The session runs the same way launch.sh runs it, minus the GUI. Assertions below count matches
+# with `grep -c` rather than testing `grep -q`.
 SETTINGS_MOUNT=""
 [[ "${TOOL}" == "binja" ]] && SETTINGS_MOUNT="-v ${PLATFORM}/re-workstation/binja-settings.json:/home/binja/.binaryninja/settings.json:ro,z"
 re_run() { ${RUNTIME} run --rm --network none --cap-drop ALL \
@@ -126,13 +122,8 @@ re_run() { ${RUNTIME} run --rm --network none --cap-drop ALL \
 
 say "2/6  The session has no network at all"
 # Addressed by IP, not by name, and deliberately so. The session runs with no network at all, so
-# a hostname would fail to RESOLVE and the connection would fail for that reason — the test would
-# pass identically against a fully reachable enclave. An address removes DNS from the question
-# and leaves only reachability, which is the property being asserted.
-#
-# The addresses are discovered from the running deployment rather than written down: hardcoded
-# ones drift the moment a network is recreated, and a probe aimed at an address nothing answers
-# on is a test that passes for free.
+# a hostname would fail to RESOLVE and the connection would fail for that reason — the test
+# would pass identically against a fully reachable enclave.
 addr_of() {  # addr_of <container> <network>
     ${RUNTIME} inspect "$1" \
         --format "{{(index .NetworkSettings.Networks \"$2\").IPAddress}}" 2>/dev/null | tr -d '[:space:]'

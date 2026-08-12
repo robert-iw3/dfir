@@ -1,17 +1,7 @@
 #!/bin/sh
-# The analyst's route into the enclave: a Boundary session, held open on the brokered port.
-#
-# Runs in the bastion's network namespace, so the listener binds the tailnet interface — the
-# analyst reaches it over WireGuard and by no other path. The connection it accepts is carried by
-# an authenticated, authorized, auditable session against one named target.
-#
-# It refuses to start unless it holds a session, and says which step failed when it cannot: a
-# listener with nothing behind it looks identical to a working one.
-#
-# EVERY HOP FROM HERE IS ENCRYPTED. Authentication and authorization go to the controller's API
-# over TLS pinned to its certificate; the session itself is proxied to the egress worker over the
-# ephemeral mutually-authenticated TLS Boundary negotiates per session. Nothing on the
-# DMZ-to-enclave link is in the clear.
+# The analyst's route into the enclave: Boundary sessions held open on the brokered ports, run in
+# the bastion's namespace so the listeners bind the tailnet interface. The DMZ is a session CLIENT
+# only — controller, database, grants and roots all live in the enclave.
 set -u
 
 : "${BOUNDARY_ADDR:?BOUNDARY_ADDR is required}"
@@ -20,9 +10,9 @@ set -u
 : "${BOUNDARY_ANALYST_LOGIN:=analyst}"
 : "${BOUNDARY_ANALYST_PASSWORD:?BOUNDARY_ANALYST_PASSWORD is required}"
 : "${BOUNDARY_CACERT:=/boundary/certs/boundary.crt}"
-# Loopback, not the analyst-facing port. The distributor owns BROKER_LISTEN in this namespace
-# and spreads connections over these. Binding them where a workstation could reach them would
-# let one pin itself to a single session.
+# Loopback, not the analyst-facing port: the distributor owns BROKER_LISTEN and spreads
+# connections over these. Bound where a workstation could reach them, a workstation could pick its
+# own session.
 SESSION_BASE="${BROKER_SESSION_BASE:-18443}"
 
 case "${BOUNDARY_ADDR}" in
@@ -45,10 +35,9 @@ echo "[broker] controller ${BOUNDARY_ADDR}, pinned to $(basename "${BOUNDARY_CAC
 # Authenticate as a real principal, so the session is attributable.
 export BOUNDARY_PASSWORD="${BOUNDARY_ANALYST_PASSWORD}"
 
-# Cancel a principal's leftover sessions, using THAT principal's token. A replaced broker
-# container abandons its sessions, which Boundary keeps "active" until expiry — the access
-# record then over-counts live access. Each principal's list is filtered to its own sessions
-# (read:self), so a reap here can only ever touch the one session that principal carries.
+# Cancel a principal's leftover sessions with THAT principal's token: a replaced broker abandons
+# sessions Boundary keeps 'active' until expiry, and the access record then shows sessions nobody
+# holds.
 reap_sessions() {  # <token-env-var-name>
     [ -n "${BOUNDARY_PROJECT_ID:-}" ] || {
         echo "[broker] BOUNDARY_PROJECT_ID unset — stale sessions are not reaped"; return 0; }
@@ -109,12 +98,8 @@ reap_all() {
 }
 trap 'echo "[broker] terminating — canceling the sessions"; reap_all; exit 0' TERM INT
 
-# N independent sessions, each with its own port, its own supervisor and its own PRINCIPAL.
-# One session shared by the whole fleet is a single failure domain: it dies under connection
-# churn and drops every analyst together. The distributor beside this container spreads the
-# fleet across these, so a death costs the connections riding that session and new ones are
-# redispatched past it. Distinct principals make each session individually attributable in
-# the access record, and scope every list/cancel to the one session that principal carries.
+# N independent sessions, each with its own port, supervisor and PRINCIPAL: one shared session is
+# a single failure domain that dies under connection churn and takes the fleet with it.
 SESSIONS="${BROKER_SESSIONS:-8}"
 
 if ! authenticate "${BOUNDARY_ANALYST_LOGIN}"; then
@@ -141,17 +126,15 @@ while [ "${i}" -le "${SESSIONS}" ]; do
 done
 echo "[broker] starting ${SESSIONS} independent session(s) on 127.0.0.1:${SESSION_BASE}-$((SESSION_BASE + SESSIONS - 1))"
 
-# Is this port bound? Read the LISTEN socket rather than dialing it: a dial to a Boundary proxy
-# is itself a session connection, so polling churns the session it protects. /proc/net/tcp{,6}
-# is passive. State 0A = LISTEN.
+# Is this port bound? Read the LISTEN socket from /proc/net/tcp{,6} rather than dialing — a dial
+# to a Boundary proxy is itself a session connection, so polling churns the session it protects.
 listening() {
     awk -v p=":$(printf '%04X' "$1")$" '$4=="0A" && $2 ~ p {f=1} END{exit !f}' \
         /proc/net/tcp /proc/net/tcp6 2>/dev/null
 }
 
-# One supervisor per session. A running client is not a working path: `boundary connect` can
-# hold a session and report a listening proxy with nothing bound. The LISTENER is supervised,
-# not the process.
+# One supervisor per session, supervising the LISTENER: `boundary connect` can hold a session and
+# report a listening proxy with nothing bound.
 supervise() {  # <port> <session-index>
     port="$1"
     tokvar="BOUNDARY_TOKEN_$2"
@@ -187,19 +170,8 @@ supervise() {  # <port> <session-index>
         fi
         echo "[broker:${port}] listening on session ${sid:-unknown} — this share of the fleet has a path"
 
-        # THREE signals, because each alone misses a real failure:
-        #
-        #   process    the client exited
-        #   listener   the port stopped accepting while the client ran
-        #   session    the CONTROLLER no longer holds this session
-        #
-        # The third is not redundant. A cancelled or expired session leaves `boundary connect`
-        # running, the port bound and the output silent — nothing local shows it. The
-        # distributor then keeps sending analysts to a port that accepts the connection and
-        # fails it, which redispatch cannot route around because the accept succeeded.
-        #
-        # The client's error output is NOT a trigger: it logs a line per failed connection as
-        # well as on session death, so acting on it makes the supervisor a source of churn.
+        # THREE signals, because each alone misses a real failure: the process exiting, the listener
+        # disappearing, and the session no longer existing controller-side.
         misses=0
         ticks=0
         while kill -0 "${pid}" 2>/dev/null; do

@@ -111,10 +111,12 @@
 * [IR Platform](platform/README.md)
   * [Security model — the principles, what enforces each, and the test that proves it](platform/SECURITY-MODEL.md)
   * [Code graph — components, wiring, and what proves what](platform/CODE_GRAPH.md)
+  * [Change management — decide the blast radius before writing the change](platform/CHANGE-MANAGEMENT.md)
   * [Deploying the IR Platform](platform/deploy/README.md)
   * [Network design — VLANs, routing, firewall and IDPS placement](platform/deploy/NETWORKING.md)
   * [Collection on a suspect endpoint](platform/collector/README.md)
   * [Symbol acquisition (ISF)](platform/symbols/README.md)
+  * [RE workstation — a disassembler over live malware, with nothing to reach](platform/re-workstation/README.md)
   * [Administrative access](platform/admin/README.md)
 * [Web application — screen by screen](platform/UI_OVERVIEW.md)
 * Role workflows

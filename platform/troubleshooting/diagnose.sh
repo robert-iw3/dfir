@@ -2,10 +2,8 @@
 # ==============================================================================
 # IR Platform — end-to-end data-flow diagnostics.
 #
-# Walks the evidence path hop by hop and reports, at each stage, whether it is
-# healthy or exactly what is wrong. Read-only: it inspects and probes, it never
-# changes state. Use it when a UAT fails, when evidence "disappears", or after a
-# deploy to confirm the whole chain is live.
+# Walks the evidence path hop by hop and reports, at each stage, whether it is healthy or
+# exactly what is wrong. Read-only: it inspects and probes, it never changes state.
 #
 #   collector → (brokered) → DMZ receiver → [pull] → enclave ingest
 #            → object store (MinIO) → PostgreSQL → analysis worker → web app
@@ -203,11 +201,9 @@ fi
 done
 
 
-# --- known silent-failure modes --------------------------------------------
-# Everything above traces the data path. This section covers the OTHER class of fault, the one
-# that costs the most time: a component that reports success while doing nothing. None of these
-# is visible in a container's status, and none is findable by reading code — the code is right
-# and only the running system disagrees.
+# --- known silent-failure modes -------------------------------------------- Everything above
+# traces the data path. This section covers the OTHER class of fault, the one that costs the
+# most time: a component that reports success while doing nothing.
 if [[ "$MODE" == all || "$MODE" == silent ]]; then
 hdr "Silent failures — components that look healthy but are not"
 
@@ -270,7 +266,6 @@ done
 # The tailnet login server. Given a HOSTNAME, tailscale forces TLS and dials 443, discarding the
 # configured port — the node exits without joining and the analyst browser simply has no route,
 # with nothing in the browser to say why.
-# What the NODES actually dial, which is written per bring-up and is not the value in .env.
 HS_LOGIN=$(sed -n 's/^HEADSCALE_LOGIN_URL=//p' "${PLATFORM_ROOT}/deploy/.env.tailnet" 2>/dev/null | tail -1)
 if [[ -z "${HS_LOGIN}" ]]; then
     fail "no HEADSCALE_LOGIN_URL — nodes start with an empty login server and never register"

@@ -109,14 +109,8 @@ def convention_of(name):
     if not name:
         return ""
     s = str(name).strip()
-    # A trailing type suffix is held out and restored verbatim. It is a format, not a name,
-    # and abstracting it destroys the shape rather than generalizing it: `_archive.7z` became
-    # `_<name>.<number>z`, which reads as a parse failure.
-    #
-    # Matched by KNOWN suffix first, then by length. On length alone `.timer` (5) survived
-    # while `.service` (7) was abstracted to `<name>` — so systemd units, the most common
-    # Linux persistence artifact there is, produced uninformative shapes and were dropped
-    # from every fingerprint. The threshold was deciding which platforms have tradecraft.
+    # A trailing type suffix is held out and restored verbatim: it is a format, not a name, and
+    # abstracting it destroys the shape instead of generalizing it.
     ext = ""
     m = re.search(KNOWN_SUFFIX, s, flags=re.I) or re.search(r"\.[A-Za-z0-9]{1,5}$", s)
     if m:
@@ -176,25 +170,18 @@ def build_fingerprint(hosts, edges, nodes, technique_first=None, confirmed_nodes
 
     # --- naming conventions --------------------------------------------------------------
     conventions = Counter()
-    # The collected value each shape was abstracted FROM, kept beside it. A shape on its own
-    # is unfalsifiable to a reader: `EF-<number>-Q<number>` is indistinguishable from a
-    # placeholder unless the record can also say it came from `EF-2026-Q3` on 9 hosts. Only
-    # ever the widest-seen example, and never used for matching — the shape is the evidence,
-    # this is the provenance of it.
+    # The collected value each shape was abstracted FROM, kept beside it — a shape alone is
+    # unfalsifiable to a reader.
     examples = {}
     for n in nodes:
         if n.kind != "artifact":
             continue
-        # RARITY FLOOR. `host_count` is run-wide, so an artifact on more hosts than this
-        # campaign has is present on hosts outside it — the environment, not this actor.
-        # Without this the fleet's own software becomes the campaign's top convention:
-        # `OneDriveSetup.exe` sits on all 20 corpus endpoints, clean ones included, and was
-        # being reported as tradecraft AND used as shared evidence between two campaigns.
+        # RARITY FLOOR: host_count is run-wide, so an artifact on more hosts than this campaign has is
+        # the environment, not this actor.
         if (n.host_count or 1) > len(hostnames):
             continue
-        # VERDICT FLOOR. An artifact nobody adjudicated as compromise describes the host,
-        # not the intrusion. Linkage already refuses to link on Indeterminate alone; a
-        # fingerprint that accepts it contradicts the same case's own linkage decisions.
+        # VERDICT FLOOR: an artifact nobody adjudicated as compromise describes the host, not the
+        # intrusion.
         if confirmed_nodes is not None and n.id not in confirmed_nodes:
             continue
         shape = convention_of(n.value)
@@ -245,14 +232,8 @@ def build_fingerprint(hosts, edges, nodes, technique_first=None, confirmed_nodes
         "edges": len(edges),
         "artifact_nodes": sum(1 for n in nodes if n.kind == "artifact"),
         "technique_count": len(techniques),
-        # Named so a thin fingerprint reads as thin evidence rather than as an actor with
-        # little tradecraft. L5 refuses to compare below this.
-        #
-        # One naming convention is a habit and enough on its own. Without any, the bar is a
-        # RICH technique profile, because techniques are the most generic evidence there is:
-        # T1071, T1053 and T1003 are in nearly every intrusion, and three of them was
-        # clearing this gate. Two unrelated cases could then reach 0.50 on techniques and
-        # their order alone — over the 0.30 similarity floor, and reported as "seen before".
+        # Named so a thin fingerprint reads as thin evidence rather than as an actor with little
+        # tradecraft; L5 refuses to compare below this.
         "sufficient": bool(artifact_conventions) or len(techniques) >= 5,
     }
 

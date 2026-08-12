@@ -250,6 +250,10 @@ td.wrap { white-space: pre-wrap; max-width: 46ch; font-size: 12px; line-height: 
 .facet-item.on { background: var(--accent-dim); color: #fff; }
 .facet-item.on .facet-meta { color: #dbe9ff; }
 .facet-meta { color: var(--text-dim); font-size: 11px; font-family: var(--mono); white-space: nowrap; }
+/* Chart captions are prose, not a facet chip's one-line label: they wrap, they use the
+   reading font, and they stop at a measure the eye can track back from. */
+.chart-note { color: var(--text-dim); font-size: 11.5px; line-height: 1.5;
+              max-width: 78ch; margin: 2px 0 12px; }
 
 /* Searchable / filterable table controls */
 .table-controls { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
@@ -446,7 +450,7 @@ td.wrap { white-space: pre-wrap; max-width: 46ch; font-size: 12px; line-height: 
    cannot distinguish red from green must still be readable, and this one states
    who can reach the evidence.
    --------------------------------------------------------------------------- */
-.mesh-matrix th { font-weight: 500; font-size: 12px; color: var(--muted); }
+.mesh-matrix th { font-weight: 500; font-size: 12px; color: var(--text-dim); }
 .mesh-matrix .mesh-col {
   /* Vertical headings keep the grid square at seven-plus services; horizontal
      ones force a column as wide as the longest service name. */
@@ -464,11 +468,70 @@ td.wrap { white-space: pre-wrap; max-width: 46ch; font-size: 12px; line-height: 
 }
 .mesh-allow   { color: var(--good); background: color-mix(in srgb, var(--good) 12%, transparent); }
 .mesh-deny    { color: var(--bad);  background: color-mix(in srgb, var(--bad) 12%, transparent); }
-.mesh-default { color: var(--muted); }
-.mesh-self    { color: var(--muted); opacity: 0.4; }
+.mesh-default { color: var(--text-dim); }
+.mesh-self    { color: var(--text-dim); opacity: 0.4; }
+.mesh-warn    { color: var(--warn); background: color-mix(in srgb, var(--warn) 14%, transparent); }
+/* Observed traffic on a pair the policy does not allow: the loudest cell on the page. */
+.mesh-breach  { color: var(--bad); background: color-mix(in srgb, var(--bad) 30%, transparent); }
+.mesh-obs {
+  font-size: 9px;
+  font-weight: 400;
+  margin-left: 2px;
+  vertical-align: super;
+  color: var(--text-dim);
+}
 .mesh-key {
   display: inline-block;
   padding: 0 5px;
   border-radius: 3px;
   font-weight: 700;
+}
+
+/* --- Waiting -----------------------------------------------------------------------
+   Twelve dots on a ring, each fading in turn: the platform is working, and the ring
+   says so without claiming to know how far along it is. A determinate bar would be a
+   lie here — nothing being waited on reports progress.
+
+   Reduced motion is honoured. Someone who has asked their system to stop animating
+   should not be made to watch a spinner to find out the app is alive; the dots hold
+   still and the text carries the message. */
+.ring { position: relative; width: 46px; height: 46px; }
+.ring i {
+  position: absolute; inset: 0;
+  animation: ring-spin 1.25s linear infinite;
+}
+.ring i::before {
+  content: ""; position: absolute; top: 0; left: 50%;
+  width: 5px; height: 5px; margin-left: -2.5px; border-radius: 50%;
+  background: var(--accent); box-shadow: 0 0 6px var(--accent);
+}
+.ring i:nth-child(1)  { animation-delay: -1.250s; }
+.ring i:nth-child(2)  { animation-delay: -1.146s; }
+.ring i:nth-child(3)  { animation-delay: -1.042s; }
+.ring i:nth-child(4)  { animation-delay: -0.938s; }
+.ring i:nth-child(5)  { animation-delay: -0.833s; }
+.ring i:nth-child(6)  { animation-delay: -0.729s; }
+.ring i:nth-child(7)  { animation-delay: -0.625s; }
+.ring i:nth-child(8)  { animation-delay: -0.521s; }
+.ring i:nth-child(9)  { animation-delay: -0.417s; }
+.ring i:nth-child(10) { animation-delay: -0.313s; }
+.ring i:nth-child(11) { animation-delay: -0.208s; }
+.ring i:nth-child(12) { animation-delay: -0.104s; }
+
+@keyframes ring-spin {
+  0%   { transform: rotate(0deg);   opacity: 1; }
+  100% { transform: rotate(360deg); opacity: .18; }
+}
+
+/* Centered in the space it is given, not pinned to a corner: a loading state belongs where the
+   content it stands in for will appear. min-height holds that space open before the panel has
+   been sized. */
+.waiting {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 14px; min-height: 180px; width: 100%; text-align: center; color: var(--text-dim);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ring i { animation: none; }
+  .ring i:nth-child(n+2) { opacity: .25; }
 }

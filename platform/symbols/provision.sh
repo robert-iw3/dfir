@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
 # Provision a Volatility symbol table into the enclave, end to end.
 #
-# Runs on the internet-connected acquisition machine. It selects a builder matching the
-# TARGET's distribution release, acquires the DWARF, converts it to an ISF, seals it, and
-# ships it over the same one-way path evidence takes — the DMZ receiver, drained inward by
-# the enclave puller. The enclave itself never reaches the internet.
+# Runs on the internet-connected acquisition machine. It selects a builder matching the TARGET's
+# distribution release, acquires the DWARF, converts it to an ISF, seals it, and ships it over
+# the same one-way path evidence takes — the DMZ receiver, drained inward by the enclave puller.
 #
 #   ./provision.sh --requisites <bundle>/_symbols.json
 #   ./provision.sh --requisites ~/ir-symbols/requisites/_symbols.json --store ~/ir-symbols/store
@@ -122,11 +121,19 @@ RECV_IP="$(${RUNTIME} inspect ir-dmz_receiver_1 \
     --format '{{with index .NetworkSettings.Networks "ir-dmzlink"}}{{.IPAddress}}{{end}}' 2>/dev/null)"
 [[ -n "${RECV_IP}" ]] || die "the DMZ receiver is not running on ir-dmzlink"
 
-RESP="$(${RUNTIME} run --rm --network ir-dmzlink -v "${BUNDLE_DIR}":/b:ro,z \
-    docker.io/library/alpine:3.24 sh -c \
-    "apk add --no-cache -q curl >/dev/null 2>&1; \
-     curl -s --max-time 300 -X POST --data-binary @/b/$(basename "${BUNDLE}") \
-     http://${RECV_IP}:8090/isf" 2>&1 | tail -1)"
+# The workstation image, which already carries curl: ir-dmzlink has no egress, so an image
+# that must install its tooling at run time cannot ship anything from here. TLS with the
+# receiver's own certificate pinned, exactly as evidence bundles ship — the receiver has no
+# plaintext listener. `|| true` so a transport failure reaches the die below with its
+# reason instead of killing the script inside the assignment.
+RESP="$(${RUNTIME} run --rm --network ir-dmzlink \
+    -v "${BUNDLE_DIR}":/b:ro,z \
+    -v "${PLATFORM}/dmz/certs/receiver.crt:/r.crt:ro,z" \
+    localhost/ir-workstation:latest \
+    curl -sS --max-time 300 --cacert /r.crt \
+    --resolve "receiver:8090:${RECV_IP}" \
+    -X POST --data-binary "@/b/$(basename "${BUNDLE}")" \
+    "https://receiver:8090/isf" 2>&1 | tail -1 || true)"
 printf '%s' "${RESP}" | grep -q '"verified": *true' \
     || die "receiver rejected the bundle: ${RESP}"
 ok "receiver accepted and verified it"

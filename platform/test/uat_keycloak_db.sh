@@ -2,10 +2,8 @@
 # ==============================================================================
 # IDENTITY STORE — separation, dynamic credentials, persistence, converge, mesh.
 #
-# Every assertion ATTEMPTS THE VIOLATION with a credential proven to work elsewhere, or
-# proves the property by exercising it. Reading a config value proves the file, not the
-# property. Connections are forced over TCP (-h 127.0.0.1): the local socket authenticates
-# by trust, which would make every credential claim vacuous.
+# Every assertion ATTEMPTS THE VIOLATION with a credential proven to work elsewhere, or proves
+# the property by exercising it. Reading a config value proves the file, not the property.
 #
 # The persistence section is DESTRUCTIVE-ADJACENT (removes the Keycloak container and
 # redeploys the enclave through deploy.sh) and therefore runs LAST, gated on everything
@@ -134,11 +132,7 @@ NCONN="$(adminq postgres "SELECT count(*) FROM pg_stat_activity WHERE datname IN
 # APPLICATION connections, which is what D-007 is about: "the app tier holds no static
 # superuser". The static admin still exists and is still a superuser by design — it is the
 # credential broker's identity, kept in deploy/.env.db and loaded only by the data tier — so
-# Vault itself holds a live connection as it in order to mint and revoke. Counting that as an
-# application connection tests a wider population than the decision covers.
-#
-# The exclusion is narrow and then asserted in the other direction below, so it cannot become
-# somewhere a rogue superuser hides.
+# Vault itself holds a live connection as it in order to mint and revoke.
 NBAD="$(adminq postgres "SELECT count(*) FROM pg_stat_activity a JOIN pg_roles r ON r.rolname=a.usename \
     WHERE a.datname IN ('${EVIDENCE_DB}','${CORR_DB}') AND a.application_name <> 'vault' \
       AND (r.rolsuper OR a.usename NOT LIKE 'v-%')" | tr -d ' ')"
@@ -179,7 +173,7 @@ KCCONN="$(adminq postgres "SELECT count(*) FROM pg_stat_activity WHERE datname='
 # The credential the PROCESS holds, not the one on disk. Keycloak reads it once and pools
 # connections, so a rotation without a restart leaves it authenticating as a user Vault has
 # revoked — the pool dies with `role … does not exist` and the login page fails for a reason
-# that names nothing. Comparing the file to itself would pass while that is true.
+# that names nothing.
 KC_PROC="$(${RUNTIME} exec "${KC}" sh -c "tr '\0' '\n' < /proc/1/environ | sed -n 's/^KC_DB_USERNAME=//p'" 2>/dev/null)"
 [[ -n "${KC_PROC}" && "${KC_PROC}" == "${KC_USER}" ]] \
     && ok "the running process holds the CURRENT credential — no superseded user in its pool" \

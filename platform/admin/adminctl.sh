@@ -24,7 +24,6 @@ COMPOSE="${IR_COMPOSE:-podman-compose}"
 
 # Management bind address. Loopback by default: on a single host that is the admin's own
 # machine, and in a split deployment this is set to the interface on the management VLAN.
-# It is never 0.0.0.0 — a forwarder on every interface is reachable from the analyst side.
 MGMT_BIND="${IR_MGMT_BIND:-127.0.0.1}"
 
 c_red=$'\e[1;31m'; c_grn=$'\e[1;32m'; c_ylw=$'\e[1;33m'; c_cyn=$'\e[1;36m'; c_off=$'\e[0m'

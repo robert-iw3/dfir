@@ -1,17 +1,12 @@
 #!/usr/bin/env bash
-# Build the collector image from a STAGED minimal context.
-#
-# The full ir_toolkit repo is large (Windows binaries, mwcp lib, vol3 wheels). The
-# collector only needs the Linux collection subtree + the memory tools, so we stage
-# just those into a temp context and build from it — keeping the image lean and the
-# build fast, and making explicit exactly what the collector bundles.
+# Build the collector image from a STAGED minimal context. The full ir_toolkit repo is large
+# (Windows binaries, mwcp lib, vol3 wheels).
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # The toolkit tree (playbooks/, tools/) — located, not assumed. It sat beside platform/ in the
 # public repository and sits under toolkit/ in the development tree, so the parent is checked
-# first and the search widens from there. Zero or multiple matches fail LOUDLY: staging the
-# wrong tree produces an image that builds and analyzes with the wrong code.
+# first and the search widens from there.
 find_toolkit_root() {
     local base cand hits
     for base in "${HERE}/../.." "${HERE}/../../.."; do
@@ -67,9 +62,7 @@ cp "${TOOLKIT_ROOT}/tools/avml" "${CTX}/toolkit/tools/" 2>/dev/null || echo "[bu
 # Drop compiled caches to keep the context small.
 find "${CTX}/toolkit" -name '__pycache__' -type d -prune -exec rm -rf {} + 2>/dev/null || true
 
-# Collector runtime files.
-# Every file the Dockerfile COPYs must be staged here. They are listed together so the two
-# cannot drift: a missing one fails the build with podman reporting the wrong filename.
+# Collector runtime files. Every file the Dockerfile COPYs must be staged here.
 cp "${HERE}/collect.sh" "${HERE}/ship.sh" "${HERE}/make_sample.py" \
    "${HERE}/symbol_requisites.py" "${HERE}/preflight.py" "${HERE}/scenario_inject.py" "${CTX}/"
 # From the PLATFORM tree, not the toolkit's: custody sealing is the platform's contract with

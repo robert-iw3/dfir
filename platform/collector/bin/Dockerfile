@@ -1,16 +1,7 @@
-# Build container for the field collector.
-#
-# The binary is built HERE and extracted; this image is never deployed to an endpoint. A
-# flagged workstation has no container runtime — that is the whole reason this track exists —
-# so the deliverable is the static artifact, not an image.
-#
-# Stages:
-#   toolchain -> deps -> lock       Cargo.lock, exported to the host
-#                     -> check      typecheck and lint, produces no artifact
-#                     -> build -> artifact    the binary, exported to the host
-#
-# RUST_VERSION must match [toolchain].channel in rust-toolchain.toml. build.sh passes it from
-# that file so the two cannot drift; the toolchain stage asserts it for a direct `podman build`.
+# Build container for the field collector: the binary is built here and extracted — a flagged
+# workstation has no container runtime, so the deliverable is the static artifact, never an image.
+# RUST_VERSION must match rust-toolchain.toml's channel; build.sh passes it through and the
+# toolchain stage asserts it.
 ARG RUST_VERSION=1.97.1
 ARG ALPINE_VERSION=3.24
 
