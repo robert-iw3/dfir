@@ -1,28 +1,14 @@
 #!/usr/bin/env bash
-# Import this session's carved regions into a throwaway Ghidra project, then open it.
-#
-# Binary Ninja takes files as arguments and shows them immediately. Ghidra does not: its GUI
-# opens a project manager, and a file only becomes analysable once it has been imported into a
-# project. Handing the analyst an empty project manager and a read-only /regions mount they
-# have to import from by hand is a worse start than the empty file list the Binary Ninja path
-# was written to avoid, so the import happens here first and the GUI opens on the result.
-#
-# A carved region is raw memory: no header, no entry point, nothing a loader can recognize.
-# Ghidra therefore needs to be told the processor and the address the bytes came from, and the
-# carve filename carries the address — `pid<PID>_<name>_0x<vm_start>.bin`. Importing at that
-# base is what makes pointers inside the region resolve to each other instead of to offsets
-# from zero, which is the difference between a readable disassembly and a puzzle.
+# Import this session's carved regions into a throwaway Ghidra project, then open it. Binary
+# Ninja takes files as arguments and shows them immediately.
 set -uo pipefail
 
 REGIONS="${IR_REGIONS_DIR:-/regions}"
 
-# Everything Ghidra writes goes on the session tmpfs, including its home directory.
-#
-# Its launcher resolves the JDK and then saves the path under $HOME, and treats a home it
-# cannot write to as "no JDK found" — it falls back to prompting for a path, which in a
-# container has no TTY and aborts the import with an error about the prompt rather than about
-# Java. The image's own /home/ghidra is not usable for this: a tmpfs mounted over it inherits
-# the directory's mode without its ownership and lands root-owned.
+# Everything Ghidra writes goes on the session tmpfs, including its home directory. Its launcher
+# resolves the JDK and then saves the path under $HOME, and treats a home it cannot write to as
+# "no JDK found" — it falls back to prompting for a path, which in a container has no TTY and
+# aborts the import with an error about the prompt rather than about Java.
 SESSION_DIR="${IR_SESSION_DIR:-/session}"
 export HOME="${SESSION_DIR}/home"
 mkdir -p "${HOME}" 2>/dev/null || {

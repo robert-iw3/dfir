@@ -1,12 +1,6 @@
-# DMZ administrative access — opened on demand, closed when the task is done.
-#
-# Not part of the deployment. `admin/adminctl.sh up dmz` starts it; management interfaces
-# are unreachable at every other moment.
-#
-# This container joins the DMZ networks ONLY. It has no membership in the enclave network,
-# so it cannot reach an enclave service regardless of what is listed below — an admin
-# working on the DMZ cannot pivot inward from here, which is the same containment the
-# evidence path relies on.
+# DMZ administrative access — `admin/adminctl.sh up dmz` opens it on demand; management interfaces
+# are unreachable at every other moment. It joins the DMZ networks ONLY, so an admin cannot pivot
+# inward — the isolation is the network membership, not the target list.
 services:
   adminfwd:
     # Carries socat already: these tiers have no internet gateway to install it from.
@@ -27,10 +21,8 @@ services:
     ports:
       - "${IR_MGMT_BIND:-127.0.0.1}:18090:18090"   # evidence receiver health/queue
       - "${IR_MGMT_BIND:-127.0.0.1}:18081:18081"   # headscale control
-    # `edge` only. dmzlink is the DMZ↔enclave link and carries enclave services
-    # (traefik, keycloak) — joining it would give an admin working on the DMZ reach into
-    # the enclave, which is the pivot this split exists to prevent. Every DMZ target below
-    # is reachable on edge.
+    # `edge` only: dmzlink carries enclave services, and joining it would give a DMZ admin reach into
+    # the enclave — the pivot this split prevents. Every DMZ target below is reachable on edge.
     networks: [edge]
 
 networks:

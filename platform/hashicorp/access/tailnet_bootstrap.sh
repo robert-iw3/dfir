@@ -1,15 +1,7 @@
 #!/usr/bin/env bash
-# Enrol the tailnet: create the headscale users the ACL names, mint a pre-auth key per node,
-# and write them where compose can read them.
-#
-# Run by deploy.sh after headscale answers and before the nodes start. It exists because the
-# ACL in policy.hujson refers to users by name (`analyst@`, `bastion@`, `operator@`) and those
-# users have to exist before a node can join as one — and because a node joins with a key that
-# only the control plane can issue, so there is no way to express this in compose alone.
-#
-# Idempotent: existing users are left alone, and a key is minted only when the node has not
-# already joined. Re-running after a node is enrolled is a no-op, so deploy.sh can call it on
-# every bring-up without churning node identities.
+# Enrol the tailnet: create the headscale users the ACL names, mint a pre-auth key per node, and
+# write them where compose can read them. Run by deploy.sh after headscale answers and before
+# the nodes start.
 set -uo pipefail
 
 RUNTIME="${IR_RUNTIME:-podman}"
@@ -72,17 +64,10 @@ chmod 600 "${OUT}"
 
 mint() { # user  hostname  env-var
     local user="$1" host="$2" var="$3" key
-    # A key is ALWAYS minted, even when the control plane already lists this node.
-    #
-    # Withholding one on the strength of "already enrolled" creates a state nothing can leave:
-    # headscale still has the node record, but the node's own credentials no longer work — the
-    # state volume was replaced, the key expired, or the control-plane database was rebuilt
-    # underneath it. The node then starts with no key, cannot authenticate, and exits; the
-    # bootstrap sees it still listed and again declines to issue one. The tunnel is gone and
-    # every re-run reproduces the same deadlock.
-    #
-    # Minting unconditionally costs nothing: the keys are reusable, expire in hours, and a node
-    # holding valid state simply never presents one.
+    # A key is ALWAYS minted, even when the control plane already lists this node. Withholding one
+    # on the strength of "already enrolled" creates a state nothing can leave: headscale still has
+    # the node record, but the node's own credentials no longer work — the state volume was
+    # replaced, the key expired, or the control-plane database was rebuilt underneath it.
     local uid
     uid="$(user_id "${user}")"
     if [[ -z "${uid}" ]]; then
@@ -108,9 +93,6 @@ mint analyst  analyst  TS_ANALYST_AUTHKEY  || rc=1
 # One key per workstation, so revoking a lost workstation does not unenroll the fleet. All of
 # them join as the `analyst` user — the ACL is written against that user, and per-node grants
 # are not what this buys; the node NAME is what distinguishes them.
-#
-# The id is upper-cased and non-alphanumerics become underscores, because it becomes part of a
-# shell variable name and an id with a hyphen would otherwise write one nothing can read back.
 for ws in ${IR_WS_IDS:-}; do
     [ "${ws}" = "analyst" ] && continue
     var="TS_WS_AUTHKEY_$(printf '%s' "${ws}" | tr '[:lower:]' '[:upper:]' | tr -c '[:alnum:]\n' '_')"

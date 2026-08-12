@@ -16,6 +16,7 @@
  */
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../api.js";
+import { QueueDepthTrend, StorageAllocation } from "../components/charts.jsx";
 
 function bytes(n) {
   if (n == null) return "—";
@@ -202,6 +203,8 @@ export default function ComponentHealth() {
   const [data, setData] = useState(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
+  const [depth, setDepth] = useState(null);
+  const [alloc, setAlloc] = useState(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -213,6 +216,10 @@ export default function ComponentHealth() {
     } finally {
       setLoading(false);
     }
+    // Separately and tolerantly: the queue and storage panels are additions to this page,
+    // and storage is admin-only — a 403 hides that panel rather than failing the page.
+    try { setDepth(await api.queueDepth()); } catch { setDepth(null); }
+    try { setAlloc(await api.storageAllocation()); } catch { setAlloc(null); }
   }, []);
 
   useEffect(() => { load(); }, [load]);
@@ -256,6 +263,29 @@ export default function ComponentHealth() {
           </>
         )}
       </section>
+
+      {depth && (
+        <section className="ch-declarations">
+          <h3>Analysis queue</h3>
+          <p className="dim">
+            Whether the backlog is being worked down or growing — depth alone cannot say,
+            so the record over time is the figure that matters.
+          </p>
+          <QueueDepthTrend depth={depth} />
+        </section>
+      )}
+
+      {alloc && (
+        <section className="ch-declarations">
+          <h3>Object store allocation</h3>
+          <p className="dim">
+            What the platform accounts for in the object store, with each capture&apos;s
+            retention state visible — the storage that policy has already released is the
+            first place to reclaim space.
+          </p>
+          <StorageAllocation alloc={alloc} />
+        </section>
+      )}
 
       {declarations.length > 0 && (
         <section className="ch-declarations">

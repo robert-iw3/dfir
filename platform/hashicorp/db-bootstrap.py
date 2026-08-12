@@ -32,17 +32,14 @@ PORT = os.environ.get("POSTGRES_PORT", "5432")
 DATABASES = [
     os.environ.get("POSTGRES_DB", "ir_platform"),
     os.environ.get("CORRELATION_POSTGRES_DB", "ir_correlation"),
-    # Operational request log. Created here for the same reason as the others: the app tier
-    # holds no CREATEDB attribute and must not. A database the application can bring into
-    # existence is one it can be made to create where it should not.
+    # Operational request log. Created here for the same reason as the others: the app tier holds no
+    # CREATEDB attribute and must not.
     os.environ.get("OPSLOG_POSTGRES_DB", "ir_opslog"),
 ]
 
-# The identity provider's store. Deliberately a separate DATABASE rather than a schema in
-# the application's: it holds password hashes, credential material and session state, and the
-# application has no business reading any of it. A schema would leave that separation as a
-# grant list somebody has to keep complete; a database makes it a connection the server
-# refuses.
+# The identity provider's store. Deliberately a separate DATABASE rather than a schema in the
+# application's: it holds password hashes, credential material and session state, and the
+# application has no business reading any of it.
 KEYCLOAK_DB = os.environ.get("KEYCLOAK_POSTGRES_DB", "keycloak")
 
 # Cluster-wide, run once against the maintenance database.
@@ -107,12 +104,9 @@ def main():
             if not exists:
                 conn.execute(f'CREATE DATABASE "{KEYCLOAK_DB}" OWNER kc_app')
                 print(f"[db-bootstrap] created database {KEYCLOAK_DB} (owner kc_app)")
-            # The reciprocal: the identity provider's role gets no reach into evidence.
-            #
-            # Revoking from kc_app alone is not enough — CONNECT is granted to PUBLIC by
-            # default, and every role inherits it, so kc_app still held the privilege after a
-            # direct revoke. PUBLIC loses it here and the owner role keeps its explicit grant,
-            # which is what makes "no access" true rather than merely stated.
+            # The reciprocal: the identity provider's role gets no reach into evidence. Revoking from kc_app
+            # alone is not enough — CONNECT is granted to PUBLIC by default, and every role inherits it, so
+            # kc_app still held the privilege after a direct revoke.
             for db in DATABASES:
                 conn.execute(f'REVOKE ALL ON DATABASE "{db}" FROM kc_app;')
                 conn.execute(f'REVOKE CONNECT ON DATABASE "{db}" FROM PUBLIC;')

@@ -1,16 +1,6 @@
 #!/bin/sh
-# Spreads analyst connections across the broker's independent Boundary sessions.
-#
-# The broker holds BROKER_SESSIONS separate sessions on loopback ports. Every workstation
-# resolves the same name to the same port, so without this one session carries the whole fleet
-# and the other sessions sit idle.
-#
-# Runs in the bastion's network namespace: BROKER_LISTEN is the tailnet-facing port, the
-# session listeners are loopback-only behind it. A workstation cannot address a session
-# directly and cannot pin itself to one.
-#
-# Holds no credentials and terminates no TLS. Mode tcp passes the analyst's connection through
-# byte for byte, so it stays encrypted from the workstation to the enclave's SSO ingress.
+# Spreads analyst connections across the broker's independent Boundary sessions. The broker
+# holds BROKER_SESSIONS separate sessions on loopback ports.
 set -eu
 
 LISTEN="${BROKER_LISTEN:-8443}"
@@ -18,9 +8,8 @@ BASE="${BROKER_SESSION_BASE:-18443}"
 SESSIONS="${BROKER_SESSIONS:-8}"
 # New connections accepted per second. The fragile hop is each SESSION CLIENT's connection
 # setup: `boundary connect` dials its worker per proxied connection, and concurrent dials
-# corrupt its stream — a 50-wide burst admitted at 24/s fails 50/50 in under two seconds
-# with the distributor's server-connects refused, while 8/s carries. The ceiling is neither
-# the worker count nor the session count, so this is a FIXED, measured rate.
+# corrupt its stream — a 50-wide burst admitted at 24/s fails 50/50 in under two seconds with
+# the distributor's server-connects refused, while 8/s carries.
 ACCEPT_RATE="${BROKER_ACCEPT_RATE:-8}"
 
 case "${SESSIONS}" in
@@ -31,10 +20,6 @@ esac
 # session (first line -> s1, second -> s2, ...). Written by `deploy.sh workstation` once the
 # node has an address, so it is empty on first bring-up — pinning is attribution, and a fleet
 # with no map just spreads leastconn as before.
-#
-# A pinned source lands on ITS session, so a brokered session maps to a workstation by
-# CONFIGURATION and the platform can attribute it. An unknown source (a probe, a workstation
-# past the session count) falls through to the pool.
 MAP="${BROKER_WS_MAP_FILE:-/distributor-map/ws-map}"
 
 CFG=/tmp/haproxy.cfg
@@ -56,8 +41,10 @@ defaults
     timeout client 1h
     timeout server 1h
     # A dead session's port refuses connections. Retry, and redispatch so the retry lands on a
-    # different session rather than failing the analyst.
-    retries 3
+    # different session rather than failing the analyst. Refused on loopback is an instant
+    # RST, so walking the whole farm costs microseconds — retries match the session count,
+    # and an arrival fails only when every slot is dark at once.
+    retries 8
     option redispatch
 
 frontend analyst
@@ -87,9 +74,10 @@ EOF
     default_backend brokered
 
 backend brokered
-    # Fewest connections first, so a re-established session is filled immediately rather than
-    # waiting its turn in a rotation.
-    balance leastconn
+    # Two random candidates, the less-loaded wins: spreads like leastconn, but a REPLACING
+    # session's port (zero connections, no health checks to mark it down) cannot magnetize
+    # every arrival and every redispatch the way pure leastconn does.
+    balance random(2)
 EOF
         i=0
         while [ "${i}" -lt "${SESSIONS}" ]; do

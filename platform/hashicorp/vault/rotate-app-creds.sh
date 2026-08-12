@@ -26,12 +26,8 @@ WORKER=ir-enclave_worker_1
 say() { printf '[rotate] %s\n' "$*"; }
 die() { printf '[rotate] FAIL: %s\n' "$*" >&2; exit 1; }
 
-# Restarting the worker kills whatever it is analyzing — same guard, same override,
-# as deploy.sh. A memory pass runs for over an hour; rotation can usually wait for it.
-# Three sharp edges in one line, each hit once: grep -c prints its zero AND exits non-zero on
-# no match, so (a) a fallback echo would append a second zero, (b) pipefail carries grep's
-# status through head, and (c) set -e then kills the whole script at this assignment, silently,
-# before a single line of output. The trailing `|| true` neutralizes (b) and (c); head -1 (a).
+# Restarting the worker kills whatever it is analyzing — same guard, same override, as
+# deploy.sh. A memory pass runs for over an hour; rotation can usually wait for it.
 n="$(${RUNTIME} exec "${WORKER}" sh -c 'ps -eo args | grep -c "[a]nalyze_memory_linux"' 2>/dev/null | head -1 || true)"
 if [[ "${n:-0}" -gt 0 && "${IR_FORCE_ROTATE:-0}" != "1" ]]; then
     die "a memory analysis is running — re-run when it finishes, or IR_FORCE_ROTATE=1 to rotate anyway"
@@ -72,8 +68,7 @@ ${RUNTIME} restart "${BACKEND}" "${WORKER}" >/dev/null
 # Their sidecars, AFTER them. A restarted service gets a fresh network namespace, and its proxy
 # is still attached to the old one — serving nothing — so without this the backend comes up,
 # dials 127.0.0.1:5432, and finds no listener: down on a valid credential, which reads as the
-# rotation having broken authentication. Restarting the proxy re-joins the service's current
-# namespace, and the static IR_IP_* address keeps its registration valid.
+# rotation having broken authentication.
 ${RUNTIME} restart ir-enclave_backend-sidecar_1 ir-enclave_worker-sidecar_1 >/dev/null 2>&1 \
     || say "WARNING: could not restart the sidecars — the app tier may not reach the database"
 

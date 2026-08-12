@@ -1,15 +1,7 @@
-# Keycloak with the platform's login theme baked in.
-#
-# The theme used to be bind-mounted from the working tree, and that fails in a way nothing
-# reports: a bind mount tracks the directory's INODE, so rewriting the theme tree — which any
-# editor doing atomic saves, or a checkout, will do — leaves the running container pointing at
-# the old unlinked inode. The directory then reads as EMPTY inside the container while it is
-# plainly populated on the host, Keycloak logs only "Failed to find LOGIN theme", and the login
-# page silently reverts to the built-in one.
-#
-# Baking it makes the theme part of a versioned artifact: what was built is what is served, and
-# a theme change is a rebuild rather than an invisible drift. Editing the theme therefore
-# requires `deploy.sh enclave` to rebuild — which is the point.
+# Keycloak with the platform's login theme BAKED IN: a bind-mounted theme tracks the directory
+# inode, so an editor's atomic save leaves the container reading an empty directory and the login
+# silently reverts to the built-in theme. Baked, what was built is what is served — a theme change
+# is a rebuild via deploy.sh enclave.
 FROM quay.io/keycloak/keycloak:26.7.0@sha256:0f198be292568439d700cdbfb893e69a6009bb43a94a06a945b1d3d506c76b13
 
 COPY keycloak/themes/dfir /opt/keycloak/themes/dfir

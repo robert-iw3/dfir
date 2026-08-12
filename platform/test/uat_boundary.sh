@@ -1,34 +1,10 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# BOUNDARY UAT — the security model of brokered enclave access, asserted.
-#
-# The analyst's hop into the enclave is a Boundary SESSION. This proves the claims the design
-# rests on, rather than that the containers are running:
-#
-#   1. IT CARRIES TRAFFIC. A session that authorizes and then carries nothing looks identical to
-#      a working one from every other angle — the container is up, the listener is bound, the
-#      controller shows a session. Only a request that comes back proves the path.
-#
-#   2. AUTHORITY IS IN THE ENCLAVE. The controller, its database, the grants and the encryption
-#      roots are all in the tier the design trusts. The DMZ holds no recovery key, no database,
-#      no grants and no worker — losing it yields a session client and the analyst credential,
-#      not the ability to mint access.
-#
-#   3. THE ALLOW-LIST IS ONE TARGET. Exactly one target exists, so a service in the enclave with
-#      no target has no route regardless of what the network permits.
-#
-#   4. SESSIONS ARE ATTRIBUTABLE. Each is bound to a principal with an account. A session that
-#      cannot be traced to an identity is an unauthenticated forwarder with extra steps.
-#
-#   5. THE DMZ HAS NO ROUTE OF ITS OWN. The bastion cannot reach the enclave ingress directly;
-#      only the brokered session gets there.
-#
-#   6. NOTHING CROSSES THE LINK IN THE CLEAR. The credential and the session token go over TLS
-#      pinned to the controller's certificate; the session data path is Boundary's own per-session
-#      TLS. The client refuses a plaintext controller address outright.
-#
-# Every check runs from a running container, against the deployment the codebase produced.
-# ==============================================================================
+# BOUNDARY UAT — the security model of brokered enclave access, asserted against the running
+# deployment. Six claims are proven, not assumed: the session CARRIES traffic; authority
+# (controller, database, grants, roots) lives in the enclave while the DMZ holds only a client;
+# exactly ONE target exists; every session binds to an accountable principal; the DMZ has no route
+# of its own; and nothing crosses the link in the clear.
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -199,10 +175,8 @@ else
     bad "no live session — the broker is listening with nothing behind it"
 fi
 
-# The brokered port must be CARRYING before anything is asserted through it. Sessions are
-# replaced on their own — that is the design — and probing during a replacement measures the
-# replacement window rather than the path. Without this the suite reported "the session
-# carries no traffic" for a listener that was three seconds from ready.
+# The brokered port must be CARRYING before anything is asserted through it: sessions replace
+# themselves by design, and probing mid-replacement measures the window, not the path.
 for _ in $(seq 1 24); do
     ${RUNTIME} run --rm -i --network ir-edge --dns "${DNS_EDGE_IP}" \
         localhost/ir-workstation:latest python3 -c "
@@ -216,12 +190,9 @@ done
 
 # ============================================================ 5. traffic actually flows
 say "The session carries traffic"
-# The whole point, and the one thing every other check can pass without. The request is made from
-# the BASTION's namespace, which is where the broker's listener lives and where an analyst's
-# browser arrives. A response proves: listener -> session -> egress worker -> Traefik.
-#
-# --insecure only because the ingress presents the platform's own self-signed certificate, which
-# is a separate trust relationship from Boundary's; what is under test here is reachability.
+# The whole point — a request from the BASTION's namespace, where an analyst's browser arrives,
+# proving listener -> session -> egress worker -> Traefik. --insecure only because the ingress's
+# self-signed certificate is a separate trust relationship from Boundary's.
 resp="$(${RUNTIME} exec "${BASTION}" sh -c \
     "wget -q -S -O /dev/null --no-check-certificate --timeout=10 https://127.0.0.1:${LISTEN}/ 2>&1" || true)"
 if grep -qE 'HTTP/1\.[01] (200|30[0-9]|40[0-9])' <<<"${resp}"; then
@@ -238,13 +209,9 @@ fi
 
 # ============================================================ 5a. the session heals itself
 say "The session re-establishes after disruption"
-# Enclave rebuilds, worker recreation, expiry and fatal proxy errors all end the session, and
-# the analyst workstation — on an endpoint device — cannot know any of it happened. The broker
-# must come back on its own. Proven by the harshest version: cancel its live session out from
-# under it and require a NEW session carrying traffic, unattended.
-# The LIVE set, not the first id in the list. With N sessions the list order says nothing about
-# which one was cancelled or which replaced it, and comparing single ids reports a healthy
-# recovery as a failure.
+# The broker must recover UNATTENDED — proven the harsh way: cancel its live session and require a
+# NEW one carrying traffic. Compared against the LIVE set, not the first id: with N sessions, list
+# order says nothing about which was replaced.
 live_before="$(bctl sessions list -scope-id "${BOUNDARY_PROJECT_ID:-}" -recursive -format json \
     | python3 -c "
 import json,sys
@@ -297,8 +264,8 @@ fi
 
 # ============================================================ 6. the DMZ has no route of its own
 say "The DMZ has no route of its own"
-# Same container, same moment, bypassing the session: the ingress by name, directly. It must fail.
-# If this succeeds the broker is decorative — the session is one way in among others.
+# Same container, same moment, bypassing the session: the ingress by name must FAIL, or the broker
+# is decorative.
 direct="$(${RUNTIME} exec "${BASTION}" sh -c \
     "wget -q -O /dev/null --no-check-certificate --timeout=6 https://${IR_ENCLAVE_INGRESS_HOST:-traefik}:${IR_ENCLAVE_INGRESS_PORT:-443}/ 2>&1; echo rc=\$?" || true)"
 grep -q 'rc=0' <<<"${direct}" \
@@ -379,10 +346,8 @@ truth = json.loads(t[t.find("{"):t.rfind("}") + 1]).get("items") or []
 
 page_ids = {s["id"] for s in page.get("sessions", [])}
 truth_ids = {i["id"] for i in truth}
-# Containment, not equality. The controller is read first and the page second, and supervisors
-# create and end sessions continuously, so the page legitimately holds sessions the earlier
-# read did not. What must hold is that the page invents nothing and drops nothing the
-# controller had: every id the controller knew is on the page.
+# Containment, not equality: supervisors churn sessions between the two reads, so the page may
+# hold more — but every id the controller knew must be on the page.
 missing = truth_ids - page_ids
 invented = page_ids - truth_ids
 say(not missing,
@@ -400,10 +365,9 @@ say(truth_live <= page_live,
     f"every session the controller reports live is live on the page ({len(truth_live)} of {len(page_live)})")
 
 live = [s for s in page.get("sessions", []) if s.get("active")]
-# N live sessions, not one. The broker holds an INDEPENDENT session per port so that one
-# dying costs 1/N of the fleet instead of all of it; a single live session would mean the
-# fleet is back on one failure domain. Ghosts are still excluded — every live session must
-# belong to the running broker and to the analyst principal, asserted below.
+# N live sessions, not one: an independent session per port confines a death to 1/N of the fleet.
+# Ghosts still excluded — every live session must belong to the running broker and the analyst
+# principal.
 expected = int(os.environ.get("SESSIONS_N", "4"))
 say(len(live) == expected,
     f"{len(live)} live sessions, one per brokered port (expected {expected}) — separate "
@@ -459,14 +423,9 @@ fi
 # ============================================================ concurrency shape
 say "One session per client — the shape a fleet of workstations needs"
 
-# A session is Boundary's unit of access, and this measures whether the deployment uses it
-# that way. ONE shared session carrying a fleet is measurably fragile: concurrent dials
-# corrupt the client proxy's WebSocket to the egress worker ("unexpected rsv bits"), the
-# SESSION dies, and every connection riding it dies with it — so one analyst's burst drops
-# everyone else's work.
-#
-# Sequential throughput is fine either way (20 requests down one kept-alive connection take
-# 0.1s), so the probe opens CONCURRENT CONNECTIONS, which is what actually decides.
+# One shared session is measurably fragile: concurrent dials corrupt the client proxy's WebSocket
+# and every connection riding the session dies together. The probe opens CONCURRENT connections,
+# because sequential throughput cannot tell the difference.
 CONC="${IR_BOUNDARY_CONCURRENCY:-8}"
 
 # `-i` is load-bearing: without it podman attaches no stdin, `python3 -` reads EOF and runs
@@ -498,10 +457,8 @@ else
     bad "${shared_result}/${CONC} concurrent connections carried; check the broker log for 'session ended' or 'listener stopped accepting', which drop every analyst at once rather than throttling one"
 fi
 
-# Sessions carry distinct principals (asserted under Attribution). What remains structural:
-# the distributor assigns connections leastconn, so WHICH analyst rides which session — and
-# therefore which person a principal maps to — is not fixed until M1 gives workstations
-# identities. Attribution here is per session, not yet per person.
+# Attribution here is per session, not yet per person: the distributor assigns leastconn, so which
+# analyst rides which session is not fixed until M1's workstation identities.
 info "each of the ${SESSIONS_N} sessions runs as its own principal; binding a PERSON to a principal needs workstation identity (M1)"
 
 
@@ -556,12 +513,9 @@ else
         || bad "no redispatch — a dead session refuses connections instead of being routed around"
 fi
 
-# THE MEASUREMENT. Hold concurrent connections open through the analyst port, then read which
-# session ports actually accepted them. Passive: the counting reads /proc/net/tcp rather than
-# dialling anything, because dialling is what churns sessions.
-# One per session: a fleet-sized burst, which is what distribution has to handle. Larger
-# bursts also probe the accept-rate ceiling, and a failure there would be reported here as a
-# distribution failure — two different findings under one assertion.
+# THE MEASUREMENT: hold concurrent connections through the analyst port, read which session ports
+# accepted them — passively, from /proc/net/tcp, because dialing churns sessions. One per session;
+# larger bursts probe the accept-rate ceiling instead and would mislabel that finding.
 HOLD=${SESSIONS_N}
 holder="uat-boundary-spread-$$"
 # Settle first: the sections above drive traffic and cancel a session, and measuring during a
@@ -585,10 +539,9 @@ ${RUNTIME} run -d --name "${holder}" --network ir-edge --dns "${DNS_EDGE_IP}" \
 import http.client, ssl, sys, time
 from concurrent.futures import ThreadPoolExecutor
 ctx = ssl.create_default_context(); ctx.check_hostname = False; ctx.verify_mode = ssl.CERT_NONE
-# Real requests, kept alive. A bare TCP connect would be assigned a backend but proves nothing
-# about the session behind it carrying traffic.
-# The failure REASON is reported, not just the count. 'n established' alone cannot separate a
-# refused connection from a timed-out one from a session that accepted and then failed.
+# Real requests, kept alive — a bare TCP connect is assigned a backend but proves nothing about
+# the session carrying. The failure REASON is reported: a count cannot separate refused from
+# timed-out from accepted-then-died.
 errs = []
 def open_one(_):
     try:
@@ -655,11 +608,9 @@ if [[ -n "${wspread:-}" ]]; then
     fi
 fi
 
-# Reported, not asserted. Capacity is asserted in the section above, at the same size and on a
-# settled path. Repeating it here — immediately after this suite has cancelled and killed
-# sessions — measures the egress worker's connection-SETUP ceiling, which is a known limit
-# tracked as M3 in planning/SCALE-50-WORKSTATIONS.md, not a property of distribution. Asserting
-# it in two places makes one of them flap and teaches everyone to ignore the section.
+# Reported, not asserted: capacity is asserted above on a settled path, and repeating it right
+# after this suite killed sessions measures the connection-SETUP ceiling (tracked as M3), not
+# distribution. Two assertions of one property make one flap.
 if [[ -n "${ESTAB}" && "${ESTAB}" -lt "${HOLD}" ]]; then
     info "${ESTAB} of ${HOLD} cold connections established in one burst (${WHY:-no reason captured}) — the egress worker's setup ceiling, M3"
 fi
@@ -671,9 +622,9 @@ if [[ -n "${spread}" ]]; then
         total=$((total + cnt))
         [[ "${cnt:-0}" -gt "${busiest}" ]] && busiest="${cnt}"
     done
-    # The property is that no session carries a disproportionate share. Piled onto one it is
-    # 100%; evenly spread over N it is 1/N. The threshold separates those without demanding a
-    # perfect split, which redispatch around a rebuilding session legitimately disturbs.
+    # The property is no disproportionate share: piled-on is 100%, even is 1/N, and the threshold
+    # separates those without demanding a perfect split — redispatch around a rebuilding session
+    # legitimately disturbs it.
     if [[ "${total}" -eq 0 ]]; then
         bad "no session accepted any of the ${ESTAB} held connections — the analyst path is not carrying (${spread})"
     elif [[ "${total}" -lt $(( (SESSIONS_N + 1) / 2 )) ]]; then
@@ -693,12 +644,10 @@ fi
 # ============================================================ failure isolation
 say "One session's death is not the fleet's — measured, not asserted"
 
-# A single shared session dies under connection churn and takes every analyst with it; N
-# independent sessions confine the loss to the one that died. Asserted on the DEPLOYED broker
-# by killing one session and requiring the rest to keep carrying traffic.
-# See change_logs/ for the measurements behind the design.
-# Settle first. Earlier sections drive traffic through the first port, which legitimately
-# replaces that session; counting immediately measures the replacement window, not the design.
+# A single shared session dies under churn and takes every analyst; N independent sessions confine
+# the loss — asserted by killing one and requiring the rest to keep carrying (see change_logs/ for
+# the measurements). Settle first: earlier sections legitimately replace the first session, and
+# counting immediately measures the replacement window.
 for _ in $(seq 1 20); do
     [[ "$(bound_count)" -eq "${SESSIONS_N}" ]] && break
     sleep 3
@@ -750,10 +699,9 @@ fi
 # ============================================================ worker death
 say "One egress worker's death is not the fleet's"
 
-# The value of N workers is BLAST RADIUS, not setup rate: the rate ceiling belongs to the
-# session client and does not move with worker count. A worker death takes only the sessions
-# riding it, and their supervisors re-establish onto the survivors.
-# See change_logs/2026-08-09-egress-workers-and-principals.md.
+# N workers buy BLAST RADIUS, not setup rate — the rate ceiling belongs to the session client. A
+# worker death takes only its riders, whose supervisors re-establish onto survivors; see
+# change_logs/2026-08-09-egress-workers-and-principals.md.
 if [[ "${WORKERS_N:-1}" -gt 1 ]]; then
     ${RUNTIME} stop -t 5 ir-enclave_boundary-egress-2_1 >/dev/null 2>&1
     W_CARRIED=0

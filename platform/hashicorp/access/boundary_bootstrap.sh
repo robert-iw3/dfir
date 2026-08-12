@@ -1,24 +1,7 @@
 #!/bin/sh
-# Provision Boundary for the analyst path: one target, the enclave SSO gate.
-#
-# Run on every deployment by deploy.sh, inside the boundary container, and RECONCILING rather
-# than merely idempotent: each step is find-or-create or set-, so a re-run converges on this
-# state instead of duplicating it or skipping it. That matters because a second scope or a second
-# target would silently split the allow-list in two, and because a correction made here has to
-# reach a deployment that was already provisioned by an earlier version.
-#
-# Provisioning uses the recovery KMS, not an admin account: it authenticates with the key in the
-# config, so the deployment never invents an admin password and then has to keep it. Nothing
-# except this script should use that path.
-#
-#   org / project scope   Boundary's unit of isolation. One project holds this platform's access,
-#                         so a second platform on the same controller cannot see its targets.
-#   static host catalog   The enclave ingress, by NAME. Resolved at connect time, so a recreated
-#                         container does not need re-provisioning.
-#   target (tcp :443)     The allow-list. One target, one port; a service with no target has no
-#                         route, enforced per session and per principal.
-#   password auth method  How the session client authenticates, so sessions are attributable.
-#   role                  Grants that principal authorize-session on that target and nothing else.
+# Provision Boundary for the analyst path — one target, the enclave SSO gate. Runs on every
+# deployment inside the boundary container, RECONCILING rather than creating: names are unique, so
+# a partial run converges instead of duplicating.
 set -eu
 
 OUT="${1:-/boundary-state/boundary-ids.env}"
@@ -32,10 +15,8 @@ TARGET_PORT="${IR_ENCLAVE_INGRESS_PORT:-443}"
 ANALYST_LOGIN="${BOUNDARY_ANALYST_LOGIN:-analyst}"
 ANALYST_PASSWORD="${BOUNDARY_ANALYST_PASSWORD:?BOUNDARY_ANALYST_PASSWORD is required}"
 
-# Runs in full every time. An early exit on the marker file would mean a correction to what is
-# provisioned here never reaches a deployment that already has one — the resources stay as the
-# first run left them and the fix appears to do nothing. Every step below is find-or-create or
-# set-, so a re-run converges rather than duplicating.
+# Runs in full every time: an early exit on a marker file means a correction here never reaches a
+# deployment that already has one.
 
 echo "[boundary] waiting for the controller to answer"
 for i in $(seq 1 90); do
@@ -59,13 +40,8 @@ b() { boundary "$@" -recovery-config "${RECOVERY}" -format json; }
 # The boundary image carries no jq or python. An item's own id is the first "id" in its output.
 jget() { grep -o '"id": *"[^"]*"' | head -1 | cut -d'"' -f4; }
 
-# Create, or return what already exists under that name.
-#
-# A partial run leaves resources behind with no marker file, and these names are unique, so a
-# plain create fails on every retry with "second resource with the same field value". A retried
-# deployment has to converge rather than deadlock.
-#
-# POSIX only — the image's shell is ash, which has no arrays.
+# Create, or return what already exists under that name — a partial run leaves resources with no
+# marker, and unique names make the retry converge.
 ensure() {  # ensure <kind> <scope-flag> <scope-id> <name> <create-args...>
     _kind="$1"; _sflag="$2"; _sid="$3"; _name="$4"; shift 4
     # Asked for by NAME through Boundary's own filter, rather than matching id and name out of a
@@ -77,13 +53,8 @@ ensure() {  # ensure <kind> <scope-flag> <scope-id> <name> <create-args...>
     b "${_kind}" create "$@" | jget
 }
 
-# Association steps, with the failure REPORTED.
-#
-# These were `|| true` for idempotency — re-adding an existing member is an error — and that is
-# how a broken association became invisible. A user with no account, or a role with no principal,
-# authenticates perfectly well and is then refused at authorize-session with a bare 403, which
-# says nothing about which of the two it was. `set-` is idempotent by construction, so nothing has
-# to be swallowed to make a re-run safe.
+# Association steps with the failure REPORTED: blanket `|| true` for idempotency also swallowed
+# the real failures, leaving the next error describing a symptom.
 must() {  # must <description> <boundary-args...>
     _what="$1"; shift
     if ! _out="$(b "$@" 2>&1)"; then
@@ -130,11 +101,9 @@ U="$(ensure users -scope-id "${ORG}" "${ANALYST_LOGIN}" -scope-id "${ORG}" -name
 # grant below is inert. It authenticates and is then refused at authorize-session.
 must "binding the ${ANALYST_LOGIN} account to its user" users set-accounts -id "${U}" -account "${ACCT}"
 
-# One principal PER BROKER SESSION, beside the base analyst. A single shared principal makes
-# every session indistinguishable in the access record and makes any principal-scoped cancel
-# fleet-wide; distinct principals give each supervisor a reap that can only touch its own
-# session. They share the base password until M1 distributes per-workstation credentials —
-# the attribution unit here is the principal, not the secret.
+# One principal PER BROKER SESSION beside the base analyst: a shared principal makes sessions
+# indistinguishable in the access record and turns any principal-scoped cancel into a fleet-wide
+# one.
 SESSIONS_N="${BOUNDARY_SESSION_PRINCIPALS:-8}"
 export SESS_PW="${ANALYST_PASSWORD}"
 SESSION_USERS=""
@@ -160,19 +129,8 @@ _principals="-principal ${U}"
 for _su in ${SESSION_USERS}; do _principals="${_principals} -principal ${_su}"; done
 # shellcheck disable=SC2086
 must "adding the analyst principals to the role" roles set-principals -id "${R}" ${_principals}
-# Scoped to the one target. A grant of `type=target;actions=authorize-session` without an id
-# would authorize every target that ever gets created in this project.
-#
-# set-grants, not add-grants: re-running must converge on exactly these grants rather than
-# accumulate, and a role created by an earlier run with the wrong scope has to be corrected.
-#
-# `ids=`, not `id=`: the singular form is deprecated and a grant using it is accepted at write
-# time but does not authorize, which surfaces only as a 403 on authorize-session.
-#
-# `ids=*;type=session`, not a bare `type=session`: a grant naming only a type permits `create` and
-# `list` and REJECTS per-resource actions outright. And set-grants is ATOMIC — one unparseable
-# grant discards the whole call, so a malformed second grant leaves the role with no grants at
-# all, including the target grant that was written correctly.
+# Scoped to the one target: an id-less `type=target;actions=authorize-session` grant would
+# authorize every target ever created in the project.
 must "granting ${ANALYST_LOGIN} a session on the target" \
     roles set-grant-scopes -id "${R}" -grant-scope-id "${PROJ}"
 # `list,read:self,cancel:self`: list results are filtered to what the principal can read, so it
@@ -183,10 +141,8 @@ must "granting ${ANALYST_LOGIN} a session on the target" \
         -grant "ids=${T};actions=authorize-session" \
         -grant "ids=*;type=session;actions=list,read:self,cancel:self"
 
-# The chain is verified rather than assumed. Six links stand between an authenticated analyst and
-# a session — account, user, role, principals, grant scopes, grant — and a missing one produces
-# the same bare 403 as any other. Checking the grant landed turns that into a failure here, next
-# to the call that was supposed to write it.
+# The chain is VERIFIED, not assumed: six links stand between an authenticated analyst and a
+# session, and a missing one produces an unexplained 403.
 if ! b roles read -id "${R}" | grep -q "ids=${T};actions=authorize-session"; then
     echo "[boundary] the authorize-session grant is not on role ${R} after writing it" >&2
     echo "[boundary] the analyst would authenticate and then be refused with 403" >&2
@@ -194,10 +150,8 @@ if ! b roles read -id "${R}" | grep -q "ids=${T};actions=authorize-session"; the
 fi
 
 echo "[boundary] session-auditor principal — the platform's read-only view of brokered sessions"
-# The account the platform authenticates as to SHOW who is connected. It can list and read
-# sessions and nothing else: not authorize one, not cancel one, not read a target. Watching
-# sessions in the UI must not become a way to acquire one, and the recovery key — which would
-# make this trivial — is exactly the credential that must never leave this tier.
+# The account the platform authenticates as to SHOW who is connected: list and read sessions,
+# nothing else — not authorize, not cancel, not read a target.
 SA_LOGIN="${BOUNDARY_SESSION_AUDITOR_LOGIN:-session-auditor}"
 export SA_PW="${BOUNDARY_SESSION_AUDITOR_PASSWORD:-${ANALYST_PASSWORD}}"
 SA_ACCT="$(b accounts list -auth-method-id "${AM}" \

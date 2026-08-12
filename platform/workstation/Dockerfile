@@ -1,17 +1,8 @@
-# Analyst-workstation browser — a locked-down Firefox kiosk that can reach exactly one
-# thing: the SSO-gated platform frontend, over the brokered VPN path.
-#
-# Security posture (layered — each holds even if another fails):
-#   * NETWORK: attached only to the tunnel-side network, which has no internet gateway,
-#     so there is no route off-platform. Name resolution comes from the DMZ CoreDNS,
-#     which answers only the platform name and REFUSES everything else (no DNS tunneling).
-#   * BROWSER: DISA Mozilla Firefox STIG-aligned enterprise policy (policies.json) —
-#     no add-ons, no telemetry, no password manager/autofill, no sync, no dev tools,
-#     TLS 1.2 floor, pop-ups blocked, DoH off, sanitize on shutdown.
-#   * KIOSK: WebsiteFilter blocks <all_urls> except the platform origin.
-#
-# Rendering: X11 — the host's X socket is bind-mounted and DISPLAY is passed in, so the
-# browser window appears on the analyst's desktop while the process stays contained.
+# Analyst-workstation browser — a locked-down Firefox kiosk reaching exactly one thing: the SSO-
+# gated platform frontend over the brokered VPN path. Layered posture: tunnel-only network whose
+# DNS refuses everything but the platform name, DISA Firefox STIG policy (policies.json),
+# WebsiteFilter kiosk allowing only the platform origin; rendering uses the host's bind-mounted X
+# socket.
 FROM docker.io/library/alpine:3.24@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b
 
 # firefox-esr = the ESR channel the STIG targets. The rest are the X11/font/audio-less
@@ -44,11 +35,9 @@ assert '<all_urls>' in p['WebsiteFilter']['Block'] and all(':' not in e.split('/
 assert p['Preferences']['security.tls.version.min']['Value'] >= 3, 'TLS floor below 1.2'; \
 print('firefox STIG policy OK')"
 
-# Runs as container-root, which under ROOTLESS podman maps to the invoking unprivileged
-# host user — it is not host root, and it is what lets the process open the bind-mounted
-# X socket (a container uid mapped into the subuid range cannot). Privilege is still
-# stripped at run time: cap_drop ALL + no-new-privileges (see docker-compose.access.yml).
-# Add the GL/GTK bits Firefox looks for so the X session starts cleanly.
+# Container-root under ROOTLESS podman maps to the invoking unprivileged host user — not host
+# root, and what lets the process open the bind-mounted X socket. Privilege is stripped at run
+# time: cap_drop ALL + no-new-privileges.
 RUN apk add --no-cache mesa-gl mesa-egl libpciaccess 2>/dev/null || true
 ENV HOME=/home/analyst
 # The profile, and the ONE directory downloads may land in. It must exist in the image: the

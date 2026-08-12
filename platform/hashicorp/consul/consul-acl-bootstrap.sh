@@ -1,10 +1,6 @@
 #!/usr/bin/env bash
 # Give Consul the identity behind each secret gen-consul-secrets.sh generated. Run once Consul
 # has a leader; idempotent, every deployment re-runs it.
-#
-# -service-identity expands to service:write on the service and its sidecar-proxy, plus read on
-# the catalog. It grants no operator rights and nothing on service-intentions — so a compromised
-# proxy can re-register itself but cannot edit the policy governing it.
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SEC="${IR_CONSUL_SECRET_DIR:-${HERE}/secrets}"
@@ -85,8 +81,7 @@ say "anonymous token carries no policy — untokened requests are denied"
 
 # The mesh policy, converged on EVERY run. A config_entries.bootstrap block applies only when
 # the entry does not already exist, so an edited intention never reaches a cluster whose data
-# volume predates the edit — the file and the enforced policy silently diverge. `config write`
-# is idempotent and makes the files in config-entries/ the single source of truth.
+# volume predates the edit — the file and the enforced policy silently diverge.
 for f in "${HERE}/config-entries/"*.hcl; do
     [[ -f "${f}" ]] || continue
     n="$(basename "${f}")"

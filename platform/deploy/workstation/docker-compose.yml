@@ -1,11 +1,7 @@
 # ===========================================================================
-# TIER: ANALYST WORKSTATION — deploys to the analyst's own machine.
-#
-# A locked-down browser and nothing else. It joins the DMZ's tailnet, resolves the
-# single platform name via the DMZ resolver, and reaches exactly one port on the
-# bastion broker. No internet, no outbound DNS, no clipboard, one origin.
-#
-#   xhost +local:                       # once, so the container may use the X display
+# TIER: ANALYST WORKSTATION — deploys to the analyst's own machine: a locked-down browser and
+# nothing else. It joins the DMZ tailnet, resolves the single platform name, and reaches exactly
+# one port on the bastion broker — no internet, no outbound DNS, one origin.
 #   podman-compose -p ir-workstation --env-file ../.env -f docker-compose.yml up -d
 # ===========================================================================
 networks:
@@ -16,32 +12,25 @@ networks:
     name: ir-edge
 
 services:
-  # The analyst side's tailnet node — this workstation's end of the WireGuard tunnel.
-  #
-  # A real tun device rather than userspace networking, so "this workstation cannot address an
-  # internal host" is a routing fact and not a claim: the only destinations in its table are
-  # the edge network and the tailnet, and the tailnet ACL permits exactly one port on the
-  # bastion. /dev/net/tun is world-writable on the host so a rootless container can open it,
-  # and NET_ADMIN applies only inside this container's own namespace.
-  #
-  # `--accept-routes=false` is load-bearing: a subnet route advertised from the other side is
-  # precisely the hole this design exists to close, so the node refuses to install any.
+  # This workstation's end of the WireGuard tunnel, on a real tun device so non-reachability is a
+  # routing fact: the table holds only the edge network and the tailnet, and the ACL permits one
+  # port. `--accept-routes=false` is load-bearing — a subnet route from the other side is precisely
+  # the hole this design closes.
   tailnet:
     image: docker.io/tailscale/tailscale:v1.98.10
-    # This workstation's tailnet NODE NAME. Two workstations answering to one name are one
-    # node to the control plane, and the tunnel then works for whichever registered last.
-    # deploy.sh also names the compose PROJECT after this, so each workstation gets its own
-    # containers and its own state volume without either being written down here.
+    # This workstation's tailnet NODE NAME — two workstations sharing one name are one node, and the
+    # tunnel works for whichever registered last. deploy.sh also names the compose project after it,
+    # so each workstation gets its own containers and state.
     hostname: ${IR_WS_ID:-analyst}
     environment:
       # Pins the control plane's certificate as this process's ENTIRE trust pool. Go honors
       # SSL_CERT_FILE, so tailscaled will verify headscale and nothing else — which is all it
       # should ever connect to, and it is what lets the embedded DERP relay be used at all.
       SSL_CERT_FILE: /certs/headscale.crt
-      # This workstation's OWN pre-auth key, so revoking one workstation does not unenroll
-      # the fleet. A PLAIN variable with no nested default: podman-compose does not expand
-      # ${A:-${B}} and passes the literal through, which the daemon then presents as a key.
-      # deploy.sh resolves the per-id key and exports this before the tier starts.
+      # This workstation's OWN pre-auth key, so revoking one does not unenroll the fleet.
+
+      # A PLAIN variable with no nested default: podman-compose passes ${A:-${B}} through as a
+      # literal, so deploy.sh resolves the per-id key and exports it before the tier starts.
       TS_AUTHKEY: "${TS_WS_AUTHKEY:-}"
       TS_EXTRA_ARGS: "--login-server=${HEADSCALE_LOGIN_URL} --hostname=${IR_WS_ID:-analyst} --accept-routes=false"
       TS_STATE_DIR: /var/lib/tailscale
@@ -83,18 +72,12 @@ services:
     volumes:
       - /tmp/.X11-unix:/tmp/.X11-unix
       - ../../traefik/certs:/certs:ro,z   # platform CA, trusted at start-up
-      # Where an export actually LANDS. Without this the kiosk writes into its own
-      # filesystem, which the profile wipe and the next deploy destroy — the analyst
-      # exports a bundle and it is gone, so the supported handoff never completes.
-      #
-      # This is the ONE writable host path the kiosk has, and it is the deliberate
-      # boundary crossing: a dedicated directory, never $HOME itself. The browser still
-      # has no route off the tailnet and every export is written to the audit ledger
-      # server-side, so what crosses here is recorded before it moves.
-      #
-      # A PLAIN variable with no inline default: podman-compose does not expand a nested
-      # ${A:-${B}/x} and passes the literal string through as a path. deploy.sh resolves
-      # this per platform (Linux/macOS/Windows) and creates it before this tier starts.
+      # Where an export LANDS — the one writable host path the kiosk has, a dedicated directory
+      # and never $HOME. The browser still has no route off the tailnet, and every export is
+      # audited server-side before it moves.
+
+      # A PLAIN variable, no inline default: podman-compose passes a nested ${A:-${B}/x}
+      # through as a literal path, so deploy.sh resolves IR_EXPORT_DIR per platform instead.
       - ${IR_EXPORT_DIR}:/home/analyst/downloads:z
     cap_drop: [ALL]
     security_opt:

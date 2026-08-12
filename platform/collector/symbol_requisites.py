@@ -97,8 +97,14 @@ def build_id():
 
 
 def os_release():
+    src = host_path("/etc/os-release")
+    # The container's own file is NOT a fallback: recording ID=alpine for an Ubuntu host
+    # sends provisioning to a builder that cannot exist. Unknown is recorded as unknown,
+    # and provision.sh refuses it loudly instead of building against the wrong release.
+    if src == "/etc/os-release":
+        return {k: "" for k in ("ID", "ID_LIKE", "VERSION_ID", "PRETTY_NAME")}
     out = {}
-    for line in read_text(host_path("/etc/os-release"), 8192).splitlines():
+    for line in read_text(src, 8192).splitlines():
         if "=" in line:
             k, _, v = line.partition("=")
             out[k.strip()] = v.strip().strip('"')

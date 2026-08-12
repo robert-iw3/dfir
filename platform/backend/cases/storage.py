@@ -44,18 +44,8 @@ def client():
     )
 
 
-# How a capture is streamed out of the object store.
-#
-# The default transfer settings assume the store and the destination are different
-# hardware. In this deployment they are frequently not: MinIO's data directory and the
-# worker's staging volume can be the same disk, so ten concurrent ranged GETs make the
-# store compete with its own reader for the same spindle. MinIO responds by failing its
-# write-health probe, marking the drive offline, and returning SlowDownRead — which
-# surfaces as an unreadable object even though nothing is wrong with it.
-#
-# Fewer, larger requests cost slightly more wall-clock on separated storage and are the
-# difference between a staging step that completes and one that does not on shared
-# storage. Raise IR_S3_CONCURRENCY when the object store is on its own hardware.
+# How a capture is streamed out of the object store. The default transfer settings assume the
+# store and the destination are different hardware.
 def transfer_config():
     return TransferConfig(
         max_concurrency=int(os.environ.get("IR_S3_CONCURRENCY", "3")),

@@ -2,7 +2,7 @@
 
 *What passing proves:* The analyst's hop into the enclave is an authenticated, authorized, auditable session against exactly one target; the DMZ holds no authority and has no route of its own.
 
-- Run: `uat_boundary.sh` — 2026-08-09 19:23:02Z
+- Run: `uat_boundary.sh` — 2026-08-12 13:56:05Z
 
 **Placement — authority in the enclave, a client in the DMZ**
 
@@ -52,8 +52,8 @@
 
 | Result | Assertion — with evidence |
 |---|---|
-| ✅ PASS | session s_05c8rHgTFn was canceled and the analyst path kept carrying — traffic flows |
-| ✅ PASS | the recovery is a NEW authorized session (s_tsiidD7Mb0), and s_05c8rHgTFn is gone — not a lingering socket |
+| ✅ PASS | session s_Xmo5mNS1AN was canceled and the analyst path kept carrying — traffic flows |
+| ✅ PASS | the recovery is a NEW authorized session (s_eHSrC2QrSQ), and s_Xmo5mNS1AN is gone — not a lingering socket |
 
 **The DMZ has no route of its own**
 
@@ -75,11 +75,11 @@
 | Result | Assertion — with evidence |
 |---|---|
 | ✅ PASS | the page reads live from Boundary with its own credential |
-| ✅ PASS | the record is complete: every one of the controller's 41 sessions is on the page (41 shown) |
+| ✅ PASS | the record is complete: every one of the controller's 58 sessions is on the page (58 shown) |
 | ✅ PASS | the page shows no session the controller does not have |
 | ✅ PASS | every session the controller reports live is live on the page (8 of 8) |
 | ✅ PASS | 8 live sessions, one per brokered port (expected 8) — separate failure domains, and no ghosts of replaced brokers |
-| ✅ PASS | every session that carried a connection came from the running broker (7 of 8 addressed, 10.89.0.106) |
+| ✅ PASS | every session that carried a connection came from the running broker (7 of 8 addressed, 10.89.0.24) |
 | ✅ PASS | every session resolves to its own session principal (8 distinct, all analyst-s*) |
 | ✅ PASS | byte counters are real — the session that carried the request shows transfer |
 | ✅ PASS | the page's auditor credential authenticates on its own |
@@ -102,9 +102,9 @@
 | ✅ PASS | the distributor holds no TLS material — encryption stays end to end |
 | ✅ PASS | no backend health probing — the checker cannot cause the failure it would report |
 | ✅ PASS | redispatch is on — a connection to a dead session is retried on a sibling rather than dropped |
-| ✅ PASS | held connections were carried by 2 of 3 egress workers (w1=1 w2=0 w3=4 ) — connection setup no longer funnels through one handshake path |
-| · | 5 of 8 cold connections established in one burst ({'SSLEOFError': 3}) — the egress worker's setup ceiling, M3 |
-| ✅ PASS | 5 connections spread over 5/8 sessions, busiest holding 20% (18443=0 18444=1 18445=1 18446=1 18447=1 18448=0 18449=0 18450=1 ) — no session carries the fleet |
+| ✅ PASS | held connections were carried by 3 of 3 egress workers (w1=1 w2=2 w3=3 ) — connection setup no longer funnels through one handshake path |
+| · | 6 of 8 cold connections established in one burst ({'SSLEOFError': 2}) — the egress worker's setup ceiling, M3 |
+| ✅ PASS | 6 connections spread over 6/8 sessions, busiest holding 16% (18443=1 18444=1 18445=1 18446=1 18447=0 18448=1 18449=0 18450=1 ) — no session carries the fleet |
 
 **One session's death is not the fleet's — measured, not asserted**
 

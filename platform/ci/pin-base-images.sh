@@ -2,11 +2,9 @@
 # ==============================================================================
 # BASE IMAGE PINNING — every FROM names a digest, and the digest is recorded.
 #
-# SRG-APP-000131-WSR-000051. A tag is a mutable pointer: `alpine:3.24` is whatever the
-# registry decides it is on the day of the build, so two builds of the same source produce
-# different images and neither can be said to be the one that was reviewed. A digest is the
-# content, so pulling by digest IS the integrity check — podman refuses content that does not
-# hash to the name it was asked for. There is nothing further to verify at build time.
+# SRG-APP-000131-WSR-000051. A tag is a mutable pointer: `alpine:3.24` is whatever the registry
+# decides it is on the day of the build, so two builds of the same source produce different
+# images and neither can be said to be the one that was reviewed.
 #
 # The lock is the record the control asks for: what each tag resolved to, and when.
 #
@@ -14,9 +12,9 @@
 #   ci/pin-base-images.sh --update   # re-resolve each tag and rewrite the lock
 #   ci/pin-base-images.sh --apply    # rewrite the Dockerfiles to the locked digests
 #
-# `--update` reaches the registry and MOVES THE PINS. It is the deliberate act of accepting
-# new upstream content; run it when `ci/image-currency.sh` reports drift, then rebuild and run
-# the suite. `--check` reaches nothing and is safe in CI.
+# `--update` reaches the registry and MOVES THE PINS. It is the deliberate act of accepting new
+# upstream content; run it when `ci/image-currency.sh` reports drift, then rebuild and run the
+# suite.
 #
 # Deliberately NOT pinned, and why:
 #   symbols/Dockerfile.debian   BASE_IMAGE is the distro whose symbols are being fetched. The
@@ -38,11 +36,6 @@ say()  { printf '\n\033[1;36m== %s\033[0m\n' "$*"; }
 
 # Every external base this tree builds on. Stage references (`FROM deps`), `scratch` and the
 # parameterized distro base are not upstream content and carry no digest.
-#
-# Listed rather than scraped: a scrape reads what the Dockerfiles SAY, and the point of the
-# check is to catch a Dockerfile that says something new. The list is the intent; the scrape
-# below is the reality; `--check` compares them and a base added without being declared is a
-# finding rather than a silent pass.
 BASES=(
     docker.io/library/alpine:3.24
     docker.io/library/debian:12
@@ -147,9 +140,8 @@ PY
     say "Base images are pinned by digest, and the digest matches the lock"
     rc=0
     # Resolved ONCE. `scrape | grep -q` closes the pipe on the first match, the writer takes
-    # SIGPIPE, and `set -o pipefail` turns that into a failed pipeline — which reads exactly
-    # like "no match". Every base then reports as unused. Same defect as the one corrected in
-    # `uat_consul.sh`; capture, then match.
+    # SIGPIPE, and `set -o pipefail` turns that into a failed pipeline — which reads exactly like
+    # "no match".
     FOUND="$(scrape)"
 
     # 1. Every scraped FROM carries a digest and it is the locked one.

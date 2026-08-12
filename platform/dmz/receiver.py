@@ -39,13 +39,6 @@ ISF_HOLDING = os.environ.get("RECEIVER_ISF_HOLDING", "/holding-isf")
 # An evidence bundle carries a memory image, so its size tracks the endpoint's RAM. A 22 GiB
 # workstation compresses to roughly 7 GiB and a 512 GiB server to well over a hundred, so any
 # constant chosen here is wrong for some machine the collector will legitimately be pointed at.
-# There is no fixed ceiling by default.
-#
-# What genuinely bounds an upload is the space to put it. This receiver is the only thing a
-# potentially compromised endpoint can reach, and an upload that fills the holding volume
-# takes the ingest path down for every other host, so capacity is checked before a byte is
-# read rather than discovered part-way through a transfer. Set RECEIVER_MAX_BYTES to impose a
-# hard ceiling as well; 0 (the default) means "whatever fits".
 MAX_BYTES = int(os.environ.get("RECEIVER_MAX_BYTES", "0"))
 # Never consume the last of the volume: the puller needs room to work, and a full filesystem
 # fails in more confusing ways than a refused upload.

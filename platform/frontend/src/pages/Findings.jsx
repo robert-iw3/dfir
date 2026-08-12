@@ -12,6 +12,8 @@ import { api } from "../api.js";
 import DataTable from "../components/DataTable.jsx";
 import { useServerTable } from "../components/useServerTable.js";
 import { verdictBadge } from "../components/common.jsx";
+import { TypeVerdictMatrix, TriageRings } from "../components/charts.jsx";
+import { useData } from "../components/common.jsx";
 import { can, useAuth } from "../auth.jsx";
 
 const VERDICTS = ["True Positive", "Likely True Positive", "Indeterminate",
@@ -24,9 +26,37 @@ export default function Findings() {
   const source = params.get("source") || "";
   const technique = params.get("technique") || "";
   const investigation = params.get("investigation") || "";
+  const host = params.get("host") || "";
+  // Every param a chart mark can arrive with is read HERE, or the drill is a lie: the ring
+  // and backlog drills set these, and a URL parameter the table ignores filters nothing.
+  const findingType = params.get("finding_type") || "";
+  const adjudicated = params.get("adjudicated") || "";
+  const day = params.get("day") || "";
+  const tactic = params.get("tactic") || "";
+  const cellsParam = params.get("cells") || "";
 
   const t = useServerTable(api.findings,
-    { extra: { verdict, source, technique, investigation } });
+    { extra: { verdict, source, technique, investigation, host,
+               finding_type: findingType, adjudicated, day, tactic, cells: cellsParam } });
+
+  // Heatmap selection lives in the same URL parameter the API reads, so a composed working
+  // set is bookmarkable and the back button walks it. Order within the set is meaningless;
+  // a stable sort keeps the URL stable for the same selection.
+  const selectedCells = new Set(cellsParam.split("|").filter(Boolean));
+  const toggleCell = (ft, v) => {
+    const key = `${ft}::${v}`;
+    const next = new Set(selectedCells);
+    next.has(key) ? next.delete(key) : next.add(key);
+    t.setExtra("cells", [...next].sort().join("|"));
+  };
+  const FILTER_KEYS = ["cells", "verdict", "source", "technique", "investigation", "host",
+                       "finding_type", "adjudicated", "day", "tactic"];
+  const activeFilters = FILTER_KEYS.filter((key) => params.get(key));
+  const clearFilters = () => FILTER_KEYS.forEach((key) => t.setExtra(key, ""));
+
+  // Server aggregate: the matrix reflects the whole filtered set, never the page on screen.
+  const { data: matrix } = useData(
+    () => api.findingsMatrix(investigation || undefined), [investigation]);
 
   const [selected, setSelected] = useState([]);
   const [bulkVerdict, setBulkVerdict] = useState("");
@@ -68,6 +98,55 @@ export default function Findings() {
         Adjudicated findings across all investigations. Filtering and ordering are applied
         by the database, so the view stays responsive at incident scale.
       </p>
+
+      <div className="panel" style={{ padding: 20 }}>
+        <h3 style={{ margin: "0 0 4px" }}>Type against verdict</h3>
+        <p className="chart-note">Click cells to filter the table below to exactly those
+          findings — click again to remove one, and combine as many as needed. The
+          Indeterminate column is where the backlog actually sits.</p>
+        <TypeVerdictMatrix matrix={matrix} investigationId={investigation}
+                           selected={selectedCells} onToggle={toggleCell} />
+      </div>
+      <div className="panel" style={{ padding: 20 }}>
+        <h3 style={{ margin: "0 0 4px" }}>Triage progress</h3>
+        <p className="chart-note">How much of each type a person has decided. The number is
+          what still waits; the first ring is the one to open first. Click a ring to open
+          exactly those findings.</p>
+        <TriageRings matrix={matrix} />
+      </div>
+
+      {activeFilters.length > 0 && (
+        <div className="table-controls" style={{ alignItems: "center" }}>
+          <span style={{ fontSize: 12, color: "var(--text-dim)" }}>Filtered by</span>
+          {[...selectedCells].sort().map((key) => {
+            const [ft, v] = key.split("::");
+            return (
+              <button key={key} type="button" onClick={() => toggleCell(ft, v)}
+                      title="Remove this filter"
+                      style={{ fontSize: 12, padding: "3px 10px", borderRadius: 999,
+                               border: "1px solid var(--border)", cursor: "pointer",
+                               background: "var(--bg-elev-2)", color: "var(--text)" }}>
+                {ft} — {v} ✕
+              </button>
+            );
+          })}
+          {activeFilters.filter((key) => key !== "cells").map((key) => (
+            <button key={key} type="button" onClick={() => t.setExtra(key, "")}
+                    title="Remove this filter"
+                    style={{ fontSize: 12, padding: "3px 10px", borderRadius: 999,
+                             border: "1px solid var(--border)", cursor: "pointer",
+                             background: "var(--bg-elev-2)", color: "var(--text)" }}>
+              {key.replace("_", " ")}: {params.get(key)} ✕
+            </button>
+          ))}
+          <button type="button" onClick={clearFilters}
+                  style={{ fontSize: 12, padding: "3px 12px", borderRadius: 999,
+                           border: "1px solid var(--accent)", cursor: "pointer",
+                           background: "transparent", color: "var(--accent)" }}>
+            Clear filters
+          </button>
+        </div>
+      )}
 
       <div className="table-controls">
         <select value={verdict} aria-label="Filter by verdict"

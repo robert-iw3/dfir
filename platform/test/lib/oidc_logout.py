@@ -81,7 +81,7 @@ def main(sso_base, app_url, user, password):
     with op.open(sign_out, timeout=25) as r:
         r.read()
 
-    # 3. Revisit the app. A surviving Keycloak session would re-authenticate without a
+    # 3. Revisit the app.
     #    prompt and serve the app; a properly ended one must show the login form again.
     with op.open(app_url, timeout=25) as r:
         final = r.read().decode("utf-8", "replace")

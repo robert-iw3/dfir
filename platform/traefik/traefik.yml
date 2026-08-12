@@ -1,8 +1,5 @@
-# Traefik static config — TLS termination in front of the IR Platform web UI.
-# File provider only (no docker socket exposed). HTTP is redirected to HTTPS.
-#
-# Web Server SRG: this file carries the entrypoint and logging half; TLS options, security
-# headers and the request limits are dynamic configuration, in dynamic-sso/dynamic.yml.
+# Traefik static config — TLS termination in front of the IR Platform web UI. File provider only
+# (no docker socket exposed).
 global:
   checkNewVersion: false
   sendAnonymousUsage: false
@@ -38,14 +35,6 @@ log:
 
 # Access logging, on and explicit rather than defaulted (SRG-APP-000089/000092). JSON because
 # these records are meant to be parsed by something other than a person.
-#
-# The fields are the SRG's questions: what happened (RequestMethod, RequestPath, RouterName),
-# when (StartUTC), where (ServiceName, ServiceAddr), the outcome (DownstreamStatus), and the
-# source (ClientHost).
-#
-# X-Forwarded-For is kept deliberately (SRG-APP-000098-WSR-000060): every analyst arrives
-# through the Boundary egress worker, so ClientHost is the SAME address for all of them and a
-# log without the forwarded header cannot attribute a request to an analyst at all.
 accessLog:
   # A file, not stdout: the shipper reads it from a read-only mount, which keeps
   # the container runtime's socket out of the log path entirely (SECURITY-MODEL P10).

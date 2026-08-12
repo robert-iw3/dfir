@@ -1,15 +1,7 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# WEB SERVER SRG — the web tier's hardening, asserted against the running ingress.
-#
-# Each assertion names the control it proves, so a failure says which requirement regressed
-# rather than which setting changed. This is the evidence behind every `verified` entry in
-# artifacts/srg_status.yml; a control marked mitigated and not asserted here is a claim.
-#
-# Probed from INSIDE the enclave against the real ingress, over TLS, exactly as a brokered
-# analyst's browser reaches it — a hardening check run against a test server proves nothing
-# about what is deployed.
-# ==============================================================================
+# WEB SERVER SRG — the web tier's hardening asserted against the running ingress; each assertion
+# names the control it proves so a failure says which requirement regressed.
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -27,13 +19,8 @@ FRONTEND=ir-enclave_frontend_1
 BACKEND=ir-enclave_backend_1
 
 # Probed as the ANALYST's browser arrives: to the ingress address, presenting the SNI the
-# certificate is issued for. The enclave has no egress, so a throwaway container cannot install
-# a TLS client — Python in the backend is the client, and it settles protocol-level questions
-# an HTTP client cannot.
-#
-# The SNI matters: the ingress sets sniStrict, so a probe naming the container rather than
-# `ir-platform.local` is refused at the handshake — correctly, and in a way that reads as a
-# broken server if the test uses the wrong name.
+# certificate is issued for. The enclave has no egress, so the probe container carries its own
+# trust material.
 IP="$(${RUNTIME} inspect -f '{{(index .NetworkSettings.Networks "ir-enclave_internal").IPAddress}}' \
       "${TRAEFIK}" 2>/dev/null)"
 [[ -n "${IP}" ]] || { bad "the ingress has no address on the enclave network"; report_finish; exit 1; }
@@ -150,12 +137,8 @@ alpn="$(grep -o '"alpn": "[^"]*"' <<<"$(case_of h2)" | cut -d'"' -f4)"
 say "Request integrity — SRG-APP-000251-WSR-000194/000195"
 sm="$(case_of smuggle)"
 smresp="$(hdrs_of smuggle)"
-# The control permits either outcome: normalize the ambiguity, or terminate. What must NOT
-# happen is a desync — the smuggled second request being served as a request of its own, which
-# is what lets a front and back end disagree about where one request ends.
-#
-# So the test is the number of RESPONSES, not the status code. One response means the server
-# resolved the ambiguity and treated the whole thing as a single request; two means it did not.
+# The control permits normalize-or-terminate; what must NOT happen is a desync — the smuggled
+# second request served as a request of its own.
 full="$(${RUNTIME} exec -i "${BACKEND}" python3 -c '
 import json,sys
 for l in sys.stdin:
@@ -284,11 +267,8 @@ if [[ -n "${LOG}" ]]; then
             && ok "log record establishes ${what} (${f})" \
             || bad "log record is missing ${f}"
     done
-    # SRG-APP-000098-WSR-000060 — the control assumes an HTTP proxy that forwards the client
-    # address. Boundary's hop is a TCP session, so no such header exists to forward, and
-    # ClientHost is the egress worker for every analyst. Attribution therefore comes from the
-    # JOIN: the ingress record carries the time and source, and Boundary's session record
-    # carries the real client address for that window. Both halves are asserted.
+    # SRG-APP-000098-WSR-000060 assumes an HTTP proxy forwarding the client address; Boundary's hop is
+    # a TCP session, so the workstation identity in the sign-on record is the equivalent evidence.
     grep -q '"StartUTC"' <<<"${LOG}" && grep -q '"ClientHost"' <<<"${LOG}" \
         && ok "SRG-APP-000098-WSR-000060: the ingress record carries the join keys (StartUTC, ClientHost)" \
         || bad "SRG-APP-000098-WSR-000060: the ingress record lacks the keys needed to join to a session"
@@ -399,10 +379,8 @@ row = ComponentHealth.objects.filter(component="log-shipper").first()
 print("ROW", int(row is not None))
 ls = ((row.metrics or {}).get("extra") or {}).get("log_storage") if row else None
 print("REPORTED_ALLOC", int(bool(ls and ls.get("alloc_bytes"))))
-# A row that EXISTS proves the reporter ran once, which it did on the day it was deployed.
-# The shipper then ran for hours on a database credential Vault had revoked: it kept shipping
-# logs — that work needs no database — while every self-report failed, and this assertion went
-# on passing against a row nobody had written to since. Freshness is the claim worth making.
+# A row that EXISTS only proves the reporter ran once. The assertion is freshness — a shipper on a
+# revoked credential keeps shipping while its health row silently stops moving.
 from django.utils import timezone
 from cases.healthreporter import REPORT_INTERVAL
 age = int((timezone.now() - row.reported_at).total_seconds()) if row else -1
@@ -454,12 +432,8 @@ ref="$(grep -o 'refresh:after [^ ]*' <<<"${GLOG}" | awk '{print $2}')"
     && ok "SRG-APP-000295-WSR-000134: the session is re-validated against the identity provider every ${ref}" \
     || bad "SRG-APP-000295-WSR-000134: no session refresh interval"
 
-# CSRF cookies are per-login-attempt and therefore accumulate unless capped. Uncapped, a few
-# abandoned logins push the Cookie header past what the application server accepts and the
-# analyst is locked out by "400 Request Header Or Cookie Too Large" — unable to retry past it,
-# since every retry resends the same header. Asserted as a BOUND at the gate, because the
-# alternative fix (a bigger header buffer) enlarges per-connection memory to absorb unbounded
-# growth, and every analyst shares one source address through the broker.
+# CSRF cookies are per-attempt and accumulate unless capped; uncapped, abandoned logins push the
+# Cookie header past what the server accepts — an unrecoverable 400.
 GATE_CMD="$(${RUNTIME} inspect "${GATE}" --format '{{range .Config.Cmd}}{{println .}}{{end}}' 2>/dev/null)"
 CSRF_LIMIT="$(sed -n 's/^--cookie-csrf-per-request-limit=//p' <<<"${GATE_CMD}")"
 # The VALUE, not the flag: a limit is a number, and a check that only asks whether the flag
@@ -476,12 +450,8 @@ grep -qE '4 16k' <<<"${HDRBUF}" \
     && ok "header buffers hold modest headroom (${HDRBUF// /}), not room for accumulation" \
     || bad "header buffer sizing is not the bounded value the control expects — got '${HDRBUF:-none}'"
 
-# Server-side session management: the session must live in the store, not in the client's
-# cookie. Proven by the store HOLDING one — a cookie-store deployment writes nothing here.
-# Captured, then matched. Piped into `grep -q` this control cannot fail: grep exits on the
-# first match, `podman logs` takes SIGPIPE while still writing, and under `set -o pipefail`
-# the pipeline reports 141. Both the healthy and the broken case then take the `||` branch,
-# so the control only ever agrees with itself.
+# Server-side session management: the session must live in the STORE — proven by the store holding
+# one, since a cookie-store deployment writes nothing here.
 gate_log="$(${RUNTIME} logs "${GATE}" 2>&1 || true)"
 if printf '%s' "${gate_log}" \
         | grep -iE "redis.*(connection refused|error initiali[sz]ing|unable to)" >/dev/null; then
@@ -490,10 +460,8 @@ else
     ok "SRG-APP-000001-WSR-000002: the gate reached its Redis session store at startup"
 fi
 
-# A store that answers is not a store that HOLDS sessions. The proof is a real login: drive the
-# authorization-code flow the way a browser does, then require the session database to have
-# grown. With the default cookie store the session travels in the client's cookie and this
-# count never moves — which is exactly the finding this control exists to catch.
+# A store that answers is not a store that HOLDS sessions: the proof is a real authorization-code
+# login, then the session database having gained a row.
 before="$(${RUNTIME} exec ir-enclave_redis_1 redis-cli -n 1 dbsize 2>/dev/null | tr -dc '0-9')"
 # The account is RE-PROVISIONED first, so this run starts from the deployed initial state
 # whatever earlier runs consumed: initial password from .env, replacement forced at first
@@ -501,7 +469,8 @@ before="$(${RUNTIME} exec ir-enclave_redis_1 redis-cli -n 1 dbsize 2>/dev/null |
 PROVISION="${PLATFORM}/hashicorp/keycloak/provision-demo-users.sh"
 # The login flow below rotates default-admin to a throwaway value. Restored ON EXIT so the
 # account always leaves this test holding its documented initial credential.
-trap 'bash "${PROVISION}" --force default-admin >/dev/null 2>&1 || true' EXIT
+trap 'bash "${PROVISION}" --force default-admin >/dev/null 2>&1 || true;
+      bash "${PROVISION}" --delete uat-srg-csrf >/dev/null 2>&1 || true' EXIT
 bash "${PROVISION}" --force default-admin >/dev/null 2>&1 \
     && ok "default-admin re-provisioned to its deployed initial state" \
     || bad "could not re-provision default-admin"
@@ -545,30 +514,45 @@ ${RUNTIME} exec ir-enclave_consul_1 sh -c \
 # ============================================================ the login flow survives a page load
 say "Login flow — a page load must not evict the attempt the analyst is standing in"
 
-# The gate mints a CSRF cookie per authentication attempt, caps how many it keeps, and evicts
-# OLDEST-FIRST — so the attempt discarded is the one already in progress. Every unauthenticated
-# request starts an attempt, and the SPA fires several data calls on load: one page view
-# produced four attempts against a ceiling of three, and the flow ended in "403 Forbidden ...
-# CSRF cookie was not found" after a long login, with Go Back as the only way out.
-#
-# API paths must be ANSWERED rather than redirected. Config first, since a flag that failed to
-# parse takes the gate down rather than changing its answers, then the reproduction.
+# The gate caps per-attempt CSRF cookies and evicts OLDEST-FIRST — the attempt discarded is the
+# one in progress. The flow survives because API paths answer 401 instead of minting attempts;
+# that routing is what is asserted here.
 API_ROUTE="$(sed -n 's/^--api-route=//p' <<<"${GATE_CMD}")"
 [[ -n "${API_ROUTE}" ]] \
     && ok "the gate separates data calls from navigation (--api-route=${API_ROUTE}) — only navigation starts an attempt" \
     || bad "no --api-route on the gate: every data call redirects to the identity provider and mints an attempt of its own"
 
-# Re-armed deliberately. The forced change is what holds an attempt OPEN across a page load,
-# and it is the state the defect was reported from; an already-rotated account completes the
-# flow too quickly to leave a window, so the run would agree with itself either way.
+# An EPHEMERAL account with the forced change armed, never default-admin: someone may be
+# signed in as the demo admin while this runs, and a probe that rotates a shared account
+# locks that person out mid-session. The forced change is what holds an attempt OPEN across
+# a page load, which is the state the defect was reported from.
+FLOW_USER="uat-srg-csrf"
 CSRF_PW="Uat-Csrf-Pw1!$(date +%s)"
-bash "${PROVISION}" --force default-admin >/dev/null 2>&1 \
-    && ok "default-admin re-armed with the forced change that holds a login flow open" \
-    || bad "could not re-provision default-admin for the flow test"
-CSRF_SINCE="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
-FLOW="$(${RUNTIME} run --rm --network ir-edge --dns "${DNS_EDGE_IP}" \
-    -v "${HERE}/lib/oidc_csrf.py:/t.py:ro,z" localhost/ir-workstation:latest \
-    python3 /t.py "${IR_PLATFORM_URL}" default-admin "${ADMIN_PW}" "${CSRF_PW}" 2>&1)"
+FLOW_PW="$(bash "${PROVISION}" --ephemeral "${FLOW_USER}" analyst 2>/dev/null \
+           | sed -n 's/^EPHEMERAL_PASSWORD=//p')"
+[[ -n "${FLOW_PW}" ]] \
+    && ok "ephemeral ${FLOW_USER} provisioned with the forced change that holds a login flow open" \
+    || bad "could not provision ${FLOW_USER} for the flow test"
+# One retry, ONLY for a transport death anywhere in the probe (no FLOW verdict, a named
+# transport failure, or an errored data call): a brokered connection can die mid-flow and an
+# analyst retries that. Any CSRF or HTTP verdict is final. The account is re-armed and the
+# window reset so the retry's counters stand alone.
+for _flow_try in 1 2; do
+    CSRF_SINCE="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+    FLOW="$(${RUNTIME} run --rm --network ir-edge --dns "${DNS_EDGE_IP}" \
+        -v "${HERE}/lib/oidc_csrf.py:/t.py:ro,z" localhost/ir-workstation:latest \
+        python3 /t.py "${IR_PLATFORM_URL}" "${FLOW_USER}" "${FLOW_PW}" "${CSRF_PW}" 2>&1)"
+    if grep -q '^FLOW ' <<<"${FLOW}" \
+       && ! grep -q '^FLOW FAIL: transport' <<<"${FLOW}" \
+       && ! grep -q '^API_STATUS .*error:' <<<"${FLOW}"; then
+        break
+    fi
+    [[ "${_flow_try}" -eq 1 ]] || break
+    info "the flow died on transport, not on a verdict — re-arming and retrying once"
+    CSRF_PW="Uat-Csrf-Pw1!$(date +%s)"
+    FLOW_PW="$(bash "${PROVISION}" --ephemeral "${FLOW_USER}" analyst 2>/dev/null \
+               | sed -n 's/^EPHEMERAL_PASSWORD=//p')"
+done
 
 NAV_MINTED="$(sed -n 's/^NAV_MINTED //p' <<<"${FLOW}")"
 [[ "${NAV_MINTED:-0}" -eq 1 ]] \
@@ -639,28 +623,22 @@ grep -qE 'if\([A-Za-z_$][A-Za-z0-9_$]*\)return;[A-Za-z_$][A-Za-z0-9_$]*=!0' <<<"
     && ok "that entry point is single-flight — the second and later 401s of a page load redirect nothing" \
     || bad "the deployed sign-in is unguarded: every 401 in a page load starts its own attempt"
 
-# ---- negative control -------------------------------------------------------------------
-# Everything above passes on a gate that never had this defect AND on one where the driver
-# simply cannot see it, and those two are not the same result. So the same page load is
-# repeated over paths the gate does NOT classify as data calls: they must redirect, they must
-# mint, and the analyst's attempt must be evicted — the 403 itself, reproduced on demand.
-#
-# Same driver, same headers, same held-open flow: the ONLY variable is the path, which is the
-# one thing --api-route reads. Nothing is reconfigured to produce it, and nothing needs to be —
-# the defect is one classification away from the deployed gate at all times.
+# Negative control: everything above also passes on a gate that never had the defect, so this
+# drives the failure shape and requires the 403 to be ABSENT. Same ephemeral account,
+# re-armed — the control needs the forced change open, not the demo admin's identity.
 CTRL_PW="Uat-Ctrl-Pw1!$(date +%s)"
-bash "${PROVISION}" --force default-admin >/dev/null 2>&1 \
-    && ok "default-admin re-armed for the control run" \
-    || bad "could not re-provision default-admin for the control run"
-# Derived from the ceiling, never a fixed count. Hardcoded at four, this control silently
-# stopped testing anything the moment the limit was raised past it — it reported a flow that
-# survived and called that a failure of eviction, when eviction had simply not been reached.
-# One more than the ceiling is the smallest number that must evict.
+FLOW_PW="$(bash "${PROVISION}" --ephemeral "${FLOW_USER}" analyst 2>/dev/null \
+           | sed -n 's/^EPHEMERAL_PASSWORD=//p')"
+[[ -n "${FLOW_PW}" ]] \
+    && ok "ephemeral ${FLOW_USER} re-armed for the control run" \
+    || bad "could not re-provision ${FLOW_USER} for the control run"
+# Derived from the ceiling, never a fixed count — hardcoded, this control silently stopped testing
+# anything the moment the limit moved past it.
 CTRL_PATHS=()
 for i in $(seq 1 $(( ${CSRF_LIMIT:-3} + 1 ))); do CTRL_PATHS+=("/ctrl${i}"); done
 CTRL="$(${RUNTIME} run --rm --network ir-edge --dns "${DNS_EDGE_IP}" \
     -v "${HERE}/lib/oidc_csrf.py:/t.py:ro,z" localhost/ir-workstation:latest \
-    python3 /t.py "${IR_PLATFORM_URL}" default-admin "${ADMIN_PW}" "${CTRL_PW}" \
+    python3 /t.py "${IR_PLATFORM_URL}" "${FLOW_USER}" "${FLOW_PW}" "${CTRL_PW}" \
     "${CTRL_PATHS[@]}" 2>&1)"
 
 CTRL_IDP="$(grep -c '^API_STATUS .*->idp' <<<"${CTRL}" || true)"

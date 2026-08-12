@@ -1,23 +1,8 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# CORPUS v2 — 25 endpoints through the REAL pipeline, benign baseline included.
-#
-# Every endpoint is a real collector run (hunts, custody seal, synthetic memory sample
-# carrying the scenario's artifacts) shipped to the DMZ receiver over pinned TLS, pulled,
-# ingested and analyzed by the production path. Nothing is written to the database by hand.
-#
-# The corpus's point is classification, not delivery alone: 9 of the 25 endpoints are
-# CLEAN, every host carries fleet-wide benign noise (identical agent hashes, patch pushes,
-# an account present everywhere), and the assertions that matter most are negative — clean
-# hosts stay clean and appear in no campaign.
-#
-# Scenario data is declared synthetic in the bundle itself (_scenario.json). Seeds two
-# investigations (INC-CORPUS-A/B); re-running supersedes their correlation runs.
-#
-# Scoped to those two incidents BY NAME, never by the `INC-CORPUS-` prefix: that prefix also
-# matches INC-CORPUS-L and INC-CORPUS-R, so the reset deleted the other corpora and every
-# count here silently included their endpoints.
-# ==============================================================================
+# CORPUS v2 — 25 endpoints through the REAL pipeline, benign baseline included: every endpoint is
+# a real collector run with custody seal and synthetic memory sample. Passing proves the engine
+# reconstructs the encoded campaigns and stays quiet on the benign fleet.
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -51,12 +36,8 @@ if [[ "${#MISSING[@]}" -gt 0 ]]; then
     report_finish
     exit 1
 fi
-# Rebuilt when its source is newer, not merely when it is absent.
-#
-# Built-only-when-absent is the same defect that left the analysis worker running
-# pre-migration code, and here it is worse: the corpus would collect with a stale collector
-# while the --deep assertion below greps the SOURCE and passes. A green corpus proving
-# nothing about the code under test is the one outcome this suite must not produce.
+# Rebuilt when its source is NEWER, not merely when absent — built-only-when-absent is how a stale
+# worker runs old models against a migrated database.
 collector_stale() {
     ${RUNTIME} image exists ir-collector:latest 2>/dev/null || return 0
     local built
@@ -73,11 +54,8 @@ else
     ok "collector image current with collector/"
 fi
 
-# The collector must run the FULL forensics collection, not the inline snapshot.
-#
-# Asserted on the source rather than the output, because the difference is invisible in a
-# passing corpus: a corpus whose scenarios do not happen to plant an authorized_keys backdoor
-# stays green while the gap is wide open. toolkit/test/lab/linux quantifies the cost.
+# The collector must run the FULL forensics collection, not the inline snapshot — asserted on the
+# source, because the difference is invisible in the output shape.
 grep -q -- '--deep' "${PLATFORM}/collector/collect.sh" \
     && ok "the collector runs the full forensics collection (--deep)" \
     || bad "collect.sh no longer passes --deep — SUID, authorized_keys, shell-init persistence and running-binary hashes will not be collected"
@@ -87,13 +65,8 @@ python3 "${HERE}/corpus/scenarios.py" "${SCEN}" >/dev/null \
     && ok "25 endpoint scenarios generated" \
     || { bad "scenario generation failed"; report_finish; exit 1; }
 
-# Reset prior corpus data so the run is deterministic — a re-run must not read hosts left by
-# an earlier attempt. Scoped to the corpus investigations; real evidence is untouched.
-#
-# Deliberately AFTER the precondition abort above: this is the run's only destructive step,
-# and reaching it without a receiver deletes the corpus and then cannot replace it, leaving
-# the deployment emptier than it was found. Destructive setup runs only once the pipeline
-# that refills it is known to exist.
+# Reset prior corpus data so a re-run is deterministic, scoped to the corpus investigations; real
+# evidence is untouched.
 be python3 - <<'PYEOF' >/dev/null 2>&1
 import os, django
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "ir_platform.settings"); django.setup()
@@ -216,12 +189,8 @@ done
     && ok "all 25 captures terminal and compromise settled (${NCOMP} compromised)" \
     || info "only ${TERMINAL:-0}/25 captures terminal within the wait — classification may read hosts mid-flight"
 
-# "Terminal" counts failed analyses too, so the settle gate above is quiet when every analysis
-# failed. Assert the outcome, not just that the pipeline stopped moving: an analysis that
-# failed, or completed without adjudicating, produces the same downstream picture as a campaign
-# with nothing to find — no verdicts, no compromise, no links — and the failure then reads as a
-# correlation defect several layers from its cause. The recorded error is printed because it
-# names the real one.
+# 'Terminal' counts failed analyses too, so the settle gate stays quiet when every analysis
+# failed. Assert the OUTCOME, not that the pipeline stopped moving.
 while read -r line; do
     case "${line}" in
         AOK*)  ok "${line#AOK }" ;;
@@ -382,10 +351,21 @@ if a:
     if cross:
         chk(all(not l.linked for _, l in cross),
             "every Ember/miner candidate was DECLINED — G2 closed by weighting, not by absence")
-        tops = [l.factors.get("top", {}) for _, l in cross]
-        worst = max((t.get("rarity", 1.0) for t in tops), default=1.0)
-        chk(all(t.get("rarity", 1.0) < THRESHOLD for t in tops),
-            f"the declining factor is low RARITY — the shared thing reads as environment (max {worst:.3f})")
+        # The trap is asserted at its NODE, not at whichever contribution came out on top:
+        # a shared MITRE technique can out-weigh the account, and technique nodes carry
+        # floored rarity by construction — no clean carrier exists to break the
+        # confirmed-everywhere floor, so TYPE weight is what declines them.
+        from correlation.models import BehaviorNode
+        from correlation.linkage import rarity as node_rarity
+        from cases.models import Host
+        acct = BehaviorNode.objects.filter(run=a, kind="account",
+                                           value="CORP\\svc_helpdesk").first()
+        chk(bool(acct), "the ubiquitous helpdesk account is in the behavior graph")
+        if acct:
+            r = node_rarity(acct.host_count, Host.objects.count())
+            chk(r < THRESHOLD,
+                f"the fleet-wide account reads as ENVIRONMENT "
+                f"(rarity {r:.3f} across {acct.host_count} carriers)")
         heaviest = max((l.weight for _, l in cross), default=1.0)
         chk(heaviest < THRESHOLD,
             f"declined weights sit below the threshold (heaviest {heaviest:.4f} < {THRESHOLD})")
@@ -412,14 +392,8 @@ if a:
             chk(abs(c.cohesion_min - round(min(internal), 4)) < 1e-6,
                 f"campaign pz={c.patient_zero}: cohesion_min equals its weakest internal link ({c.cohesion_min})")
 
-    # Held together by indicators with no observed movement, the miner must read weaker than
-    # an intrusion reconstructed from movement — a true statement about that evidence.
-    #
-    # Compared on the MEAN and on the evidence itself, not on cohesion_min. The minimum is
-    # the weakest link inside a campaign, so it falls as a campaign gains corroboration:
-    # Ember holds 37 internal links to the miner's one, and its weakest is necessarily lower
-    # than a two-host campaign's only link. Read that way the comparison measures breadth and
-    # calls it weakness.
+    # Held together by indicators with no observed movement, the miner must read WEAKER than an
+    # intrusion reconstructed from movement — a true statement about that evidence.
     camps = list(Campaign.objects.filter(run=a))
     ember_c = next((c for c in camps if "WS-007" in set(c.hosts.values_list("hostname", flat=True))), None)
     miner_c = next((c for c in camps if set(c.hosts.values_list("hostname", flat=True)) & MINER), None)
@@ -470,16 +444,8 @@ if b:
 PYEOF
 )
 
-# ---------------------------------------------------------------- L3 confidence bands
-# The banding truth table first, in the app's own tests: it is pure logic over the link
-# record, so it is decidable without a corpus and a branch it gets wrong should not have to
-# be inferred from a campaign's shape. The corpus assertions below then prove the same logic
-# reaches real evidence.
-#
-# Run through unittest rather than `manage.py test`: the Django runner creates a test
-# database for every configured connection before it looks at what the tests need, and the
-# app role is deliberately not a Postgres superuser. These are SimpleTestCases and touch no
-# database, so the runner's setup is the only thing that could fail here.
+# The banding truth table runs first in the app's own tests (pure logic over link weights); this
+# section then asserts the bands the deployed engine actually assigned.
 say "L3 — banding truth table"
 BAND_TESTS=$(be python3 -c "
 import os, sys, unittest, django
@@ -639,11 +605,8 @@ if b:
     chk({"user_agent", "mutex"} <= carried,
         f"the shared user-agent and mutex are CARRIED as link evidence ({sorted(carried)})")
 
-# ROLLUP — what a finding recovered reaches the HOST's IOC index, not only the graph.
-# The question this answers is "which other hosts carry this mutex", which is what survives
-# the infrastructure rotation between INV-A and INV-B. Asserted per host, because an index
-# that holds the campaign's indicators somewhere is not the same as each host's list being
-# complete.
+# ROLLUP — what a finding recovered must reach the HOST's IOC index, not only the graph: 'which
+# other hosts carry this mutex' is the question that survives archival.
 from django.db.models import Count
 from cases.models import IOC as IOCRow, CollectionRun
 for host, want in (("WS-007", {"user_agent", "mutex", "pipe", "ja3", "registry_key"}),
@@ -652,13 +615,8 @@ for host, want in (("WS-007", {"user_agent", "mutex", "pipe", "ja3", "registry_k
                 .values_list("ioc_type", flat=True))
     chk(want <= types,
         f"{host}: the implant's identifying material is in its IOC index (missing: {sorted(want - types)})")
-# The C2 config's ADDRESS is pivotable and must be in the index; its sleep interval is not
-# an indicator and must not be, or the index fills with timing values nobody searches for.
-#
-# Asserted by VALUE, not by provenance: the extracted address is the same domain the hunt
-# already emitted, so the rollup deduplicates it against that row rather than indexing the
-# same indicator twice. Requiring a config-origin row would demand the duplicate the dedupe
-# exists to prevent.
+# The C2 config's ADDRESS is pivotable and belongs in the index; its sleep interval is not an
+# indicator and must not be, or the index fills with timing values nobody searches.
 chk(IOCRow.objects.filter(ioc_type="domain", value="updates.cdn-telemetry.net").exists(),
     "the extracted C2 address is in the IOC index (deduplicated against the hunt's own row)")
 chk(IOCRow.objects.filter(context__origin="config_extracted").exists(),
@@ -842,16 +800,8 @@ chk(all(s.rationale.get("components") for s in sims),
 PYEOF
 )
 
-# ------------------------------------------------- render path: collector -> screen
-# Everything above reads the DATABASE. That proves the pipeline landed the evidence; it does
-# not prove the analyst is shown it. Between the two sits serialization, and a field that is
-# collected, stored and never served is — to the person reading the page — a field that was
-# never collected. `technique_sequence` was exactly that: computed, stored, absent from the
-# response, and the UI honestly reported "no order recorded".
-#
-# So these call the SAME endpoints the browser calls, over HTTP through DRF with a real token,
-# and assert the values the COLLECTOR planted come back. Not that the shape is well formed —
-# that the specific strings written into the endpoint scenario are in the payload.
+# Render path: everything above reads the DATABASE; this drives the UI's own endpoints so evidence
+# proven landed is also proven REACHABLE.
 say "Render path — the values the collector planted reach the API the UI calls"
 while read -r line; do
     case "${line}" in
@@ -913,11 +863,8 @@ else:
             f"{what} the collector planted is served as the example behind its shape "
             f"({planted})")
 
-    # NOT every planted value becomes a convention, and it should not. `WinDefendHelper`
-    # abstracts to a run of words with no separator, which is every CamelCase Windows
-    # service ever shipped — matching on it would tie unrelated intrusions together. It
-    # still reaches the platform as an artifact node and links hosts on its literal value;
-    # the convention list is a claim about HABITS, not an inventory of what was collected.
+    # NOT every planted value becomes a convention: `WinDefendHelper` abstracts to a pattern matching
+    # every CamelCase Windows name, and a convention that matches everything identifies nothing.
     chk(PERSIST_SVC not in served,
         f"a generic name shape is refused as a convention while the value still links "
         f"hosts ({PERSIST_SVC})")
@@ -937,11 +884,8 @@ else:
         f"the attack graph endpoint is populated "
         f"({len(g.get('nodes') or [])} nodes, {len(g.get('edges') or [])} edges)")
 
-    # Behavioral edges are the tradecraft path — hosts tied together by a shared artifact
-    # rather than by observed movement. Asserted on QUIET FOX, not Ember: every linked pair
-    # in Ember is also a movement pair, so it has no behavioral edges and correctly shows
-    # none. Quiet Fox is the campaign built to hold together without movement, which is what
-    # makes it the one that can prove this path renders.
+    # Behavioral edges are the tradecraft path — hosts tied by a shared artifact rather than observed
+    # movement. Asserted on QUIET FOX, where every linked pair rests on behavior alone.
     inv_b = Investigation.objects.filter(incident_id="INC-CORPUS-B").first()
     run_b = CorrelationRun.objects.filter(investigation_id=inv_b.id, is_current=True).first() if inv_b else None
     camp_b = Campaign.objects.filter(run=run_b).order_by("-host_count").first() if run_b else None

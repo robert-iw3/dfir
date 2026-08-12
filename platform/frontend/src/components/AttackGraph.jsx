@@ -17,10 +17,9 @@
  * cannot answer "why aren't these two the same intrusion?", and that is asked of every
  * correlation result an analyst does not already agree with.
  */
-// The gap between a node's right edge and the next column's left edge is where an edge label
-// has to fit. At COL_W 210 / NODE_W 168 that gap was 42px and every protocol label rendered
-// on top of a node box. The column is sized from the label instead: node width plus a lane
-// wide enough for the longest thing drawn in it.
+// The gap between a node's right edge and the next column's left edge is where an edge label has
+// to fit. At COL_W 210 / NODE_W 168 that gap was 42px and every protocol label rendered on top
+// of a node box.
 const LABEL_LANE = 96;
 const NODE_W = 176;
 const COL_W = NODE_W + LABEL_LANE;
@@ -231,7 +230,7 @@ export default function AttackGraph({
               {/* Inside the box with room for descenders — at NODE_H 54 this was clipped. */}
               {n.confidence_band && (
                 <text x="26" y="52" fontSize="9"
-                      fill={n.confidence_band === "confirmed" ? "var(--ok)" : "var(--text-dim)"}>
+                      fill={n.confidence_band === "confirmed" ? "var(--good)" : "var(--text-dim)"}>
                   {n.confidence_band}
                 </text>
               )}

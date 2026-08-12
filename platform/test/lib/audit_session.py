@@ -59,12 +59,18 @@ def main(sso_base, app_url, user, password, rotate_to=None, ws_id=None):
 
     # Several reads. None of them may add a sign-on: a login recorded per request would make
     # the trail unreadable and the session count meaningless.
+    inv_id = None
     for _ in range(3):
-        call(op, f"{base}/api/investigations/")
+        _, listing = call(op, f"{base}/api/investigations/")
+        rows = (listing or {}).get("results") or []
+        if inv_id is None and rows:
+            inv_id = rows[0].get("id")
 
     # A write that IS audited by its call site — recorded as `note.create` with case detail.
+    # The case id is read from the deployment, never assumed: on a fresh database
+    # "investigation 1" does not exist and the probe fails before it probes anything.
     status, created = call(op, f"{base}/api/notes/", "POST",
-                           {"body": "uat audit-trail probe", "investigation": 1})
+                           {"body": "uat audit-trail probe", "investigation": inv_id})
     print(f"AUDITED_WRITE={status}")
     note_id = created.get("id", "")
     print(f"AUDITED_WRITE_ID={note_id}")

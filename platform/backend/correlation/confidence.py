@@ -77,28 +77,16 @@ def band_for(host, links):
     temporal = top.get("temporal")
     peer = best.host_b if best.host_a == host else best.host_a
 
-    # ANY accepted link, and any CONTRIBUTION within it — not just the strongest of either.
-    #
-    # A host can be tied in by a clean artifact at 1.00 and also by a movement whose sequence
-    # cannot be right. Reading only the top link hides the contradiction behind the
-    # corroboration, which is backwards: the corroboration is why the host is not merely
-    # `possible`, and the contradiction is why it is not settled.
-    #
-    # Reading only each link's top contribution hides it a second way, and this one is caused
-    # by the discount itself — discounting the movement drops it below the pair's clean
-    # artifact evidence, so the contradicted contribution sorts into `corroboration` and the
-    # link presents as ordinary. The record is right there; only the reader was wrong.
+    # ANY accepted link, and any CONTRIBUTION within it — not just the strongest of either. A host
+    # can be tied in by a clean artifact at 1.00 and also by a movement whose sequence cannot be
+    # right.
     contradicted = next(
         ((link, c) for link in accepted if (c := _contradiction_in(link))), None)
 
-    # What the timeline test CONCLUDED, reported whichever way it went.
-    #
-    # `contradiction_for` distinguishes three outcomes and words each: the movement
-    # contradicts the source's own evidence, it is consistent with it, or it COULD NOT BE
-    # EVALUATED because the source has no standalone confirming evidence to compare against.
-    # Carrying only the first collapsed the other two into a blank field, so "checked, and
-    # the sequence holds" and "there was nothing to check it against" rendered identically —
-    # and on a host whose history the actor destroyed, the second IS the finding.
+    # What the timeline test CONCLUDED, reported whichever way it went. `contradiction_for`
+    # distinguishes three outcomes and words each: the movement contradicts the source's own
+    # evidence, it is consistent with it, or it COULD NOT BE EVALUATED because the source has no
+    # standalone confirming evidence to compare against.
     timeline_basis = contradicted[1].get("contradiction_basis") if contradicted else None
     if not timeline_basis:
         for link in accepted:

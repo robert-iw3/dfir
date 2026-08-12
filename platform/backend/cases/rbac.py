@@ -22,16 +22,9 @@ from rest_framework.permissions import BasePermission, SAFE_METHODS
 ROLES = ("admin", "analyst", "auditor", "reverse_engineer")
 SERVICE_GROUP = "service"  # broker / ingest
 
-# Export is a RIGHT, not a consequence of being able to read.
-#
-# Reading a finding inside the enclave and carrying ten thousand of them out of it are
-# different acts with different blast radii, and until now anyone who could do the first could
-# do the second. The enclave exists to bound where evidence goes; a permission model in which
-# "can see it" implies "can take it" concedes that bound to every authenticated session.
-#
-# Held as a group rather than a role so it composes: an analyst who may export and an analyst
-# who may not are the same role with different rights, and a case that turns adversarial ends
-# with the right withdrawn rather than the account changed.
+# Export is a RIGHT, not a consequence of being able to read. Reading a finding inside the
+# enclave and carrying ten thousand of them out of it are different acts with different blast
+# radii, and until now anyone who could do the first could do the second.
 EXPORT_GROUP = "export"
 
 # Groups that grant a right ALONGSIDE a role rather than being one. The SSO layer reconciles

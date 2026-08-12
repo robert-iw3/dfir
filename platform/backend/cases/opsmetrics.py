@@ -238,9 +238,8 @@ def audit_integrity():
 
     ok, broken, sigs = audit_mod.verify_audit_detail()
     # Reported APART. "BROKEN" for a key that was merely replaced is a false alarm on the one
-    # display an incident lead trusts, and a display that has cried wolf makes a real break
-    # read the same. The chain is the tamper-evidence; the signature is a second, key-bound
-    # layer that can legitimately be unverifiable without anything being wrong.
+    # display an incident lead trusts, and a display that has cried wolf makes a real break read the
+    # same.
     return {
         "chain_intact": ok, "first_broken_id": broken,
         "entries": AuditLog.objects.count(),

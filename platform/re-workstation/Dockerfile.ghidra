@@ -1,31 +1,15 @@
-# Reverse-engineering workstation — Ghidra over carved memory regions.
-#
-# The alternative to the Binary Ninja image in this directory. Same threat model and the same
-# containment: carved regions are live malware, the session has no network namespace, and the
-# container is destroyed on exit. Which tool an analyst prefers is a preference; the boundary
-# around it is not.
-#
-# Ghidra is fetched at BUILD time. It needs no licence, activation or call-home, so a session
-# needs no route out — network exists only while this image is built.
-# Debian 13, for the JDK. Ghidra 12 requires Java 21 or newer and Debian 12 carries only 17,
-# where its launcher cannot find a usable JDK and falls back to prompting for a path — which in
-# a container has no TTY to prompt on, so every headless import fails before it starts.
-# The FULL JDK, not -headless. The headless package omits the AWT/Swing native libraries, so
-# Ghidra's GUI cannot start under it at any display setting — it reports itself as running "in a
-# headless environment", which reads as a missing X socket and sends you looking at the host.
-# Headless analysis (analyzeHeadless) works fine either way, so the import step gives no warning
-# that the interactive half of the tool is missing.
+# Reverse-engineering workstation — Ghidra over carved memory regions; same containment as the
+# Binary Ninja image (no network namespace, destroyed on exit), fetched at build time so a session
+# needs no route out. Debian 13 for Java 21 (Ghidra 12 rejects 17), and the FULL JDK — the
+# headless package omits AWT/Swing, so the GUI cannot start while analyzeHeadless still works,
+# which hides the loss.
 FROM docker.io/library/debian:13@sha256:d63a99144861e4e460196ed93d07777490cbeab53ca660c434f2a589a6c50ea3
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# glibc, deliberately. Ghidra's public release ships prebuilt decompiler natives for
-# linux_x86_64 linked against glibc, so they run as shipped here. On a musl base they do not,
-# and the whole Gradle toolchain has to be installed to rebuild them — a much larger image and
-# a much longer build for a binary that already exists.
-#
-# A JDK rather than a JRE: Ghidra's launcher checks for a compiler it can find, and a
-# JRE-only install is rejected as unsuitable.
+# glibc deliberately: Ghidra ships prebuilt decompiler natives linked against it, and musl would
+# mean rebuilding them with the whole Gradle toolchain. A JDK, not a JRE — the launcher rejects a
+# JRE-only install.
 RUN groupadd -g 1001 ghidra \
     && useradd -u 1001 -g 1001 -m -s /bin/bash ghidra \
     && apt-get update \
@@ -62,15 +46,9 @@ RUN mkdir -p /regions \
     && find /ghidra -type f -name '*src*.zip' -delete \
     && chown -R ghidra:ghidra /ghidra /regions
 
-# Pin the JDK path in Ghidra's own launcher config.
-#
-# Ghidra searches for a JDK and, failing to find one it accepts, prompts for the path. A
-# container has no TTY to answer, so the launcher aborts and every import fails with an error
-# about the prompt rather than about Java. Recording the path here removes the search.
-#
-# It goes in launch.properties rather than ~/.ghidra, which is where Ghidra would save it
-# itself: the session mounts a tmpfs over the home directory so no analysis state from live
-# malware survives the container, and that would erase a path saved at build time.
+# Pin the JDK path: the launcher otherwise searches and then PROMPTS, and a container has no TTY,
+# so every import aborts. In launch.properties, not ~/.ghidra — the session tmpfs over home would
+# erase a path saved there.
 ENV JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64
 # The shipped file already carries an EMPTY `JAVA_HOME_OVERRIDE=` line, so appending a second
 # one leaves two directives and the effective value depends on which the launcher reads. The
@@ -85,13 +63,9 @@ RUN set -eu; \
     test "$(grep -c '^JAVA_HOME_OVERRIDE=' /ghidra/support/launch.properties)" -eq 1 \
       || { echo "more than one JAVA_HOME_OVERRIDE directive — the effective value is ambiguous" >&2; exit 1; }
 
-# Prove the launcher works, not just that its files exist.
-#
-# The first version of this check ran the decompiler native directly and passed on an image
-# whose Java was too old to start Ghidra at all — it tested a binary nothing reaches except
-# through the launcher. Importing a real file through analyzeHeadless exercises the same path a
-# session does, so a broken JDK, a missing native or an unusable loader fails the build here
-# instead of at the analyst's first import.
+# Prove the launcher works, not just that its files exist: importing a real file through
+# analyzeHeadless exercises the same path a session does, so a broken JDK, a missing native or an
+# unusable loader fails the BUILD.
 RUN set -eu; \
     tmp="$(mktemp -d)"; \
     head -c 4096 /dev/urandom > "${tmp}/smoke.bin"; \

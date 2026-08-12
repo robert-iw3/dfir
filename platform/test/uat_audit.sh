@@ -76,10 +76,8 @@ if [[ -z "${PLATFORM_PUBLIC_URL}" || -z "${IR_PLATFORM_URL}" ]]; then
     bad "the platform URLs are not configured in deploy/.env — the sign-on flow cannot be driven"
 else
     PROVISION="${PLATFORM}/hashicorp/keycloak/provision-demo-users.sh"
-    # A THROWAWAY account, never a person's. Driving a shared demo account rotates or
-    # recreates it while someone may be signed into it, which invalidates their session
-    # mid-flight. The forced-change flow is identical on an ephemeral account, and the
-    # account is removed on every exit.
+    # A THROWAWAY account, never a person's. Driving a shared demo account rotates or recreates it
+    # while someone may be signed into it, which invalidates their session mid-flight.
     PROBE_USER="uat-audit-probe"
     trap 'bash "${PROVISION}" --delete "${PROBE_USER}" >/dev/null 2>&1 || true' EXIT
     PROBE_PW="$(bash "${PROVISION}" --ephemeral "${PROBE_USER}" analyst 2>/dev/null \
@@ -196,10 +194,8 @@ IFS='|' read -r e_n e_reason <<<"${EXPIRY}"
 # ============================================================ the dead callback
 say "A dead callback restarts the flow instead of ending on a bare 403"
 
-# The gate rejects a callback that arrives with no cookies — a restored tab, a reopened
-# kiosk. That rejection is correct; what matters is what the analyst is left on. The built-in
-# page is a 403 with no way forward, on a kiosk with no address bar. The custom template must
-# come back instead, carrying both recoveries: the automatic retry and the manual control.
+# The gate rejects a callback that arrives with no cookies — a restored tab, a reopened kiosk.
+# That rejection is correct; what matters is what the analyst is left on.
 CB="$(${RUNTIME} run --rm --network ir-edge ${DNS_EDGE_IP:+--dns "${DNS_EDGE_IP}"} \
     localhost/ir-workstation:latest python3 -c "
 import ssl, urllib.request, urllib.error
@@ -322,7 +318,7 @@ else
         local proj="$1" user="$2" pw="$3" wsid="$4" out="$5" probe="${1}_probe_1"
         if ! ${RUNTIME} inspect "${probe}" >/dev/null 2>&1; then
             (cd "${PLATFORM}/deploy/workstation" && \
-             IR_WS_ID="${wsid}" podman-compose -p "${proj}" --profile diagnostics up -d probe >/dev/null 2>&1)
+             IR_WS_ID="${wsid}" podman-compose -p "${proj}" --profile diagnostics up -d --no-deps probe >/dev/null 2>&1)
         fi
         ${RUNTIME} inspect "${probe}" >/dev/null 2>&1 || { echo "NOPROBE" > "${out}"; return 0; }
         ${RUNTIME} exec "${probe}" sh -c 'mkdir -p /uatlib' 2>/dev/null || true

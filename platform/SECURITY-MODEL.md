@@ -137,12 +137,18 @@ Attribution only matters if the record is honest, so the platform holds itself t
   distinguishes sessions rather than showing one shared identity, and a principal-scoped
   cancel can only ever reach the one session that principal carries.
 - A principal is a pool identity, and every connection reaches Boundary from the distributor,
-  so **Boundary alone cannot name a person**. The platform's own sign-on record closes that by
-  time overlap, and each session says how strong the claim is: `exact` where one sign-on
-  overlapped, `overlapping` where several analysts were signed on and any could have used it,
-  `none`, or `unknown`. A session used by three analysts is never shown as one analyst's.
-  Narrowing `overlapping` to a single person needs workstation identity carried into session
-  selection, which is not yet done and is not claimed.
+  so **Boundary alone cannot name a person**. The platform's own sign-on record closes that,
+  and each session says how strong the claim is: `exact`, `overlapping` where several
+  analysts' sign-ons qualify and any could have used it, `none`, or `unknown`. A session
+  several analysts could have used is never shown as one analyst's.
+- **A session names its workstation, and through it the person.** The distributor pins each
+  configured workstation's tailnet address to its own session, so a session principal maps to
+  a workstation by configuration (`IR_WS_IDS` order on both sides — one variable, nothing to
+  drift); the kiosk states its workstation in its User-Agent, and the sign-on record carries
+  it. The attribution join narrows to the pinned workstation's sign-ons only when BOTH sides
+  carry the evidence — never on half of it — so two analysts signed on concurrently resolve
+  `exact` each, while two people sharing one workstation still honestly read `overlapping`:
+  the platform cannot see through a shared keyboard, and does not claim to.
 - **Authentication is itself audited.** SSO is stateless — the identity arrives in headers and
   every request is authenticated on its own — so there is no login to observe and, until an
   `SsoSession` reconstructed one, the trail held no record of anyone arriving or leaving. A
@@ -185,6 +191,10 @@ where they connected from, and how the session was identified; a write on a rout
 action is recorded once and not duplicated; sign-out closes an open sign-on and is recorded, an
 idle sign-on is closed as expired, the chain still verifies with all of it in place, and every
 brokered session carries an attribution verdict whose label matches the evidence behind it.
+The workstation claim is asserted CONCURRENTLY: two analysts signed on at once from two
+workstations, each sign-on naming its workstation, and each pinned session attributing `exact`
+to the right person — the single-analyst case cannot distinguish the join from luck, so it is
+never what the assertion runs.
 
 ## P6 — No egress, and no DNS to tunnel over
 

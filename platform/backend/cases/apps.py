@@ -8,13 +8,10 @@ class CasesConfig(AppConfig):
     name = "cases"
 
     def ready(self):
-        # Correlation cleanup is a signal, not a call site. The correlation store is a
-        # separate database with no cross-database foreign key, so nothing cascades; wiring
-        # the cleanup to one delete view left every other path — queryset deletes,
-        # management commands, the admin, the shell — orphaning campaigns that stayed
-        # flagged current. PostgreSQL then reuses the id and the next investigation inherits
-        # another incident's hosts. post_delete fires per instance for queryset deletes too,
-        # which is what lets this cover the paths a single call site cannot.
+        # Correlation cleanup is a signal, not a call site. The correlation store is a separate database
+        # with no cross-database foreign key, so nothing cascades; wiring the cleanup to one delete view
+        # left every other path — queryset deletes, management commands, the admin, the shell —
+        # orphaning campaigns that stayed flagged current.
         from . import signals  # noqa: F401
 
         # Only the long-running server and worker processes report their resources, and only
@@ -26,7 +23,17 @@ class CasesConfig(AppConfig):
             return
         from . import healthreporter
 
+        # Both roles report what their OWN sidecar has observed about their upstreams —
+        # first-person mesh evidence the health view merges into the intention matrix. The
+        # backend additionally records a queue-depth sample per beat: one writer, so the
+        # series has one clock, and the component already guaranteed to be running.
+        from . import sidecarstats
+
         if role == "worker":
-            healthreporter.start(tier="application")
+            healthreporter.start(tier="application",
+                                 extra=lambda: {"mesh_upstreams": sidecarstats.upstream_observations()})
         else:
-            healthreporter.start(component="backend (api)", tier="application", paths=("/tmp",))
+            from . import aggregates
+            healthreporter.start(component="backend (api)", tier="application", paths=("/tmp",),
+                                 extra=lambda: {"mesh_upstreams": sidecarstats.upstream_observations()},
+                                 beat=aggregates.record_queue_sample)

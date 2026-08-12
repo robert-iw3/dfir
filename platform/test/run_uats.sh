@@ -6,10 +6,8 @@
 #   ./test/run_uats.sh --only corpus,ui
 #   ./test/run_uats.sh --list
 #
-# SEQUENTIAL BY DESIGN. These act on a live deployment — they rotate credentials,
-# recreate containers, register services and open brokered sessions. Two of them at
-# once do not merely interleave output: one reaps the workers another is using, and
-# the failure surfaces in whichever happened to look second.
+# SEQUENTIAL BY DESIGN. These act on a live deployment — they rotate credentials, recreate
+# containers, register services and open brokered sessions.
 #
 # A UAT whose tiers are absent is SKIPPED and named, never silently passed. "17 of 17
 # green" is only worth something if the ones that did not run are visible.
@@ -66,9 +64,19 @@ say() { printf '\n\033[1;36m========== %s\033[0m\n' "$*"; }
 LOGDIR="${PLATFORM}/test/logs"; mkdir -p "${LOGDIR}"
 
 PASSED=(); FAILED=(); SKIPPED=()
-if [[ -n "${ONLY}" ]] && ! printf '%s\n' "${SUITE[@]}" | cut -d: -f1 | grep -qx "${ONLY}"; then
-    echo "--only ${ONLY} names no suite member (see --list); refusing to report an empty run as green" >&2
-    exit 2
+# Each name is validated, not the whole string: --only takes a comma-separated list, and
+# checking the list as one value rejected every multi-suite selection. A typo still fails
+# here rather than running nothing and reporting green.
+if [[ -n "${ONLY}" ]]; then
+    _known="$(printf '%s\n' "${SUITE[@]}" | cut -d: -f1)"
+    IFS=',' read -ra _want <<< "${ONLY}"
+    for _n in "${_want[@]}"; do
+        [[ -z "${_n}" ]] && continue
+        grep -qx "${_n}" <<< "${_known}" || {
+            echo "--only: '${_n}' names no suite member (see --list); refusing to report an empty run as green" >&2
+            exit 2
+        }
+    done
 fi
 START_ALL=$(date +%s)
 
@@ -103,12 +111,10 @@ for entry in "${SUITE[@]}"; do
     p="$(grep -c '^  .*PASS' "${LOGDIR}/uat_${name}.log" 2>/dev/null | tail -1)"
     f="$(grep -c '^  .*FAIL' "${LOGDIR}/uat_${name}.log" 2>/dev/null | tail -1)"
     if [[ "${p:-0}" -eq 0 ]]; then
-        # A run that asserted NOTHING neither passed nor failed, whatever it exited with, and
-        # both directions of that mistake are misleading. `uat_mesh_multihost` exits 0 on a
-        # single-host deployment and would inflate the green count; `uat_memory_analysis`
-        # exits non-zero without a capture to analyze and would inflate the red one. Neither
-        # measured anything. The reason line is carried so "did not run" stays distinguishable
-        # from "ran and was fine".
+        # A run that asserted NOTHING neither passed nor failed, whatever it exited with, and both
+        # directions of that mistake are misleading. `uat_mesh_multihost` exits 0 on a single-host
+        # deployment and would inflate the green count; `uat_memory_analysis` exits non-zero without a
+        # capture to analyze and would inflate the red one.
         why="$(sed -e 's/\x1b\[[0-9;]*m//g' "${LOGDIR}/uat_${name}.log" \
                | grep -vE '^\s*$|^!!|^\s{3}' | tail -3 | head -1 || true)"
         SKIPPED+=("${name} — asserted nothing: ${why:-no output}")

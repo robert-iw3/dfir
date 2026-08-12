@@ -64,12 +64,8 @@ const BOOKKEEPING = new Set([
 ]);
 
 // Whether a finding has anything to show, decided by the same rules the panel renders by.
-// Callers use this to decide if an expander belongs on the row — asking the component
-// itself (rendering it and testing for null) works only while it stays hook-free.
-//
-// Deliberately narrower than what the panel DISPLAYS: an expander is a promise of recovered
-// evidence, so only known indicator keys and an extracted config keep it. Unknown producer
-// fields still render once the panel is open, under "other".
+// Callers use this to decide if an expander belongs on the row — asking the component itself
+// (rendering it and testing for null) works only while it stays hook-free.
 export function hasEvidence(raw) {
   if (!raw || typeof raw !== "object") return false;
   for (const [k] of [...SCALARS, ...LISTS]) {

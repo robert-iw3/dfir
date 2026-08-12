@@ -82,10 +82,10 @@ namespace is unproxied, however healthy it looks.
 
 | Script | Runs | Drives |
 |---|---|---|
-| `deploy/deploy.sh` | `dmz/gen-receiver-cert.sh`<br>`hashicorp/access/gen-boundary-cert.sh`<br>`hashicorp/access/gen-headscale-cert.sh`<br>`hashicorp/consul/consul-acl-bootstrap.sh`<br>`hashicorp/consul/gen-consul-secrets.sh`<br>`hashicorp/consul/register-mesh.sh`<br>`hashicorp/keycloak/provision-demo-users.sh`<br>`hashicorp/keycloak/realm-converge.sh`<br>`hashicorp/vault/vault-unseal.sh`<br>`test/lib/evidence.sh`<br>`test/uat_baseline.sh` | `agent/remediation-agent`<br>`dmz/bastion`<br>`dmz/broker`<br>`dmz/coredns`<br>`dmz/distributor`<br>`dmz/headscale`<br>`dmz/receiver`<br>`enclave/backend`<br>`enclave/boundary`<br>`enclave/boundary-db`<br>`enclave/boundary-egress`<br>`enclave/boundary-egress-2`<br>`enclave/boundary-egress-3`<br>`enclave/consul`<br>`enclave/coredns`<br>`enclave/db`<br>`enclave/db-bootstrap`<br>`enclave/kc-vault-agent`<br>`enclave/keycloak`<br>`enclave/log-shipper`<br>`enclave/minio`<br>`enclave/ntp`<br>`enclave/oauth2-proxy`<br>`enclave/oauth2-proxy-sidecar`<br>`enclave/puller`<br>`enclave/redis`<br>`enclave/traefik`<br>`enclave/vault`<br>`enclave/vault-agent`<br>`enclave/vault-setup`<br>`enclave/vault-sidecar`<br>`enclave/worker`<br>`workstation/browser`<br>`workstation/tailnet` |
+| `deploy/deploy.sh` | `dmz/gen-receiver-cert.sh`<br>`hashicorp/access/gen-boundary-cert.sh`<br>`hashicorp/access/gen-headscale-cert.sh`<br>`hashicorp/consul/consul-acl-bootstrap.sh`<br>`hashicorp/consul/gen-consul-secrets.sh`<br>`hashicorp/consul/register-mesh.sh`<br>`hashicorp/keycloak/provision-demo-users.sh`<br>`hashicorp/keycloak/realm-converge.sh`<br>`hashicorp/vault/vault-unseal.sh`<br>`test/lib/evidence.sh` | `agent/remediation-agent`<br>`dmz/bastion`<br>`dmz/broker`<br>`dmz/coredns`<br>`dmz/distributor`<br>`dmz/headscale`<br>`dmz/receiver`<br>`enclave/backend`<br>`enclave/boundary`<br>`enclave/boundary-db`<br>`enclave/boundary-egress`<br>`enclave/boundary-egress-2`<br>`enclave/boundary-egress-3`<br>`enclave/consul`<br>`enclave/coredns`<br>`enclave/db`<br>`enclave/db-bootstrap`<br>`enclave/kc-vault-agent`<br>`enclave/keycloak`<br>`enclave/log-shipper`<br>`enclave/minio`<br>`enclave/ntp`<br>`enclave/oauth2-proxy`<br>`enclave/oauth2-proxy-sidecar`<br>`enclave/puller`<br>`enclave/redis`<br>`enclave/traefik`<br>`enclave/vault`<br>`enclave/vault-agent`<br>`enclave/vault-setup`<br>`enclave/vault-sidecar`<br>`enclave/worker`<br>`workstation/browser`<br>`workstation/tailnet` |
 | `hashicorp/access/tailnet_bootstrap.sh` | — | `dmz/headscale` |
 | `hashicorp/consul/consul-acl-bootstrap.sh` | — | `enclave/consul` |
-| `hashicorp/consul/register-mesh.sh` | — | `enclave/backend`<br>`enclave/consul`<br>`enclave/db`<br>`enclave/frontend`<br>`enclave/keycloak`<br>`enclave/log-shipper`<br>`enclave/minio`<br>`enclave/oauth2-proxy`<br>`enclave/puller`<br>`enclave/redis`<br>`enclave/vault`<br>`enclave/worker` |
+| `hashicorp/consul/register-mesh.sh` | — | `enclave/backend`<br>`enclave/consul`<br>`enclave/db`<br>`enclave/frontend`<br>`enclave/keycloak`<br>`enclave/log-shipper`<br>`enclave/minio`<br>`enclave/oauth2-proxy`<br>`enclave/puller`<br>`enclave/redis`<br>`enclave/vault`<br>`enclave/worker`<br>`enclave/worker-2` |
 | `hashicorp/keycloak/provision-demo-users.sh` | — | `enclave/keycloak` |
 | `hashicorp/keycloak/realm-converge.sh` | — | `enclave/keycloak` |
 | `hashicorp/vault/rotate-app-creds.sh` | — | `enclave/backend`<br>`enclave/backend-sidecar`<br>`enclave/vault-agent`<br>`enclave/worker`<br>`enclave/worker-sidecar` |
@@ -93,9 +93,9 @@ namespace is unproxied, however healthy it looks.
 | `troubleshooting/diagnose.sh` | — | `dmz/bastion`<br>`dmz/broker`<br>`dmz/distributor`<br>`enclave/boundary`<br>`enclave/boundary-egress`<br>`workstation/tailnet` |
 | `troubleshooting/remediation-agent.sh` | `deploy/deploy.sh`<br>`hashicorp/consul/consul-acl-bootstrap.sh`<br>`hashicorp/vault/rotate-app-creds.sh`<br>`hashicorp/vault/vault-unseal.sh` | `enclave/backend`<br>`enclave/boundary`<br>`enclave/worker`<br>`enclave/worker-sidecar` |
 | `test/lib/corpus_pipeline.sh` | `collector/build.sh` | `dmz/receiver`<br>`enclave/backend`<br>`enclave/puller`<br>`enclave/worker` |
-| `test/run_uats.sh` | — | `agent/remediation-agent`<br>`dmz/broker`<br>`dmz/coredns`<br>`dmz/headscale`<br>`dmz/receiver`<br>`enclave/backend`<br>`enclave/boundary`<br>`enclave/consul`<br>`enclave/coredns`<br>`enclave/keycloak`<br>`enclave/traefik`<br>`enclave/vault`<br>`enclave/worker`<br>`workstation/browser`<br>`workstation/tailnet` |
+| `test/run_uats.sh` | — | `agent/remediation-agent`<br>`dmz/broker`<br>`dmz/coredns`<br>`dmz/distributor`<br>`dmz/headscale`<br>`dmz/receiver`<br>`enclave/backend`<br>`enclave/boundary`<br>`enclave/consul`<br>`enclave/coredns`<br>`enclave/keycloak`<br>`enclave/traefik`<br>`enclave/vault`<br>`enclave/worker`<br>`workstation/browser`<br>`workstation/tailnet` |
 | `test/seed_regions.sh` | — | `enclave/backend` |
-| `test/uat_audit.sh` | `test/lib/report.sh` | `enclave/backend` |
+| `test/uat_audit.sh` | `test/lib/report.sh` | `dmz/distributor`<br>`enclave/backend` |
 | `test/uat_baseline.sh` | `test/lib/report.sh` | `dmz/receiver`<br>`enclave/backend`<br>`enclave/db`<br>`enclave/keycloak`<br>`enclave/minio`<br>`enclave/puller`<br>`enclave/redis`<br>`enclave/worker` |
 | `test/uat_boundary.sh` | `test/lib/report.sh` | `dmz/bastion`<br>`dmz/broker`<br>`dmz/distributor`<br>`enclave/backend`<br>`enclave/boundary`<br>`enclave/boundary-db`<br>`enclave/boundary-egress`<br>`enclave/boundary-egress-2` |
 | `test/uat_consul.sh` | `test/lib/report.sh` | `enclave/backend`<br>`enclave/consul`<br>`enclave/frontend`<br>`enclave/vault-agent`<br>`enclave/worker` |
@@ -152,24 +152,24 @@ namespace is unproxied, however healthy it looks.
 | `AnalysisDiff` | `analysisDiff` → `/api/captures/` |
 | `Audit` | `audit` → `/api/audit/`<br>`auditExportUrl` |
 | `BrokeredSessions` | `brokeredSessions` → `/api/brokered-sessions/` |
-| `ComponentHealth` | `componentHealth` → `/api/admin/component-health/` |
-| `Correlation` | `campaignGraph` → `/api/correlation/campaigns/`<br>`campaignTimeline` → `/api/correlation/campaigns/`<br>`campaignTradecraft` → `/api/correlation/campaigns/`<br>`correlation` → `/api/correlation/investigations/`<br>`investigations` → `/api/investigations/`<br>`recorrelate`<br>`sharedIndicators` → `/api/correlation/indicators/` |
-| `Dashboard` | `facets` → `/api/facets/`<br>`stats` → `/api/stats/`<br>`summary` |
-| `Findings` | `bulkVerdict`<br>`exportUrl` |
-| `InvestigationDetail` | `addNote` → `/api/notes/`<br>`deleteInvestigation` → `/api/investigations/`<br>`investigation` → `/api/investigations/`<br>`investigationRecord`<br>`requestRescan` → `/api/rescans/`<br>`retractNote` → `/api/notes/` |
+| `ComponentHealth` | `componentHealth` → `/api/admin/component-health/`<br>`queueDepth` → `/api/admin/queue-depth/`<br>`storageAllocation` → `/api/admin/storage-allocation/` |
+| `Correlation` | `campaignGraph` → `/api/correlation/campaigns/`<br>`campaignTimeline` → `/api/correlation/campaigns/`<br>`campaignTradecraft` → `/api/correlation/campaigns/`<br>`correlation` → `/api/correlation/investigations/`<br>`correlationHistory` → `/api/correlation/investigations/`<br>`investigations` → `/api/investigations/`<br>`recorrelate`<br>`sharedIndicators` → `/api/correlation/indicators/` |
+| `Dashboard` | `facets` → `/api/facets/`<br>`findingsBacklog` → `/api/findings/backlog/`<br>`findingsFunnel` → `/api/findings/funnel/`<br>`queueDepth` → `/api/admin/queue-depth/`<br>`stalledInvestigations` → `/api/investigations/stalled/`<br>`stats` → `/api/stats/`<br>`summary` |
+| `Findings` | `bulkVerdict`<br>`exportUrl`<br>`findingsMatrix` → `/api/findings/matrix/` |
+| `InvestigationDetail` | `addNote` → `/api/notes/`<br>`deleteInvestigation` → `/api/investigations/`<br>`investigation` → `/api/investigations/`<br>`investigationCoverage` → `/api/investigations/`<br>`investigationRecord`<br>`investigationStats` → `/api/investigations/`<br>`requestRescan` → `/api/rescans/`<br>`retractNote` → `/api/notes/` |
 | `Investigations` | `investigations` → `/api/investigations/` |
-| `IocSearch` | `iocSearch` → `/api/ioc-search/` |
+| `IocSearch` | `iocSearch` → `/api/ioc-search/`<br>`iocSpread` |
 | `MeshHealth` | `meshHealth` → `/api/admin/mesh-health/` |
 | `Repairs` | `remediation` → `/api/admin/remediation/`<br>`requestRemediation` → `/api/admin/remediation/` |
 | `Reversing` | `analyzeRegion` → `/api/regions/`<br>`regionQueue` → `/api/regions/queue/` |
-| `RunDetail` | `purgeCapture` → `/api/captures/`<br>`reanalyze` → `/api/captures/`<br>`run` → `/api/runs/`<br>`runAdjudication`<br>`runAdjudicationChain`<br>`runCustody` → `/api/runs/` |
+| `RunDetail` | `purgeCapture` → `/api/captures/`<br>`reanalyze` → `/api/captures/`<br>`run` → `/api/runs/`<br>`runAdjudication`<br>`runAdjudicationChain`<br>`runCustody` → `/api/runs/`<br>`runTimeline` → `/api/runs/` |
 | `Users` | `createUser` → `/api/users/`<br>`listUsers` → `/api/users/` |
 
 ## UAT coverage — which test proves which service
 
 | UAT | Services exercised |
 |---|---|
-| `uat_audit.sh` | `enclave/backend` |
+| `uat_audit.sh` | `dmz/distributor`, `enclave/backend` |
 | `uat_baseline.sh` | `dmz/receiver`, `enclave/backend`, `enclave/db`, `enclave/keycloak`, `enclave/minio`, `enclave/puller`, `enclave/redis`, `enclave/worker` |
 | `uat_boundary.sh` | `dmz/bastion`, `dmz/broker`, `dmz/distributor`, `enclave/backend`, `enclave/boundary`, `enclave/boundary-db`, `enclave/boundary-egress`, `enclave/boundary-egress-2` |
 | `uat_consul.sh` | `enclave/backend`, `enclave/consul`, `enclave/frontend`, `enclave/vault-agent`, `enclave/worker` |

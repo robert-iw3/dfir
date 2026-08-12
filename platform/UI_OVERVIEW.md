@@ -36,10 +36,20 @@ the data it last loaded.
 
 ## Dashboard
 
-Corpus-wide statistics across every investigation, with selectable facet panels —
-investigations, hosts, verdicts, capture retention. Selections compose: choosing two hosts
-and one verdict narrows to their intersection, and the summary beneath recomputes from the
-database rather than filtering what is already on screen.
+Where to be looking right now, across every investigation. The headline tiles each drill to
+the view behind their number. The Backlog panel is the page's one time series: what has
+arrived and not yet been decided, on the wall clock, carried across quiet days — falling
+means the queue is being worked down, climbing means evidence is arriving faster than it is
+being judged. Findings per day would measure the intrusion; this measures the response.
+Clicking a day opens the findings still waiting from it, and the collected / decided /
+confirmed / from-memory figures beneath each drill to the table view that reproduces them.
+
+![Dashboard: open backlog over time, with drill-through stage counts](img/ui_main_dash.png)
+
+Below the trend, corpus-wide statistics with selectable facet panels — investigations,
+hosts, verdicts, capture retention. Selections compose: choosing two hosts and one verdict
+narrows to their intersection, and the summary beneath recomputes from the database rather
+than filtering what is already on screen.
 
 ![Dashboard with drill-down facet panels and a recomputing summary](img/dash_ui0.png)
 
@@ -51,7 +61,23 @@ Adjudicated findings across all investigations. Search, filters, ordering and pa
 applied by the database, so the view stays responsive when a run carries thousands of
 findings rather than the seeded scenario's ninety-eight.
 
-![Findings with host attribution, sortable columns and export controls](img/findings0.png)
+**Type against verdict.** The page opens on a heatmap of finding type against verdict — one
+hue per verdict family, darkness carrying the count, with the Indeterminate column (where
+the backlog actually sits) in the warning hue. Cells are filters, not links: clicking one
+narrows the table below to exactly that type-and-verdict pair, clicking again removes it,
+and cells combine — the selection is the sum of exact pairs, never the cross product of the
+rows and columns touched.
+
+![Type against verdict: heat cells that filter the findings table in place](img/ui_findings1.png)
+
+**Triage progress.** One ring per finding type: the arc is the share a person has decided,
+the number in the middle is what still waits, and the rings are ordered so the first one is
+the one to open next. Every active filter — selected cells and any filter a chart drill
+arrived with — appears as a chip above the table with its own remove control, beside a
+single **Clear filters** that returns the full table. The selection lives in the URL, so a
+composed working set can be bookmarked or handed to another analyst mid-triage.
+
+![Triage rings, the active-filter chips, and the table narrowed to the selection](img/ui_findings2.png)
 
 Each finding carries its host, so a row read outside its run still says where it came from.
 Columns sort on click; the verdict, source and ATT&CK filters narrow server-side; and the
@@ -98,9 +124,19 @@ and recorded rather than prevented.
 
 ## Investigations and run detail
 
-An investigation groups the hosts collected during one engagement. Opening a run shows what
-the collector found on that host, the memory capture taken from it, and the server-side
-analysis of that capture.
+An investigation groups the hosts collected during one engagement. It opens on the shape of
+the intrusion: the headline tiles (findings, confirmed, indeterminate, hosts affected,
+implicated-but-never-collected), then the kill chain as a chord diagram — every host on one
+half of the ring, every attack stage it reached on the other, ribbon width carrying how
+much of the evidence that pairing holds, stage color running cool-to-hot as the intrusion
+progresses. Hovering an arc isolates it; clicking a ribbon opens the findings behind it.
+The unmapped share is drawn rather than hidden, so evidence without an ATT&CK technique
+still weighs on the picture.
+
+![Investigation: intrusion shape tiles and the host-by-stage kill chain chord](img/ui_investigation.png)
+
+Opening a run shows what the collector found on that host, the memory capture taken from
+it, and the server-side analysis of that capture.
 
 ![Investigation view listing collected hosts](img/investigation_1.png)
 
@@ -192,6 +228,23 @@ Synthetic samples are labelled as such and never presented as real captures.
 
 ---
 
+### Shape of the intrusion (investigation detail)
+
+Three charts above the runs table, each rendering a server aggregate and each mark drilling
+to the filtered table behind it by a URL the table already accepts:
+
+- **Kill-chain lanes** — one mark per technique x day x host, labeled `confirmed/total` and
+  dashed when nothing is confirmed, so verdict stays a dimension rather than a silent
+  filter. A mark opens the findings behind it.
+- **Blast-radius ring** — hosts placed by first-observed order, sized by findings, banded by
+  campaign-membership confidence (color AND stroke pattern, so the band survives monochrome
+  reading). A mark opens the host through the host table's own search.
+- **Coverage bar** — collected hosts against hosts the evidence implicates but nobody
+  collected, the latter hatched. The uncollected segment expands its own list in place:
+  those hosts have no rows for any table to filter, and the chart says so instead of
+  pretending a filter exists. The most expensive mistake in an IR is concluding on hosts
+  nobody looked at, which is why this chart is allowed to be uncomfortable.
+
 ## Correlation
 
 The multi-host picture, derived from collected evidence and held in a separate store from
@@ -209,6 +262,15 @@ zero — rather than from the case it sits in.
 - **Attack graph** — hosts laid out by how many moves they sit from the entry point, each
   edge carrying the protocol and the account used. Roles are named: entry point, pivot,
   affected.
+- **What carries a link** — selecting an edge shows its stored corroboration rows as bars,
+  strongest first: a link riding one shared address dies when the actor rotates, and one
+  riding mutex + JA3 + campaign id does not. Each bar searches its value everywhere.
+- **Rarity scatter** — every shared indicator plotted host-count against the engine's own
+  rarity-adjusted linkage weight, so signal and environment separate visually; a dot opens
+  the IOC search already filtered to it.
+- **Cohesion strip** — mean within-campaign cohesion per correlation run, oldest first, the
+  current run marked: whether the campaign tightens or fragments as evidence lands. Every
+  recompute supersedes rather than mutates, which is why the history exists to draw.
 - **Membership band** — the border weight on every node. `confirmed`, `probable`, `possible`
   or `indeterminate`, and each one decomposes into the link, the evidence kinds and the
   timing that produced it. `indeterminate` means the question was not answerable, not that

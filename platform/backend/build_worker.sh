@@ -1,18 +1,13 @@
 #!/usr/bin/env bash
-# Build the analysis worker image from a STAGED context.
-#
-# The worker needs two trees that live apart: the Django application here, and the
-# toolkit's memory-analysis code plus its Volatility wheels and YARA rules from the
-# repository root. A build context cannot reach above itself, so the pieces are staged
-# into a temporary directory — the same approach the collector uses, and it makes the
-# image's contents explicit rather than implicit in a broad context.
+# Build the analysis worker image from a STAGED context. The worker needs two trees that live
+# apart: the Django application here, and the toolkit's memory-analysis code plus its Volatility
+# wheels and YARA rules from the repository root.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # The toolkit tree (playbooks/, tools/) — located, not assumed. It sat beside platform/ in the
 # public repository and sits under toolkit/ in the development tree, so the parent is checked
-# first and the search widens from there. Zero or multiple matches fail LOUDLY: staging the
-# wrong tree produces an image that builds and analyzes with the wrong code.
+# first and the search widens from there.
 find_toolkit_root() {
     local base cand hits
     for base in "${HERE}/../.." "${HERE}/../../.."; do
@@ -65,8 +60,7 @@ mkdir -p "${CTX}/toolkit/playbooks/linux" "${CTX}/toolkit/tools"
 cp -r "${TOOLKIT_ROOT}/playbooks/linux/threat_hunting" "${CTX}/toolkit/playbooks/linux/"
 # The investigation engine — what turns findings into verdicts. The correlator weighs
 # independent signals landing on one PID, the chain builder reconstructs lineage, and the
-# verdict ladder decides. The platform runs this rather than judging for itself, so a
-# verdict shown in the UI is the same verdict the toolkit reaches offline.
+# verdict ladder decides.
 cp -r "${TOOLKIT_ROOT}/playbooks/linux/investigation" "${CTX}/toolkit/playbooks/linux/"
 # It is imported as `playbooks.linux.investigation`, so the intermediate directories have
 # to be packages; the toolkit tree relies on the repository root being on sys.path.

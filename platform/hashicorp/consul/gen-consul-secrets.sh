@@ -36,11 +36,7 @@ token_names() { printf '%s\n' agent management ui-readonly "${MESH_SERVICES[@]}"
 
 # BACKFILL BEFORE THE EARLY EXIT. A deployment that predates a newly added token has all the
 # other material, so an early exit would skip the new one — and compose, mounting a path that
-# does not exist, creates a DIRECTORY there. The service then reads an empty credential and
-# fails in a way that looks like a permission problem rather than a missing file.
-#
-# podman leaves that directory behind, so it is removed here too: a stale one keeps the mount
-# broken however many times the deployment is re-run.
+# does not exist, creates a DIRECTORY there.
 backfill() {
     local n f made=0
     while read -r n; do
@@ -114,8 +110,7 @@ printf '%s' "${MGMT}" > "${SEC}/tokens/management.token"
 
 # The 0700 directories are what protect these on the host. The files themselves are readable
 # because Consul's entrypoint drops to uid 100 and Envoy runs as its own user, so a 0600 file
-# owned by the deploying user is unreadable inside the container it is mounted into. The CA key
-# is never mounted anywhere and stays 0600.
+# owned by the deploying user is unreadable inside the container it is mounted into.
 chmod 600 "${SEC}/consul-ca-key.pem"
 chmod 644 "${SEC}"/consul-agent-key.pem "${SEC}"/agent-secrets.hcl \
           "${SEC}"/consul-ca.pem "${SEC}"/consul-agent.pem "${SEC}"/tokens/*.token

@@ -1,25 +1,8 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# LOAD, CONTENTION AND CIA UNDER CONCURRENCY — track M's measuring instrument.
-#
-# Can the deployed design carry 50+ simultaneous analysts, and what breaks first when it
-# cannot? Every phase drives the real analyst path — the platform name, the brokered port,
-# the SSO gate, full OIDC logins with the forced password change, real browser User-Agents —
-# because a load test beside the ingress measures a platform nobody deploys.
-#
-#   K  provisioning under concurrency, through the platform's own admin API
-#   L  login storm — every agent at once
-#   A  sustained mixed activity with DELIBERATE write contention on one investigation
-#   R  ramp until the knee — the largest concurrency that held is the measured capacity
-#
-# Throughout: an independent availability sampler, the database observed from inside its
-# own container, exact write accounting (the driver's ledger must equal the rows), and
-# confidentiality asserted where it can actually fail — under concurrency.
-#
-# The first run is a BASELINE: it exists to expose limits, and a knee below the target is
-# a finding to fix, not a harness defect. Thresholds are IR_LOAD_* env, defaults recorded
-# beside their rationale.
-# ==============================================================================
+# LOAD, CONTENTION AND CIA UNDER CONCURRENCY — track M's measuring instrument: can the deployed
+# design carry 50+ simultaneous analysts, and what breaks first. Every agent rides the real
+# analyst path; nothing is stubbed.
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -34,17 +17,11 @@ set -a; . "${PLATFORM}/deploy/.env" 2>/dev/null || true; set +a
 # ---- knobs -------------------------------------------------------------------
 N_USERS="${IR_LOAD_USERS:-50}"              # the design target
 ACTIVITY_S="${IR_LOAD_ACTIVITY_S:-60}"
-# ARRIVALS PER SECOND — what shape of fleet this run models.
-#
-# A fleet does not cold-start in one instant: analysts arrive over minutes, and a browser holds
-# ONE HTTP/2 connection rather than one per request. Pacing models that; the simultaneous case
-# is a different question — a thundering herd after a network blip — asked with
-# `IR_LOAD_ARRIVAL_RATE=0`. See change_logs/2026-08-09-workstation-identity.md for the numbers.
+# ARRIVALS PER SECOND — the fleet shape this run models: analysts arrive over minutes and browsers
+# hold connections, so arrival rate and concurrency are different knobs.
 ARRIVAL_RATE="${IR_LOAD_ARRIVAL_RATE:-2}"
-# Seconds an analyst spends on a view before acting again, jittered per iteration. Without it
-# each agent loops as fast as the platform answers and the run measures the harness rather
-# than a fleet. Set to 0 to ask what the platform does under a hot loop, which is a different
-# question and reads as one in the report.
+# Think time per view, jittered — without it each agent loops as fast as the platform answers and
+# the run measures the harness.
 THINK_S="${IR_LOAD_THINK_S:-3}"
 # Login p95 ceiling: a forced-change OIDC flow is ~6 round trips through gate+IdP; 8s under
 # a 50-wide storm keeps the 09:00 case usable. Reads at 1.5s is where a table stops feeling
@@ -148,13 +125,8 @@ ${RUNTIME} run -d --name "${SAMPLER}" --network ir-edge --dns "${DNS_EDGE_IP}" \
     localhost/ir-workstation:latest python3 -c "
 import http.client,ssl,time
 ctx=ssl.create_default_context(); ctx.check_hostname=False; ctx.verify_mode=ssl.CERT_NONE
-# Availability of the ANALYST PATH: any HTTP answer proves tailnet, broker, ingress and gate
-# are all carrying traffic. A 401 is the gate working, not an outage, so only a TRANSPORT
-# failure counts against uptime.
-#
-# ONE kept-alive connection, reconnected only when it breaks. Opening a fresh connection each
-# second is the open/close churn that kills a brokered session: the observer would degrade the
-# thing it observes.
+# Availability of the ANALYST PATH: any HTTP answer proves tailnet, broker, ingress and gate are
+# carrying. A 401 is the gate working; only a TRANSPORT failure counts against availability.
 conn=None
 def probe():
     global conn
@@ -164,10 +136,9 @@ def probe():
     return r.status
 while True:
     t0=time.monotonic()
-    # A sample asks whether the platform ANSWERS this second. A kept-alive connection the
-    # far end has since closed fails on first use and succeeds on immediate reconnect — a
-    # browser hides that retry entirely, so counting it as an outage would fail the floor
-    # on client bookkeeping. One retry within the sample; a real outage fails both.
+    # A sample asks whether the platform answers THIS second: a kept-alive connection the far end
+    # closed fails once and succeeds on reconnect, so the probe retries once before recording an
+    # outage.
     last=None
     for attempt in (1,2):
         try:
@@ -354,13 +325,8 @@ REDIS_AFTER="$(${RUNTIME} exec ir-enclave_redis_1 redis-cli -n 1 dbsize 2>/dev/n
 [[ $(( ${REDIS_AFTER:-0} - ${REDIS_BEFORE:-0} )) -ge "${N_USERS}" ]] \
     && ok "${N_USERS} DISTINCT server-side sessions created (redis db1 ${REDIS_BEFORE} -> ${REDIS_AFTER})" \
     || bad "session store grew by $(( ${REDIS_AFTER:-0} - ${REDIS_BEFORE:-0} )), expected >= ${N_USERS}"
-# THE SECURITY MODEL, ASSERTED UNDER LOAD — not just that logins were fast.
-#
-# A load test that quietly weakens authentication measures a platform nobody deploys, and a
-# fast wrong answer is the worst possible result here. Every login above went through the
-# real flow, and these read the gate's own record of that window to prove the standard held:
-# the IdP issued the session, the forced credential change was enforced rather than skipped,
-# and nothing was admitted without a callback.
+# THE SECURITY MODEL, ASSERTED UNDER LOAD — a load test that quietly weakens authentication
+# measures a platform nobody deploys.
 GATE_WINDOW="$(${RUNTIME} logs --since "${GATE_SINCE}" "${GATE}" 2>&1 || true)"
 CALLBACKS="$(grep -c '/oauth2/callback' <<<"${GATE_WINDOW}" || true)"
 AUTHOK="$(grep -c 'AuthSuccess' <<<"${GATE_WINDOW}" || true)"
@@ -417,10 +383,8 @@ if [[ "${THROTTLED:-0}" -gt 0 ]]; then
     pct_thr=$(( THROTTLED * 100 / (ACT_N > 0 ? ACT_N : 1) ))
     info "${THROTTLED} of ${ACT_N} requests (${pct_thr}%) were throttled 429 at the ingress — the per-source limit bounds the whole fleet; re-deriving it is M4"
 fi
-# Two different failures, and merging them hid which. The APPLICATION erroring under load is a
-# defect and its budget is zero. A brokered session being replaced costs the connections riding
-# it — that is the 1/N blast radius the design chose deliberately, and it is bounded rather
-# than absent. Attributed here from the tiers' own records instead of guessed from a status.
+# Two different failures, never merged: the APPLICATION erroring under load has a budget of zero;
+# a brokered session being replaced costs only the connections riding it.
 APP_ERRS="$(${RUNTIME} logs --since "${GATE_SINCE}" ir-enclave_backend_1 2>&1     | grep -cE '^[A-Za-z_.]*(Error|Exception)' || true)"
 SESSION_SWAPS="$(${RUNTIME} logs --since "${GATE_SINCE}" ir-dmz_broker_1 2>&1     | grep -cE 'session ended|replacing' || true)"
 if [[ "${ACT_N:-0}" -eq 0 ]]; then
@@ -440,10 +404,8 @@ else
         bad "${ERR5} of ${ACT_N} operations (${err_pct}%) lost their connection, over the ${budget}% budget — ${SESSION_SWAPS} session replacement(s)"
     fi
 fi
-# Judged over the attempts that REACHED authorization. A 5xx never got there, so counting it
-# as a failure to refuse reports a server error as a permission slip — the most alarming way
-# to be wrong. Unserved attempts are reported separately, because a run where most requests
-# failed has not tested RBAC and must not read as though it had.
+# Judged over attempts that REACHED authorization: a 5xx never got there, and counting it as a
+# failure-to-refuse reports a server error as a permission slip.
 RB_403="$(rj "d['confidentiality']['expected_403']")"
 RB_UNSERVED="$(rj "d['confidentiality'].get('rbac_unserved', 0)")"
 RB_VIOL="$(rj "len([v for v in d['confidentiality']['violations'] if 'auditor' in v])")"
@@ -562,11 +524,8 @@ fi
 
 fi   # DRIVER_OK — the agent-derived assertions end here
 
-# Availability and the database are measured by INDEPENDENT observers, so they are read
-# whatever the driver did. Gating them on the driver discarded the only evidence a failed
-# run still carried, and printed "0% over 0 samples" for a sampler that had been running
-# the whole time.
-# Availability, from the independent sampler.
+# Availability and the database are measured by INDEPENDENT observers, read whatever the driver
+# did — gating them on the driver discards the only evidence a failed run leaves.
 ${RUNTIME} logs "${SAMPLER}" 2>/dev/null > "${SCRATCH}/avail"; ${RUNTIME} rm -f "${SAMPLER}" >/dev/null 2>&1
 AV="$(python3 - "${SCRATCH}/avail" <<'PY'
 import sys
@@ -674,12 +633,8 @@ bash "${PLATFORM}/hashicorp/keycloak/provision-demo-users.sh" --force default-ad
     && ok "default-admin restored to provisioned state" \
     || bad "default-admin could not be restored"
 
-# ---- results ------------------------------------------------------------------
-# A load test whose output is only pass/fail has thrown away the thing it was run for.
-# Thresholds answer "is it acceptable"; the NUMBERS answer "what is it, and what changed" —
-# and a knee, a p95 and an availability figure are only useful next to the previous run's.
-#
-# Two artifacts: a table for a person, and JSON for comparison against the next run.
+# A load test whose output is only pass/fail has thrown away the thing it was run for: the numbers
+# are recorded alongside the verdicts.
 say "Results"
 MEAS_MD="${PLATFORM}/test/results/58-load-measurements.md"
 MEAS_JSON="${PLATFORM}/test/results/58-load-measurements.json"

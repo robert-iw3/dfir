@@ -72,14 +72,9 @@ def analyze(image_path, symbols_path, ruleset_version="", timeout=None, deep=Fal
         "--quiet",
     ]
     if os.path.isdir(YARA_RULES):
-        # Carving is what makes the enrichment pass and reverse engineering possible: YARA
-        # true-positive regions are written out, the mwcp parsers read config from those
-        # bytes, and what remains is what a reverse engineer opens.
-        #
-        # The engine choice decides whether carving happens at all. The analyzer's default
-        # `native` engine scans the whole image and reports matches but carves nothing; only
-        # the per-process `vol` engine attributes a hit to a PID and can extract its region.
-        # Asking for --carve with the native engine silently produces no regions.
+        # Carving is what makes the enrichment pass and reverse engineering possible: YARA true-positive
+        # regions are written out, the mwcp parsers read config from those bytes, and what remains is
+        # what a reverse engineer opens. The engine choice decides whether carving happens at all.
         cmd += ["--yara", "--yara-rules-dir", YARA_RULES,
                 "--yara-engine", os.environ.get("IR_YARA_ENGINE", "vol"),
                 # The per-process scan abandons a process when it exhausts this budget, and

@@ -94,16 +94,8 @@ class CampaignHost(models.Model):
     entry_account = models.CharField(max_length=255, blank=True)
     tp_count = models.IntegerField(default=0)
     techniques = models.JSONField(default=list, blank=True)   # ATT&CK ids seen on this host
-    # L3: how confident the engine is that THIS host belongs to THIS campaign. A band, not a
-    # float — a UI handed 0.62 and 0.67 invents a threshold between them that nobody can
-    # defend in a report. `confidence_factors` is what the band decomposes into; a label
-    # nobody can take apart is not evidence, and an analyst asking why one host bands lower
-    # than its peers has to be able to read the answer rather than re-derive it.
-    #
-    # `indeterminate` is not the bottom of the scale. It is the value for a host with no link
-    # to any other host in its campaign, where there is no cross-host evidence to be confident
-    # or doubtful about — recording that as `possible` would report an absence of evidence as
-    # evidence of weakness. The vocabulary tracks the verdict ladder for the same reason.
+    # L3: how confident the engine is that THIS host belongs to THIS campaign. A band, not a float —
+    # a UI handed 0.62 and 0.67 invents a threshold between them that nobody can defend in a report.
     BAND_CONFIRMED = "confirmed"
     BAND_PROBABLE = "probable"
     BAND_POSSIBLE = "possible"
@@ -289,23 +281,17 @@ class CampaignFingerprint(models.Model):
                                     on_delete=models.CASCADE)
     investigation_id = models.IntegerField(db_index=True)
 
-    # The technique SET, the ordered sequence, and the n-grams over that order. Two actors can
-    # use the same techniques in a different order and the difference is tradecraft, so order
-    # is stored beside the set rather than instead of it.
-    #
-    # All three, because they answer different questions: the set is what the similarity
-    # measure compares, the n-grams are what make ORDER comparable, and the sequence is what a
-    # person reads. Sorting the set by id produces something that looks like an order and is
-    # not one.
+    # The technique SET, the ordered sequence, and the n-grams over that order. Two actors can use
+    # the same techniques in a different order and the difference is tradecraft, so order is stored
+    # beside the set rather than instead of it.
     techniques = models.JSONField(default=list, blank=True)
     technique_sequence = models.JSONField(default=list, blank=True)
     technique_ngrams = models.JSONField(default=list, blank=True)
     # Naming conventions, not the names: "svc_<word><digits>" carries across engagements
     # where "WinDefendHelper" does not.
     artifact_conventions = models.JSONField(default=list, blank=True)
-    # {convention: {"example": <collected value>, "hosts": n}} — the value each shape was
-    # abstracted from. Provenance only; matching is always on the shape. Without it a shape
-    # is unfalsifiable to a reader, who cannot tell a computed abstraction from a placeholder.
+    # {convention: {"example": <collected value>, "hosts": n}} — the value each shape was abstracted
+    # from. Provenance only; matching is always on the shape.
     convention_examples = models.JSONField(default=dict, blank=True)
     c2_pattern = models.JSONField(default=dict, blank=True)      # protocols, ports, cadence
     account_chain = models.JSONField(default=dict, blank=True)   # acquisition shape

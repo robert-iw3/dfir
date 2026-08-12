@@ -1,0 +1,121 @@
+<svg width="1240" height="660" viewBox="0 0 1240 660" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Helvetica,Arial,sans-serif">
+  <defs>
+    <marker id="r-n" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#8A8F98"/>
+    </marker>
+    <marker id="r-re" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#A78BFA"/>
+    </marker>
+    <marker id="r-mesh" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#00CA8E"/>
+    </marker>
+  </defs>
+  <style>
+    .box   { fill: #1F1F26; stroke: #3F3F46; stroke-width: 1.2; rx: 6; }
+    .boxT  { font-size: 12.5px; font-weight: 600; fill: #F4F4F5; }
+    .boxS  { font-size: 10.5px; fill: #A1A1AA; }
+    .bandT { font-size: 13px; font-weight: 700; letter-spacing: .08em; }
+    .en    { stroke: #8A8F98; stroke-width: 1.4; fill: none; marker-end: url(#r-n); }
+    .ere   { stroke: #A78BFA; stroke-width: 1.6; fill: none; marker-end: url(#r-re); }
+    .emesh { stroke: #00CA8E; stroke-width: 1.6; fill: none; marker-end: url(#r-mesh); }
+    .lab   { font-size: 10px; fill: #C9C9D1; }
+    .labre { font-size: 10px; fill: #A78BFA; font-weight: 600; }
+    .chip  { font-size: 9.5px; font-weight: 700; fill: #22D3EE; }
+    .warn  { font-size: 10px; font-weight: 700; fill: #F5B841; }
+  </style>
+
+  <rect x="0" y="0" width="1240" height="660" fill="#16161B"/>
+  <text x="20" y="28" font-size="18" font-weight="700" fill="#F4F4F5">Reverse-engineering workstation — carved malware, opened with no network at all</text>
+  <text x="20" y="46" font-size="11.5" fill="#A1A1AA">Staging is the only step with store access, a session is granted exactly one host, and the determination travels back through the ANALYST — there is no wire it could take.</text>
+
+  <!-- bands -->
+  <rect x="16" y="64" width="392" height="400" rx="10" fill="#12211B" stroke="#00CA8E" stroke-opacity=".55"/>
+  <text class="bandT" x="30" y="86" fill="#00CA8E">ENCLAVE</text>
+
+  <rect x="424" y="64" width="360" height="400" rx="10" fill="#242012" stroke="#F5B841" stroke-opacity=".55"/>
+  <text class="bandT" x="438" y="86" fill="#F5B841">STAGING — the only step holding credentials</text>
+
+  <rect x="800" y="64" width="424" height="400" rx="10" fill="#191627" stroke="#A78BFA" stroke-opacity=".55"/>
+  <text class="bandT" x="814" y="86" fill="#A78BFA">ISOLATED — no network namespace exists</text>
+
+  <!-- enclave -->
+  <rect class="box" x="36" y="104" width="352" height="90"/>
+  <text class="boxT" x="48" y="124">Analysis sandbox (worker)</text>
+  <text class="boxS" x="48" y="140">per-process YARA pass CARVES suspicious regions</text>
+  <text class="boxS" x="48" y="154">out of the memory image during analysis</text>
+  <text class="boxS" x="48" y="168">no egress · the carve is recorded on the capture</text>
+  <text class="chip" x="48" y="186">provenance kept: injected / mapped / non-executable</text>
+
+  <rect class="box" x="36" y="240" width="352" height="96"/>
+  <text class="boxT" x="48" y="260">MinIO — ir-carved-&lt;host&gt;</text>
+  <text class="boxS" x="48" y="276">ONE BUCKET PER HOST, kept apart from ir-evidence</text>
+  <text class="boxS" x="48" y="290">a session is granted one host's bucket and can</text>
+  <text class="boxS" x="48" y="304">see no other case · reachable only through the</text>
+  <text class="boxS" x="48" y="318">mesh sidecar, like every data-tier service</text>
+
+  <rect class="box" x="36" y="372" width="352" height="72"/>
+  <text class="boxT" x="48" y="392">Investigation record (Django API)</text>
+  <text class="boxS" x="48" y="408">a determination lands as a FINDING on the run the</text>
+  <text class="boxS" x="48" y="422">capture came from · region.analyze / region.purge audited</text>
+
+  <!-- staging -->
+  <rect class="box" x="444" y="104" width="320" height="128"/>
+  <text class="boxT" x="456" y="124">stage_regions.sh — MEDIATOR</text>
+  <text class="boxS" x="456" y="140">holds the store credentials so the session never does</text>
+  <text class="boxS" x="456" y="154">one host per invocation · writes each region 0400</text>
+  <text class="boxS" x="456" y="168">manifest carries object KEYS, never payloads —</text>
+  <text class="boxS" x="456" y="182">nothing in the session can find its way back to the store</text>
+  <text class="chip" x="456" y="200">a session over ZERO regions is refused: an empty</text>
+  <text class="chip" x="456" y="213">session is indistinguishable from a broken one</text>
+
+  <rect class="box" x="444" y="280" width="320" height="70"/>
+  <text class="boxT" x="456" y="300">launch.sh</text>
+  <text class="boxS" x="456" y="316">tool narrowest-first: --tool, then IR_RE_TOOL, then the</text>
+  <text class="boxS" x="456" y="330">deployment default · containment identical either way</text>
+
+  <!-- isolated -->
+  <rect class="box" x="820" y="104" width="384" height="146"/>
+  <text class="boxT" x="832" y="124">RE workstation — Binary Ninja / Ghidra</text>
+  <text class="boxS" x="832" y="140">--network none: not a firewall rule, an ABSENCE —</text>
+  <text class="boxS" x="832" y="154">network exists only while the image is BUILT</text>
+  <text class="boxS" x="832" y="168">CapEff = 0 · non-root · /regions mounted read-only</text>
+  <text class="boxS" x="832" y="182">no license server, activation or call-home needed</text>
+  <text class="boxS" x="832" y="196">display over the host's Wayland/X socket only</text>
+  <text class="chip" x="832" y="216">session-&lt;host&gt; workdir on the host — carved process</text>
+  <text class="chip" x="832" y="229">memory, never published, excluded from the mirror</text>
+
+  <rect class="box" x="820" y="290" width="384" height="60"/>
+  <text class="boxT" x="832" y="310">The RE analyst</text>
+  <text class="boxS" x="832" y="326">reads the disassembly here; records the determination in the</text>
+  <text class="boxS" x="832" y="340">platform UI as their RE role — a person, not a connection</text>
+
+  <!-- arrows -->
+  <path class="emesh" d="M212 194 L212 240"/>
+  <text class="lab" x="222" y="222">carve → per-host bucket</text>
+
+  <path class="ere" d="M388 288 L444 168"/>
+  <text class="labre" x="360" y="230">stage (one host,</text>
+  <text class="labre" x="360" y="243">credentials stay here)</text>
+
+  <path class="ere" d="M764 168 L820 168"/>
+  <text class="lab" x="772" y="160">0400</text>
+
+  <path class="ere" d="M604 280 Q700 260 820 220"/>
+  <text class="lab" x="640" y="292">open</text>
+
+  <path class="ere" d="M832 350 Q560 470 388 420"/>
+  <text class="labre" x="560" y="452">the determination: recorded by the PERSON through the SSO gate — the workstation has no path</text>
+
+  <!-- purge note -->
+  <rect x="16" y="484" width="1208" height="76" rx="8" fill="#1B1B21" stroke="#8A8F98" stroke-opacity=".6"/>
+  <text x="30" y="506" font-size="12" font-weight="700" fill="#C9C9D1">PURGE — a benign region's bytes are deleted; the determination that justified deleting them is kept</text>
+  <text class="boxS" x="30" y="524">region.purge removes the payload from the carved bucket and the session, audited with the actor and the reason · the conclusion outlives the</text>
+  <text class="boxS" x="30" y="538">material, which is the point: malware is retained only while it is being asked something</text>
+
+  <!-- footer -->
+  <text x="20" y="596" font-size="11" font-weight="700" fill="#C9C9D1">Proven by:</text>
+  <text x="92" y="596" font-size="11" fill="#8A8F98">uat_re_workstation.sh — no network namespace, CapEff 0, read-only regions, store unreachable from the session, refusal over zero regions;</text>
+  <text x="92" y="612" font-size="11" fill="#8A8F98">uat_e2e.sh — collect → analyze → carve → stage → determine, end to end; uat_schema.sh — purge keeps the conclusions</text>
+  <text x="20" y="638" font-size="11" font-weight="700" fill="#C9C9D1">Detail:</text>
+  <text x="92" y="638" font-size="11" fill="#8A8F98">re-workstation/README.md — containment table, session flow, display, Ghidra's divergence</text>
+</svg>

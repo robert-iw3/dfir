@@ -8,8 +8,7 @@ DOMAIN="${IR_PLATFORM_DOMAIN:-ir-platform.local}"
 # The tailnet control plane serves its EMBEDDED DERP relay over the same certificate, and
 # tailscale will not use a DERP relay without TLS. Nodes dial it by the name in HEADSCALE_ADDR,
 # so that name has to appear in the SAN or every node falls back to direct-only connectivity
-# with no relay behind it. A multi-host deployment sets HEADSCALE_ADDR to a routable hostname;
-# taking the SAN from the same variable is what stops the cert and the dialled name drifting.
+# with no relay behind it.
 HEADSCALE_SAN="${HEADSCALE_ADDR:-headscale:8080}"
 HEADSCALE_SAN="${HEADSCALE_SAN%%:*}"
 mkdir -p "${CERTS}"

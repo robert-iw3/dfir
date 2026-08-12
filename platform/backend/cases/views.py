@@ -30,6 +30,7 @@ from . import opsmetrics
 from . import symbols as symbols_mod
 from .pagination import StandardPagination
 from . import audit as audit_mod
+from .killchain import TECHNIQUE_TACTICS
 from . import ingest as ingest_mod
 from . import record as record_mod
 from . import retention as retention_mod
@@ -368,8 +369,61 @@ class FindingViewSet(viewsets.ReadOnlyModelViewSet):
             qs = qs.filter(source=params["source"])
         if params.get("finding_type"):
             qs = qs.filter(finding_type=params["finding_type"])
+        if params.get("cells"):
+            # Heatmap multi-select: pipe-separated `finding_type::verdict` pairs, OR'd as EXACT pairs.
+            # Separate sets per dimension would be the cross product — selecting (A, TP) and (B,
+            # Indeterminate) would silently include A's Indeterminate rows, a set no cell on screen claims.
+            match = Q(pk__in=[])
+            for part in params["cells"].split("|"):
+                ft, sep, v = part.partition("::")
+                if not sep or not ft:
+                    continue
+                match |= Q(finding_type=ft, verdict="" if v == "unset" else v)
+            qs = qs.filter(match)
+        if params.get("day"):
+            # The same derivation the aggregates use: the intrusion's own timestamp when the
+            # finding carries one, ingest time otherwise. A day-shaped chart mark drills
+            # here, so both sides must read the same clock.
+            day = params["day"]
+            qs = qs.filter(
+                Q(raw__Timestamp__startswith=day)
+                | (
+                    (Q(raw__Timestamp__isnull=True) | Q(raw__Timestamp=""))
+                    & Q(created_at__date=day)
+                )
+            )
+        if params.get("adjudicated"):
+            # Adjudicated means PAST THE ENTRY STATE, the same composite the funnel
+            # aggregate counts: the engine marked it, or a verdict was set beyond the
+            # Indeterminate every promoted lead enters at. Seeded and analyst-set verdicts
+            # carry no engine marker, and reading only that marker reported zero adjudicated
+            # beneath a non-zero confirmed.
+            entry_state = Q(adjudicated_by="") & Q(verdict__in=["", "Indeterminate"])
+            if params["adjudicated"] == "yes":
+                qs = qs.exclude(entry_state)
+            else:
+                qs = qs.filter(entry_state)
+        if params.get("tactic"):
+            # A stage's drill. The tactic maps to the base techniques that serve it, so the
+            # table reproduces exactly what the progression counted — the chart cannot claim
+            # a set the table has no way to express.
+            want = params["tactic"]
+            if want == "unmapped":
+                qs = qs.filter(Q(mitre=[]) | Q(mitre__isnull=True))
+            else:
+                bases = [b for b, tacs in TECHNIQUE_TACTICS.items() if want in tacs]
+                match = Q(pk__in=[])
+                for b in bases:
+                    match |= Q(mitre__icontains=b)
+                qs = qs.filter(match)
         if params.get("technique"):
-            qs = qs.filter(mitre__contains=[params["technique"]])
+            # "unmapped" is the aggregate's name for findings carrying NO technique, and it
+            # must be a filter the table can express: a chart mark for those findings has to
+            # drill somewhere real. It matches no technique id, so the sentinel is safe.
+            if params["technique"] == "unmapped":
+                qs = qs.filter(Q(mitre=[]) | Q(mitre__isnull=True))
+            else:
+                qs = qs.filter(mitre__contains=[params["technique"]])
         return qs
 
 

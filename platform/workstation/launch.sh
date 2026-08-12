@@ -1,10 +1,8 @@
 #!/bin/sh
-# Launch the locked-down analyst browser.
-#
-# The container is attached only to the tunnel-side network (no internet gateway) and
-# resolves names via the DMZ CoreDNS, so the ONLY origin it can reach is the platform's
-# SSO-gated frontend — which is also the only origin the STIG policy's WebsiteFilter
-# permits. Kiosk mode keeps the analyst in that one app.
+# Launch the locked-down analyst browser. The container is attached only to the tunnel-side
+# network (no internet gateway) and resolves names via the DMZ CoreDNS, so the ONLY origin it
+# can reach is the platform's SSO-gated frontend — which is also the only origin the STIG
+# policy's WebsiteFilter permits.
 set -eu
 
 URL="${IR_PLATFORM_URL:-https://ir-platform.local:8443/}"
@@ -42,28 +40,10 @@ if [ -z "${DISPLAY:-}" ]; then
     exit 2
 fi
 
-# --kiosk keeps it full-screen with no chrome to navigate elsewhere.
-#
-# Supervised rather than exec'd, and the profile is DISCARDED before every start. In a kiosk
-# the analyst has no address bar, no history and no settings, so any authentication state
-# that survives a start is state they cannot clear. A login abandoned across a platform
-# redeploy leaves a callback the identity provider no longer recognises; its error page
-# carries no link back, and the workstation is then wedged until an administrator recreates
-# the container. Telling the analyst to clear cookies is not a remedy that exists here.
-#
-# So Firefox exiting is a RECOVERY rather than the end of the session: the profile goes, and
-# the browser returns to the platform root with a clean slate. SanitizeOnShutdown in the
-# policy covers a clean exit; this covers the crash and the wedge, which are the cases that
-# actually strand someone.
 # The workstation announces itself in the User-Agent: every hop between this browser and the
-# enclave ingress is L4 under end-to-end TLS, so nothing on the path can say which
-# workstation carried a request — only the kiosk itself can. The platform reads the token
-# into the sign-on record for attribution. It is a client-side statement, evidence rather
-# than a security boundary.
-#
-# The override is the REAL UA with the token appended, never a replacement: the SSO gate's
-# checks expect a genuine browser UA, and the version is read from the installed binary so
-# an image update cannot leave a stale one pinned.
+# enclave ingress is L4 under end-to-end TLS, so nothing on the path can say which workstation
+# carried a request — only the kiosk itself can. The platform reads the token into the sign-on
+# record for attribution.
 ua_override() {
     [ -n "${IR_WS_ID:-}" ] || return 0
     ver="$(firefox-esr --version 2>/dev/null | sed -n 's/.* \([0-9][0-9]*\)\..*/\1/p')"
@@ -73,6 +53,33 @@ ua_override() {
     echo "[browser] User-Agent announces workstation ${IR_WS_ID}"
 }
 
+# A kiosk stranded on an error page recovers itself. The supervision loop below only restarts
+# Firefox when Firefox EXITS.
+watchdog() {
+    was_up=1
+    while :; do
+        sleep "${IR_KIOSK_PROBE_SECONDS:-20}"
+        if wget -q --spider --no-check-certificate --timeout=8 --tries=1 "$URL" 2>/dev/null; then
+            if [ "$was_up" = "0" ]; then
+                echo "[watchdog] platform answering again — reopening the kiosk on it" >&2
+                pkill -f firefox-esr 2>/dev/null || true
+            fi
+            was_up=1
+        else
+            # `if`, not `[ ... ] && echo`: under `set -e` a trailing test that evaluates
+            # false ends the watchdog, and a supervisor that exits silently is worse than
+            # the wedge it exists to clear.
+            if [ "$was_up" = "1" ]; then
+                echo "[watchdog] platform stopped answering — waiting for it" >&2
+            fi
+            was_up=0
+        fi
+    done
+}
+watchdog &
+
+# --kiosk keeps it full-screen with no chrome to navigate elsewhere. Supervised rather than
+# exec'd, and the profile is DISCARDED before every start.
 while :; do
     rm -rf "$PROFILE"
     mkdir -p "$PROFILE"

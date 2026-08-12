@@ -2,7 +2,7 @@
 
 *What passing proves:* The ingress states its TLS floor, refuses weak and export ciphers, bounds request rate and concurrency, does not name itself, constrains the application as mobile code, and logs what the SRG requires it to log.
 
-- Run: `uat_srg_webtier.sh` — 2026-08-09 01:52:25Z
+- Run: `uat_srg_webtier.sh` — 2026-08-12 16:10:33Z
 
 **TLS — SRG-APP-000014-WSR-000006, SRG-APP-000439-WSR-000188**
 
@@ -70,7 +70,7 @@
 | ✅ PASS | log record establishes the source it came from (ClientHost) |
 | ✅ PASS | log record establishes the outcome (DownstreamStatus) |
 | ✅ PASS | SRG-APP-000098-WSR-000060: the ingress record carries the join keys (StartUTC, ClientHost) |
-| ✅ PASS | SRG-APP-000098-WSR-000060: the broker records the real client address (10.89.0.11) — the join completes |
+| ✅ PASS | SRG-APP-000098-WSR-000060: the broker records the real client address (10.89.0.13) — the join completes |
 
 **Log aggregation — SRG-APP-000125-WSR-000071, SRG-APP-000357-WSR-000150, SRG-APP-000358-WSR-000163, SRG-APP-000359-WSR-000065, SRG-APP-000108-WSR-000166**
 
@@ -85,7 +85,7 @@
 | ✅ PASS | the log sources are read-only to the shipper — the record cannot be altered by its own transport |
 | ✅ PASS | SRG-APP-000108-WSR-000166: the shipper self-reports to Component Health — going quiet or failing is surfaced, not silent |
 | ✅ PASS | SRG-APP-000357-WSR-000150: the report carries usage against the declared allocation |
-| ✅ PASS | SRG-APP-000108-WSR-000166: the shipper's report is CURRENT (138s old) — a stale row is a reporter that stopped, which the existence check cannot tell from one that never started |
+| ✅ PASS | SRG-APP-000108-WSR-000166: the shipper's report is CURRENT (655s old) — a stale row is a reporter that stopped, which the existence check cannot tell from one that never started |
 | ✅ PASS | SRG-APP-000359-WSR-000065: the warning fires at 75% of allocated log storage and not below it |
 | ✅ PASS | SRG-APP-000108-WSR-000166: a shipping failure becomes a Component Health alert |
 
@@ -103,7 +103,7 @@
 | ✅ PASS | default-admin re-provisioned to its deployed initial state |
 | ✅ PASS | the initial credential admits NO session — Keycloak demands a replacement first |
 | ✅ PASS | a real authorization-code login completed through the hardened ingress, forced password change included |
-| ✅ PASS | SRG-APP-000001-WSR-000002: the login created server-side session state in Redis database 1 (0 -> 1 keys) |
+| ✅ PASS | SRG-APP-000001-WSR-000002: the login created server-side session state in Redis database 1 (8 -> 9 keys) |
 | · | the intention check could not be read from inside Consul; the store is working regardless |
 
 **Login flow — a page load must not evict the attempt the analyst is standing in**
@@ -111,7 +111,7 @@
 | Result | Assertion — with evidence |
 |---|---|
 | ✅ PASS | the gate separates data calls from navigation (--api-route=^/(api/\|index\.html)) — only navigation starts an attempt |
-| ✅ PASS | default-admin re-armed with the forced change that holds a login flow open |
+| ✅ PASS | ephemeral uat-srg-csrf provisioned with the forced change that holds a login flow open |
 | ✅ PASS | the analyst's navigation starts exactly one authentication attempt |
 | ✅ PASS | a page load's worth of data calls (6) was issued on top of the open flow |
 | ✅ PASS | every data call was ANSWERED 401 — the SPA turns that into one sign-in rather than 6 of them |
@@ -124,7 +124,7 @@
 | ✅ PASS | the gate logged no CSRF failure for that flow |
 | ✅ PASS | the deployed bundle has ONE sign-in entry point |
 | ✅ PASS | that entry point is single-flight — the second and later 401s of a page load redirect nothing |
-| ✅ PASS | default-admin re-armed for the control run |
+| ✅ PASS | ephemeral uat-srg-csrf re-armed for the control run |
 | ✅ PASS | control: 7 unclassified path(s) redirected to the identity provider and minted 7 attempt(s) — the driver can see a mint, so the zero it reported above is a measurement |
 | ✅ PASS | control: those attempts evicted the analyst's own, oldest-first, exactly as the ceiling of 6 requires |
 | ✅ PASS | control: the flow ended in the reported 403 at the callback — the defect is reproducible, and --api-route is what the deployed gate uses to avoid it |

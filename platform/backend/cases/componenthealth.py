@@ -24,17 +24,9 @@ from .models import ComponentHealth, MemoryCapture
 REPORT_INTERVAL_SECONDS = 15 * 60
 STALE_AFTER_SECONDS = REPORT_INTERVAL_SECONDS * 2
 
-# Two kinds of reporter, with different meanings when they go quiet.
-#
-# A worker is instance-scoped: it reports under its container hostname, which changes every
-# time one is replaced, and scaling analysis out means they come and go by design. A row for a
-# worker that no longer exists warns about nothing, and left alone they accumulate until the
-# page is mostly departed workers and a genuinely stuck one is lost among them. Pruned once it
-# has missed enough intervals to be gone rather than busy.
-#
-# The backend, puller and receiver are role-scoped: one of each, named for the job rather than
-# the container. One of those going quiet IS the incident, so its row is kept however old it
-# gets — disappearing would turn an outage into an absence nobody notices.
+# Two kinds of reporter, with different meanings when they go quiet. A worker is instance-
+# scoped: it reports under its container hostname, which changes every time one is replaced, and
+# scaling analysis out means they come and go by design.
 INSTANCE_PRUNE_AFTER_SECONDS = REPORT_INTERVAL_SECONDS * 4
 INSTANCE_PREFIXES = ("worker (",)
 

@@ -1,7 +1,6 @@
 #!/bin/bash
 # Keycloak entrypoint. With IR_VAULT=1 the database credential is a Vault lease rendered to
-# /vault/secrets/kc-db.env — wait for it, source it, start. No credential in the image, in
-# compose, or in this container's configured environment.
+# /vault/secrets/kc-db.env — wait for it, source it, start.
 set -euo pipefail
 
 if [ "${IR_VAULT:-0}" = "1" ]; then

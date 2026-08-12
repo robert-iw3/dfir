@@ -49,7 +49,13 @@ _r_line() {
 report_begin() {  # <order> <slug> <title> <claim>
     local order="$1" slug="$2"; REPORT_TITLE="$3"; local claim="$4"
     mkdir -p "${REPORT_DIR}"
-    REPORT_FRAG="${REPORT_DIR}/${order}-${slug}.md"
+    # The run writes a .part file and the published fragment is replaced only at report_finish, when
+    # there is a verdict to replace it with. Writing the fragment directly meant a suite that bailed
+    # on a precondition — before its first assertion — destroyed the previous run's proof and
+    # published a header over empty tables, which reads as sections that ran and asserted nothing.
+    REPORT_FINAL="${REPORT_DIR}/${order}-${slug}.md"
+    REPORT_FRAG="${REPORT_FINAL}.part"
+    rm -f "${REPORT_FRAG}"
     printf '\033[1;33m!! These tests act on the RUNNING deployment.\033[0m\n'
     printf '\033[0;37m   Intended use: bring the stack up, run these to VALIDATE it, then rebuild.\n'
     printf '     deploy.sh enclave  ->  test/uat_*.sh  ->  deploy.sh down enclave && deploy.sh enclave\n'
@@ -71,6 +77,10 @@ report_finish() {
     [[ "${FAILED}" != "0" ]] && verdict="NOT PROVEN"
     printf '\n**Verdict: %s** — %s assertions passed, %s failed.\n' \
         "${verdict}" "${_R_PASS}" "${_R_FAIL}" >> "${REPORT_FRAG}"
+    # Reaching here IS the verdict — including NOT PROVEN, which replaces the old proof
+    # honestly. Only a run that never got this far leaves the previous fragment standing.
+    mv "${REPORT_FRAG}" "${REPORT_FINAL}"
+    REPORT_FRAG="${REPORT_FINAL}"
 
     # Regenerate the collective report from every fragment present. Order is the filename's
     # numeric prefix, so the document builds the platform up the way the deployment does.

@@ -3,8 +3,7 @@
 # CORPUS L — 22 Linux endpoints, "Rust Fox", through the REAL pipeline.
 #
 # The second attack shape. Corpus v2 is a Windows intrusion, and every threshold in the
-# correlation engine was calibrated while it was the only dataset. This one changes the
-# platform underneath those thresholds:
+# correlation engine was calibrated while it was the only dataset.
 #
 #   - the Linux hunts' own finding vocabulary (Systemd Persistence, Cron Persistence,
 #     Shell Init Backdoor, Library Preload Hijack, Webshell, SSH Authorized Key)

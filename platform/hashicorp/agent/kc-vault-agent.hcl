@@ -1,7 +1,6 @@
-# Vault Agent for Keycloak. Auto-auths with Keycloak's OWN AppRole — a policy that reads
-# only database/creds/keycloak — renders the credential for Keycloak to source, and keeps
-# the lease renewed. Separate from the app's agent so neither identity can read the
-# other's credential path.
+# Vault Agent for Keycloak. Auto-auths with Keycloak's OWN AppRole — a policy that reads only
+# database/creds/keycloak — renders the credential for Keycloak to source, and keeps the lease
+# renewed.
 pid_file = "/vault/agent/kc-vault-agent.pid"
 
 vault {

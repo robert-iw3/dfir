@@ -1,18 +1,8 @@
-# Analysis worker — the Django worker plus the toolkit's proven memory-analysis stack.
-#
-# Built from a staged context (see build_worker.sh), not from this directory: the analyzer
-# and its Volatility plugins live in the toolkit tree, outside the backend build context.
-#
-# This image is deliberately separate from the API image. The worker is the only component
-# that parses hazardous evidence, so Volatility, YARA and the analysis code exist only
-# where they are needed and never in the request-serving tier.
-#
-# The base distro does not need to match the analyzed host's. Volatility 3 parses the raw
-# image using the ISF symbol table, which carries the struct offsets and symbol addresses
-# for the target kernel; no target code runs and nothing links against target libc. What
-# DOES need the target's distro is building that ISF from DWARF debug symbols — a step that
-# needs internet access and therefore happens outside the enclave, in per-distro symbol
-# builders (see symbols/).
+# Analysis worker — the Django worker plus the toolkit's memory-analysis stack, built from a
+# staged context (build_worker.sh) and kept separate from the API image so Volatility/YARA exist
+# only where hazardous evidence is parsed. The base need not match the analyzed host: Volatility 3
+# reads the raw image via the ISF symbol table, and building THAT table needs the target distro
+# plus internet — which is why it happens outside the enclave, in symbols/.
 FROM docker.io/library/alpine:3.24@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b
 
 # yara-dev is required to build the YARA Python bindings from source: the published wheels

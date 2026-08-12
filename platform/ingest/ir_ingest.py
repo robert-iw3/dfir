@@ -92,17 +92,10 @@ def build_payload(folder, args, capture_meta, object_ref, custody_ok, custody_re
             "image_format": capture_meta.get("image_format", "raw"),
             "capture_tool": capture_meta.get("capture_tool", ""),
             "is_synthetic": capture_meta.get("is_synthetic", False),
-            # The requisites the collector recorded ARE the symbol context: kernel release,
-            # build id, banner, distribution and the symbol_key an ISF is stored under.
-            #
-            # Synthesising a one-key dict from the capture metadata instead drops the build
-            # id, which is the field `find_isf()` matches an acquired table on — the
-            # acquisition tier names the ISF after it. The result is an ISF sitting in the
-            # enclave store that no capture can resolve, and an analysis that silently runs
-            # at reduced depth with the table it needed already present.
-            #
-            # `kernel` is kept alongside for the readers that expect it, and as the fallback
-            # when a bundle predates the collector writing requisites at all.
+            # The requisites the collector recorded ARE the symbol context: kernel release, build id,
+            # banner, distribution and the symbol_key an ISF is stored under. Synthesising a one-key dict
+            # from the capture metadata instead drops the build id, which is the field `find_isf()` matches
+            # an acquired table on — the acquisition tier names the ISF after it.
             "symbol_context": {**requisites,
                                "kernel": (requisites.get("kernel_release")
                                           or capture_meta.get("kernel", ""))},
@@ -200,11 +193,9 @@ def main():
         print(f"[ingest] no such folder: {folder}", file=sys.stderr)
         return 2
 
-    # The incident is a property of the collection, not of whatever process is ingesting it.
-    # The responder set it at the endpoint and the collector wrote it into the bundle, so the
-    # bundle is the authority. Taking it from this process's environment instead files every
-    # host under whichever incident the puller happened to be started with — one investigation
-    # for the whole estate, regardless of what was asked for at collection time.
+    # The incident is a property of the collection, not of whatever process is ingesting it. The
+    # responder set it at the endpoint and the collector wrote it into the bundle, so the bundle is
+    # the authority.
     bundle_incident = _bundle_incident_id(folder)
     if bundle_incident and bundle_incident != args.incident_id:
         print(f"[ingest] incident from bundle: {bundle_incident} "

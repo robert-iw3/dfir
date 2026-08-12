@@ -152,8 +152,7 @@ else:
         f"the {len(m['no_movement_record'])} endpoints reached over the VPN — no movement "
         f"record — are members" + (f" — missing {absent}" if absent else ""))
 
-    # The bound. Two people, two installs, 190 days apart, same tool: shadow IT, not a
-    # campaign. A temporal window wide enough for Glass Heron must still refuse this.
+    # The bound. Two people, two installs, 190 days apart, same tool: shadow IT, not a campaign.
     pulled = sorted(set(m["shadow_it_hosts"]) & set(members))
     chk(not pulled,
         f"the two shadow-IT endpoints {m['shadow_it_gap_days']} days apart are NOT in the "

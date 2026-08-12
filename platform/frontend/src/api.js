@@ -12,17 +12,8 @@ function headers(extra) {
   return h;
 }
 
-// One sign-in redirect per page load, however many calls get 401 at once.
-//
-// The app shell fires several API calls in parallel on load. Without this guard each 401
-// would start its own sign-in, and each sign-in mints a per-request CSRF cookie at the SSO
-// gate — four in one second, against a ceiling of three, evicting the cookie belonging to the
-// navigation the analyst actually made. They then complete a long flow (a forced password
-// change is the reliable way to see it) and the callback returns to a cookie that is gone:
-// "403 Forbidden" from the proxy, with Go Back as the only way through.
-//
-// So the redirect is single-flight. Paired with `--api-route` on the gate, which answers API
-// paths with 401 instead of redirecting them: navigation starts a flow, data calls never do.
+// One sign-in redirect per page load, however many calls get 401 at once. The app shell fires
+// several API calls in parallel on load.
 let signingIn = false;
 
 function toSignIn() {
@@ -32,19 +23,34 @@ function toSignIn() {
   window.location.assign(`/oauth2/start?rd=${encodeURIComponent(rd)}`);
 }
 
+// The STATUS travels with the error. Without it every failure looks alike, and a gate
+// answering 502 because the backend is restarting is indistinguishable from a session that
+// expired — which is how a kiosk ends up showing a password form nobody there can use.
+function apiError(status, message) {
+  const e = new Error(message);
+  e.status = status;
+  return e;
+}
+
 async function req(method, path, body) {
-  const r = await fetch(`${BASE}${path}`, {
-    method,
-    headers: headers(),
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
+  let r;
+  try {
+    r = await fetch(`${BASE}${path}`, {
+      method,
+      headers: headers(),
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+  } catch (netErr) {
+    // DNS gone, tunnel down, connection refused: unreachable, not unauthorized.
+    throw apiError(0, `platform unreachable: ${netErr.message || netErr}`);
+  }
   if (r.status === 401) {
     // A token-authenticated caller (the UAT harness, a script) gets the error and decides for
     // itself; only a browser session is sent to sign in, because only it can complete one.
     if (!getToken()) toSignIn();
-    throw new Error("unauthorized");
+    throw apiError(401, "unauthorized");
   }
-  if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+  if (!r.ok) throw apiError(r.status, `${r.status} ${r.statusText}`);
   return r.status === 204 ? null : r.json();
 }
 
@@ -137,6 +143,7 @@ export const api = {
   campaignTradecraft: (id) => get(`/correlation/campaigns/${id}/tradecraft/`),
   correlationLinks: (runId) => get(`/correlation/runs/${runId}/links/`),
   sharedIndicators: () => get("/correlation/indicators/"),
+  correlationHistory: (invId) => get(`/correlation/investigations/${invId}/history/`),
   recorrelate: (investigationId) =>
     post("/correlation/recompute/", investigationId ? { investigation_id: investigationId } : {}),
 
@@ -151,6 +158,11 @@ export const api = {
   iocSpread: (type, value) =>
     get(`/iocs/${encodeURIComponent(type)}/${encodeURIComponent(value)}/spread/`),
   queueDepth: () => get("/admin/queue-depth/"),
+  storageAllocation: () => get("/admin/storage-allocation/"),
+  investigationsActivity: (days = 30) => get(`/investigations/activity/?days=${days}`),
+  findingsFunnel: (invId) => get(`/findings/funnel/${invId ? `?investigation=${invId}` : ""}`),
+  findingsBacklog: (days = 30) => get(`/findings/backlog/?days=${days}`),
+  findingsMatrix: (invId) => get(`/findings/matrix/${invId ? `?investigation=${invId}` : ""}`),
 
   // Operational telemetry. `reportClientError` deliberately uses fetch directly and swallows
   // everything: it runs from an error boundary, and a reporter that can throw would replace

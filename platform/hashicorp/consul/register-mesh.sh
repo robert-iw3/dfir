@@ -40,10 +40,12 @@ addr_of() { # container  service-key
     var="IR_IP_$(printf '%s' "${svc}" | tr '[:lower:]-' '[:upper:]_')"
     configured="${!var:-}"
     if [[ -n "${configured}" ]]; then
-        # Registered only if the container exists: the address is fixed, but a service that is
-        # not running yet must still be SKIPped so this stage's report stays truthful.
-        ${RUNTIME} inspect "${container}" --format '{{.Id}}' >/dev/null 2>&1 \
-            && printf '%s' "${configured}"
+        # A configured address is DECLARED, so it is registered whether or not the container
+        # exists yet. Requiring the container first deadlocks any service whose sidecar owns
+        # the namespace — the sidecar cannot start without a registration, and the service
+        # cannot be created without the sidecar's namespace. A populated catalog hides that;
+        # an empty one (after a purge, or a first deploy) cannot.
+        printf '%s' "${configured}"
         return 0
     fi
 
@@ -56,11 +58,7 @@ addr_of() { # container  service-key
 
 # Through Consul's own CLI, not its HTTP API: the image ships busybox wget, which cannot send a
 # PUT with a body, so the API route registered nothing and every sidecar failed to find its
-# service.
-#
-# Each service registers with ITS OWN token, not the management one. The agent persists whatever
-# token it was given for that service's anti-entropy, so the management credential would end up
-# stored against seven services that each need service:write on one name.
+# service. Each service registers with ITS OWN token, not the management one.
 register() { # name json
     local name="$1" json="$2" tok="${SEC}/tokens/$1.token"
     [[ -r "${tok}" ]] || { say "no token for ${name} — run gen-consul-secrets.sh"; return 1; }
@@ -86,11 +84,10 @@ service() {
         return 0
     fi
 
-    # The sidecar's ADVERTISED port and its BOUND port separate on multiple hosts. The catalog
-    # must carry the host's published port (IR_MESH_PORT_<SVC>, mapped by the multihost overlay)
-    # at the routable address; Envoy meanwhile can only bind inside its own namespace, so the
-    # proxy config pins the bind to 0.0.0.0:21000 and the host's port mapping joins the two.
-    # On one host both are 21000 at the container address and the bind override is harmless.
+    # The sidecar's ADVERTISED port and its BOUND port separate on multiple hosts. The catalog must
+    # carry the host's published port (IR_MESH_PORT_<SVC>, mapped by the multihost overlay) at the
+    # routable address; Envoy meanwhile can only bind inside its own namespace, so the proxy config
+    # pins the bind to 0.0.0.0:21000 and the host's port mapping joins the two.
     local svc mvar pvar sport=21000 bind=""
     svc="${container#ir-enclave_}"; svc="${svc%_1}"
     mvar="IR_MESH_ADDR_$(printf '%s' "${name}" | tr '[:lower:]-' '[:upper:]_')"
@@ -138,6 +135,9 @@ DATA_UPSTREAMS="$(ups ir-postgres 5432),$(ups ir-minio 9000)"
 APP_UPSTREAMS="${DATA_UPSTREAMS},$(ups ir-redis 6379)"
 service ir-backend ir-enclave_backend_1 8000 "${APP_UPSTREAMS}"
 service ir-worker  ir-enclave_worker_1  9999 "${APP_UPSTREAMS}"
+# CONCEPT (Track W, awaiting testing): replicas register under the same service NAME with a
+# distinct ID, so the intentions cover every replica unchanged. Needs an id-aware service().
+# service_instance ir-worker ir-worker-2 ir-enclave_worker-2_1 9999 "${APP_UPSTREAMS}"
 service ir-puller  ir-enclave_puller_1  9998 "${DATA_UPSTREAMS}"
 
 # Vault's database secrets engine dials Postgres to mint and revoke the dynamic users. Without a

@@ -242,9 +242,8 @@ def persist(analysis_run, report):
         "summary": summary,
         "attack_chains": report.get("attack_chains") or [],
         "ttp_pattern_matches": report.get("ttp_pattern_matches") or [],
-        # Where the engine and the on-host adjudication disagree. A miss is the engine
-        # calling something suspicious that the host closed; an unconfirmed prior TP is the
-        # reverse. Both are review items, not results.
+        # Where the engine and the on-host adjudication disagree. A miss is the engine calling something
+        # suspicious that the host closed; an unconfirmed prior TP is the reverse.
         "potential_misses": report.get("potential_misses") or [],
         "unconfirmed_prior_tps": report.get("unconfirmed_prior_tps") or [],
         "generated": summary.get("generated", ""),
@@ -328,14 +327,9 @@ def _apply_to_findings(run, analysis_run, verdicts, exclude_unattributed=False):
         "id", "verdict", "confidence", "raw", "target", "finding_type",
         "adjudicated_by", "adjudication_run", "adjudication_conflict",
     ):
-        # Diagnostics describe the analysis, not the host. "YARA Scan Coverage Incomplete"
-        # reports that a scan gave up early; inheriting a process's true-positive verdict
-        # would assert that an incomplete scan is evidence of compromise.
-        #
-        # A previously inherited verdict is cleared rather than left alone, so re-running
-        # adjudication repairs rows stamped before this rule existed. An analyst who ruled
-        # on a diagnostic is exempt: clearing that is the silent overwrite S4 forbids, and
-        # the repair has no more standing than any other engine conclusion.
+        # Diagnostics describe the analysis, not the host. "YARA Scan Coverage Incomplete" reports that
+        # a scan gave up early; inheriting a process's true-positive verdict would assert that an
+        # incomplete scan is evidence of compromise.
         if any(f.finding_type.startswith(p) for p in NON_DETECTION_TYPES):
             if f.adjudicated_by == "analyst":
                 continue
@@ -370,10 +364,8 @@ def _apply_to_findings(run, analysis_run, verdicts, exclude_unattributed=False):
             "positive_weight": v.positive_weight,
             "rationale": v.rationale[:1000],
         }
-        # S4 — the analyst holds this verdict. Record what the engine would have said and
-        # move on; the disagreement is a review item, not a result. Carrying the analysis
-        # run id rather than a timestamp keeps this stable across passes: the same pass
-        # reaching the same disagreement writes nothing, a new one updates it.
+        # S4 — the analyst holds this verdict. Record what the engine would have said and move on; the
+        # disagreement is a review item, not a result.
         if f.adjudicated_by == "analyst":
             conflict = {} if f.verdict == v.verdict else {
                 "engine_verdict": v.verdict,
@@ -389,16 +381,11 @@ def _apply_to_findings(run, analysis_run, verdicts, exclude_unattributed=False):
             continue
 
         raw = f.raw if isinstance(f.raw, dict) else {}
-        # The stamp is written whenever the engine reached a conclusion about this
-        # process, including when that conclusion matches the verdict the finding already
-        # carried. Skipping the unchanged case looked like an optimization and was a bug:
-        # the engine's most common conclusion is Undetermined, which maps to the same
-        # Indeterminate a promoted lead starts at, so every one of those findings ended up
-        # indistinguishable from one the engine had never looked at.
-        #
-        # `adjudication_run` is deliberately NOT part of this comparison. It names the pass
-        # that produced the verdict; a later pass that agreed produced nothing, and folding
-        # it in would rewrite every finding on every re-adjudication.
+        # The stamp is written whenever the engine reached a conclusion about this process, including
+        # when that conclusion matches the verdict the finding already carried. Skipping the unchanged
+        # case looked like an optimization and was a bug: the engine's most common conclusion is
+        # Undetermined, which maps to the same Indeterminate a promoted lead starts at, so every one of
+        # those findings ended up indistinguishable from one the engine had never looked at.
         if f.verdict == v.verdict and f.confidence == v.confidence \
            and raw.get("adjudication") == stamp and f.adjudicated_by == "engine":
             continue

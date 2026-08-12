@@ -15,9 +15,9 @@ COPY nginx.conf.template /etc/nginx/templates/default.conf.template
 COPY docker-entrypoint.sh /docker-entrypoint.sh
 RUN chmod +x /docker-entrypoint.sh
 
-# Smoke tests — verified at build time, so a broken image never ships:
-#   1. the SPA bundle is present, 2. the rendered nginx config parses. The temp hosts
-#   entry lets `nginx -t` resolve the `backend` upstream during the build (real DNS at run).
+# Build-time smoke tests so a broken image never ships: the SPA bundle exists and the rendered
+# nginx config parses. The temp hosts entry lets `nginx -t` resolve the `backend` upstream during
+# build (real DNS at run).
 RUN test -f /usr/share/nginx/html/index.html \
     && test -d /usr/share/nginx/html/assets \
     && IR_SSO_PROXY_SECRET="" NGINX_RESOLVER="127.0.0.11" \

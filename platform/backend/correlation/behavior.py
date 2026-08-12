@@ -34,14 +34,8 @@ EVENT_MAP = {
     "Macro Execution": ("executed", None),
     "Cryptominer Process": ("executed", None),
 
-    # The Linux hunts' vocabulary (`playbooks/linux/threat_hunting/adjudicate.py`). Every
-    # name here is a choice the operator made and keeps between engagements, which is what
-    # the artifact path exists to carry. Without these a Linux campaign contributes no
-    # artifact at all: it holds together on movement alone, and any host reached without a
-    # movement record is unreachable by any path.
-    #
-    # The benign counterparts are mapped too — a fleet's own units and cron entries must be
-    # visible AS fleet-wide, or the rarity floor has nothing to measure the actor's against.
+    # The Linux hunts' vocabulary: every name is an operator choice kept between engagements, which
+    # is what makes it a behavioral signal rather than a label.
     "Systemd Persistence": ("persisted", "persistence_service"),
     "Systemd Unit": ("observed", "persistence_service"),
     "Suspicious systemd service": ("persisted", "persistence_service"),
@@ -91,18 +85,13 @@ EVENT_MAP = {
 from cases.indicators import LIST_INDICATORS, SCALAR_INDICATORS  # noqa: E402
 from cases.indicators import as_values as _as_values  # noqa: E402
 
-# An IOC row's type -> the node it becomes. Ingest now rolls finding-recovered material
-# into IOC rows, so the SAME fact arrives on both paths: as a field on the finding and as
-# an IOC. Family and rule are artifacts on the finding path, so they must be artifacts here
-# too, or one determination becomes two nodes and each carries half the evidence.
+# An IOC row's type maps to the node it becomes. Ingest rolls finding-recovered material into
+# IOC rows, so the same fact arrives on both paths and must resolve to ONE node.
 IOC_ARTIFACTS = {"malware_family", "yara_rule", "campaign_id"}
 
 
-# Subkinds whose VALUE is the file name, not the path holding it. Where these live is fixed
-# — `/etc/systemd/system`, `/etc/cron.d`, `/etc/profile.d`, a share the actor happened to
-# reach — so keeping the path gives every actor the same leading shape and buries the part
-# they chose. `payload_path` is deliberately absent: where a payload is dropped
-# (`/dev/shm/.systemd-private/`) is itself the habit.
+# Subkinds whose VALUE is the file name, not the containing path — where these live is fixed, so
+# the name is the actor's choice and the directory is not.
 BASENAME_SUBKINDS = {
     "staging_name", "persistence_service", "persistence_cron",
     "persistence_shell_init", "persistence_preload", "webshell",
@@ -149,12 +138,8 @@ def build_graph(crun, run_ids):
             record(touch("artifact", artifact_subkind,
                          artifact_value(artifact_subkind, f.target), host), host, verb, f)
 
-        # Indicators embedded in the finding itself. IOC rows cover the hunt's own output;
-        # these cover what a finding attributes to THIS event — and the richer material that
-        # memory enrichment, MWCP config extraction and a reverse engineer's determination
-        # carry. Read by name across the vocabulary those producers actually emit, rather
-        # than the three keys the first pass looked for: two hosts sharing a user-agent, a
-        # mutex or a C2 config are linked by it, and the graph has to know.
+        # Indicators embedded in the finding itself: IOC rows cover the hunt's output, these cover what
+        # a finding attributes to THIS event.
         for key, subkind in SCALAR_INDICATORS.items():
             if raw.get(key):
                 record(touch("indicator", subkind, raw[key], host), host, verb, f)
@@ -202,13 +187,8 @@ def build_graph(crun, run_ids):
         kind = "artifact" if ioc.ioc_type in IOC_ARTIFACTS else "indicator"
         key = touch(kind, subkind, ioc.value, host)
         if key:
-            # An IOC row carries no verdict field of its own, but it is not unadjudicated
-            # evidence: the toolkit emits IOCs.json from findings that already passed the
-            # verdict ladder. Defaulting it to Indeterminate made the SAME indicator weigh
-            # four times less as an IOC row than as a field on a finding — so a shared C2
-            # address linked two hosts or did not depending on which file it arrived in.
-            # The run's adjudication is the honest source: on a compromised host these are
-            # the indicators that compromise was concluded from.
+            # An IOC row carries no verdict field, but it is not unadjudicated: the toolkit emits IOCs.json
+            # only from findings that already passed the verdict floor.
             verdict = "True Positive" if ioc.run.compromised else ""
             events.append((key, host, "observed", None, verdict, "", None, {"from": "ioc"}))
 

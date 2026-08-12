@@ -61,7 +61,7 @@
   <text class="boxS" x="48" y="366">tailnet node · no subnet routes</text>
   <text class="boxS" x="48" y="380">STIG Firefox kiosk · one origin</text>
   <text class="boxS" x="48" y="394">no internet · no outbound DNS</text>
-  <text class="boxS" x="48" y="408">reaches ONE port: :8443</text>
+  <text class="boxS" x="48" y="408">reaches ONE port: :8443 · states its workstation in the UA</text>
 
   <rect class="box" x="36" y="560" width="250" height="62"/>
   <text class="boxT" x="48" y="580">Symbol builder</text>
@@ -84,13 +84,14 @@
   <text class="boxT" x="354" y="336">CoreDNS — DMZ resolver</text>
   <text class="boxS" x="354" y="352">one name → bastion · REFUSES all else</text>
 
-  <rect class="box" x="342" y="408" width="260" height="104"/>
+  <rect class="box" x="342" y="408" width="260" height="122"/>
   <text class="boxT" x="354" y="428">bastion + distributor + session broker</text>
   <text class="boxS" x="354" y="444">Boundary CLIENTS only — N sessions, holds no authority</text>
   <text class="boxS" x="354" y="458">one target: the SSO gate, per session,</text>
   <text class="boxS" x="354" y="472">per principal · listener on the tunnel</text>
   <text class="chip" x="354" y="490">SUPERVISED: re-establishes on any session end;</text>
   <text class="chip" x="354" y="503">cancels what it abandons — the record stays true</text>
+  <text class="chip" x="354" y="519">PINNED: each workstation's address → ITS session</text>
 
   <!-- enclave: access row -->
   <rect class="box" x="658" y="100" width="230" height="80"/>
@@ -127,7 +128,7 @@
   <rect class="box" x="878" y="220" width="200" height="74"/>
   <text class="boxT" x="890" y="240">Analysis sandbox (worker)</text>
   <text class="boxS" x="890" y="256">NO egress · drop ALL caps</text>
-  <text class="boxS" x="890" y="270">read-only · non-root · ephemeral</text>
+  <text class="boxS" x="890" y="270">read-only · non-root · ephemeral · Volatility reads the pulled ISF store</text>
   <text class="chip" x="890" y="286">▣ worker sidecar</text>
 
   <rect class="box" x="1098" y="220" width="190" height="74"/>
@@ -195,6 +196,10 @@
   <path class="ein" d="M286 386 L342 440"/>
   <text class="labin" x="230" y="428">:8443 tunnel</text>
 
+  <path class="en" d="M286 580 Q330 400 348 180"/>
+  <text class="lab" x="298" y="560">sealed ISF — same receiver,</text>
+  <text class="lab" x="298" y="573">same custody gate as evidence</text>
+
   <path class="edash" d="M602 428 L658 152"/>
   <text class="lab" x="612" y="300">authenticate</text>
   <text class="lab" x="612" y="313">(TLS · pinned)</text>
@@ -246,7 +251,7 @@
   <!-- footer -->
   <text x="20" y="880" font-size="11" font-weight="700" fill="#C9C9D1">Proven by:</text>
   <text x="92" y="880" font-size="11" fill="#8A8F98">uat_dns (resolvers refuse) · uat_tailnet (tunnel + bounds) · uat_boundary (authority placement, healing, truthful record) · uat_baseline (SSO)</text>
-  <text x="92" y="896" font-size="11" fill="#8A8F98">uat_consul (mesh enforcement, 49) · uat_vault (dynamic secrets) · uat_repairs (isolated executor) · uat_re_workstation · uat_e2e (32 — collect → reverse engineer)</text>
+  <text x="92" y="896" font-size="11" fill="#8A8F98">uat_consul (mesh enforcement) · uat_vault · uat_repairs · uat_re_workstation · uat_e2e (collect → reverse engineer) · uat_audit (sign-on + attribution) · uat_load (50 analysts)</text>
   <text x="20" y="922" font-size="11" font-weight="700" fill="#C9C9D1">Canonical structure:</text>
   <text x="150" y="922" font-size="11" fill="#8A8F98">CODE_GRAPH.md (generated — services, netns wiring, script graph, API surface, UAT coverage) · SECURITY-MODEL.md (P1–P10)</text>
 </svg>

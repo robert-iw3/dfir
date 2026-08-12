@@ -1,6 +1,5 @@
 # The task queue. Only the two ends of a Celery job have a reason to touch it: the backend
-# enqueues, the worker consumes. The trailing rule refuses everything else — a compromised
-# frontend or puller cannot read task payloads or inject work.
+# enqueues, the worker consumes.
 Kind = "service-intentions"
 Name = "ir-redis"
 Sources = [

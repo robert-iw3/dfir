@@ -57,11 +57,9 @@ def case_record(investigation, limit=500):
             "retraction_reason": n.retraction_reason,
         })
 
-    # The record is a timeline of what people asserted. An engine pass is already one entry
-    # here — the `adjudicate` custody event, carrying how many findings it moved — so its
-    # per-finding rows are the detail behind that entry rather than entries themselves.
-    # Listing them individually would bury the human narrative under a pass that can change
-    # thousands of verdicts at once.
+    # The record is a timeline of what people asserted. An engine pass is already one entry here —
+    # the `adjudicate` custody event, carrying how many findings it moved — so its per-finding rows
+    # are the detail behind that entry rather than entries themselves.
     for r in (FindingReclassification.objects
               .filter(investigation=investigation)
               .exclude(actor="investigation-engine")

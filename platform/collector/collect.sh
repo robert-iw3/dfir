@@ -1,41 +1,15 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# IR Platform collection container entrypoint (Linux).
-#
-# Runs the PROVEN ir_toolkit Linux collection (read-only, offline), captures
-# volatile memory, then seals the whole evidence folder with a chain-of-custody
-# manifest. Output lands in a mounted /evidence volume; the store-and-forward
-# broker verifies the seal and ships it to the platform. The container never
-# contacts the platform itself (air-gap preserved on the endpoint).
-#
-# Memory capture: avml needs host kernel memory access (root + CAP_SYS_RAWIO or
-# /proc/kcore). When that is not reachable (e.g. a rootless container), we fall
-# back to a clearly-labelled bounded SYNTHETIC sample so the end-to-end pipeline
-# is still exercised — the sample is flagged is_synthetic=true and is never
-# presented as a real RAM image.
-# ==============================================================================
+# IR Platform collection container entrypoint (Linux): runs the PROVEN ir_toolkit collection read-
+# only and offline, captures memory, seals custody, and stages one bundle for ship.sh.
 set -uo pipefail
 
 TOOLKIT=/opt/toolkit
 EVIDENCE="${IR_EVIDENCE_DIR:-/evidence}"
 INCIDENT_ID="${IR_INCIDENT_ID:-INC-$(date +%Y%m%d-%H%M%S)}"
-# The hostname of the machine under investigation, not of this container.
-#
-# `hostname` inside a container returns the container id, and every artifact, finding,
-# capture and verdict is keyed to this value. Getting it wrong files a host's evidence under
-# a name that exists for the lifetime of one container and matches nothing on the next
-# collection, so a host can never be correlated with itself.
-#
-# The host filesystem and /proc are already mounted for collection, so the real name is
-# available; an explicit override wins for cases where the mounts are absent.
-# Assigns HOST_S and HOSTNAME_SRC directly rather than echoing the name: a caller writing
-# HOST_S="$(resolve_hostname)" runs the function in a subshell, and any variable it set there
-# is discarded when that subshell exits, leaving the source recorded as unknown.
-#
-# HOSTNAME_SRC is "override", "host-mount", or "container-fallback". A consumer cannot tell
-# those apart from the name itself, and they are not equally trustworthy — the fallback is
-# this container's id, which must never overwrite a name resolved properly on an earlier
-# collection.
+# The hostname of the machine under investigation, not of this container — `hostname` in a
+# container returns the container id, and every artifact and finding would converge on the wrong
+# host record.
 HOST_S=""
 HOSTNAME_SRC="unknown"
 resolve_hostname() {
@@ -61,15 +35,8 @@ resolve_hostname() {
     HOST_S="$(hostname -s 2>/dev/null || hostname)"
     HOSTNAME_SRC="container-fallback"
 }
-# A hostname is a label, not an identity: it gets renamed, reused across environments, and
-# duplicated. Evidence from one machine has to converge on one host record even when the name
-# changes between collections, so record what actually identifies the machine.
-#
-# machine-id is generated once at install and survives reboots and renames — it is what ties
-# this collection to a memory image analyzed hours later by a different worker. boot-id
-# changes every boot, which is what distinguishes two collections of the same machine either
-# side of a restart. Both are read from the mounted host filesystem for the same reason the
-# hostname is: this container has its own.
+# A hostname is a label, not an identity: evidence must converge on one host record across
+# renames, so machine-id is captured beside it.
 resolve_machine_id() {
     if [ -n "${IR_MACHINE_ID:-}" ]; then
         echo "${IR_MACHINE_ID}"; return
@@ -130,19 +97,8 @@ python3 -c "import sys; print('  python', sys.version.split()[0])"
 
 # --- 2. Run the proven toolkit collection (degrades gracefully) ---------------
 echo "[collector] running ir_toolkit Linux collection ..."
-# --deep runs the full forensics collector (playbooks/linux/00_collect_forensics.sh).
-#
-# Without it the platform collected the inline snapshot only, and the endpoint lab measured
-# exactly what that costs: of nine artifacts planted for a LOW-sophistication intrusion, four
-# came back. The SSH backdoor key, the SUID escalation binary, the world-writable executable,
-# the `.bashrc` persistence and the hash of every running binary did not — the most obvious
-# evidence of the least sophisticated attack there is.
-#
-# It is not free: --deep walks the filesystem for SUID files and entropy-scans executables.
-# That cost is accepted because a collection that misses an authorized_keys backdoor has not
-# answered the question it was sent to answer. If the walk proves too heavy on a production
-# endpoint, the split is a collection profile, not a return to the inline snapshot —
-# planning/DECISIONS.md O-012.
+# --deep runs the full forensics collector; without it only the inline snapshot is collected, and
+# both paths must close a coverage gap or the default profile stays blind.
 bash "${TOOLKIT}/Invoke-IRCollection-Linux.sh" \
     --output-root "${EVIDENCE}/reports" \
     --incident-id "${INCIDENT_ID}" \
@@ -151,10 +107,8 @@ bash "${TOOLKIT}/Invoke-IRCollection-Linux.sh" \
     --skip-reports 2>&1 | sed 's/^/  [toolkit] /'
 echo "[collector] collection exit handled (toolkit degrades on missing privilege)"
 
-# --- 2b. Corpus scenario (test corpora only) ----------------------------------
-# Merges declared-synthetic findings/indicators into the collection BEFORE the seal, and
-# feeds the scenario's memory artifacts to the synthetic sample so the server-side analyzer
-# derives them from the image itself. Absent the variable, nothing here runs.
+# Merges declared-synthetic findings/indicators into the collection BEFORE the seal, so corpus
+# runs exercise the identical custody path.
 if [ -n "${IR_SCENARIO_FILE:-}" ] && [ -r "${IR_SCENARIO_FILE}" ]; then
     echo "[collector] corpus scenario: $(basename "${IR_SCENARIO_FILE}")"
     python3 "$(dirname "$0")/scenario_inject.py" "${IR_SCENARIO_FILE}" "${OUT_DIR}" \
@@ -240,11 +194,8 @@ echo "[collector] sealing evidence (chain of custody) ..."
 python3 "$(dirname "$0")/custody.py" seal "${OUT_DIR}" "${INCIDENT_ID}" >/dev/null
 python3 "$(dirname "$0")/custody.py" verify "${OUT_DIR}"
 
-# --- 5. Package for transfer --------------------------------------------------
-# ship.sh sends one file; sealing happens above, so the archive is built from the folder
-# exactly as sealed. Built here rather than in ship.sh because this is the step that knows
-# which folder was just written, and because the archive must not be assembled on a
-# read-only evidence volume — ship.sh mounts it read-only by design.
+# ship.sh sends one file; sealing happens above, so the archive is built from the folder exactly
+# as sealed.
 BUNDLE="${BUNDLE:-/evidence/bundle.tar.gz}"
 echo "[collector] packaging -> ${BUNDLE}"
 if tar -czf "${BUNDLE}" -C "$(dirname "${OUT_DIR}")" "$(basename "${OUT_DIR}")" 2>/dev/null; then

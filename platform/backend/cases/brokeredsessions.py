@@ -214,11 +214,9 @@ def _attribute(items):
             item["attribution"] = "unknown"
             continue
         matched = [w for w in windows if _overlaps(w, opened, closed)]
-        # The session's principal names a workstation by configuration (the distributor pins
-        # that workstation's connections to it), and a sign-on names its workstation from the
-        # kiosk's own statement. When both sides speak, the join narrows to the sign-ons from
-        # THAT workstation. When neither or only one does, the wide time-overlap stands —
-        # never narrowed on half the evidence.
+        # The session's principal names a workstation by configuration (the distributor pins that
+        # workstation's connections to it), and a sign-on names its workstation from the kiosk's own
+        # statement. When both sides speak, the join narrows to the sign-ons from THAT workstation.
         if pinned_ws:
             narrowed = [w for w in matched if w[3] == pinned_ws]
             if narrowed:

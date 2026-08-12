@@ -8,8 +8,8 @@
 # seen rather than inferred.
 #
 # A REAL MEMORY CAPTURE IS REQUIRED. The synthetic sample the other UATs use exercises the
-# structural scan only — it has no kernel structures, so Volatility cannot parse it and
-# nothing here would be proven. Supply an image taken from a real Linux host:
+# structural scan only — it has no kernel structures, so Volatility cannot parse it and nothing
+# here would be proven.
 #
 #   IR_TEST_IMAGE=/path/to/memory_<host>.raw ./uat_memory_analysis.sh
 #   ./uat_memory_analysis.sh --image /path/to/capture.raw --host WS-007

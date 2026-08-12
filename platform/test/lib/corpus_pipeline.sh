@@ -49,13 +49,9 @@ def note(label):
     print("INFOCHK " + label)
 '
 
-# Run a Python block inside the backend. The caller supplies it on stdin as a QUOTED
-# heredoc and every value reaches it through the environment, so this shell expands nothing
-# inside it — including its comments.
-#
-# An unquoted heredoc expands backticks, and a backtick in a Python comment is a command the
-# test then runs: `/usr/bin/pkexec`, written as an aside about a packaged SUID binary, was
-# executed and raised a polkit authentication prompt in the middle of a run.
+# Run a Python block inside the backend. The caller supplies it on stdin as a QUOTED heredoc and
+# every value reaches it through the environment, so this shell expands nothing inside it —
+# including its comments.
 be_py() {
     { printf '%s\n' "${_CORPUS_PRELUDE}"; cat; } \
         | ${RUNTIME} exec -i \
@@ -100,11 +96,10 @@ corpus_preconditions() {
         exit 1
     fi
 
-    # Rebuilt when its source is NEWER, not merely when it is absent. Built-only-when-absent
-    # is what left the analysis worker running pre-migration code, and here it is worse: the
-    # corpus would collect with a stale collector while the deep-collection assertion greps
-    # current source and passes. A green corpus proving nothing about the code under test is
-    # the one outcome this suite must not produce.
+    # Rebuilt when its source is NEWER, not merely when it is absent. Built-only-when-absent is what
+    # left the analysis worker running pre-migration code, and here it is worse: the corpus would
+    # collect with a stale collector while the deep-collection assertion greps current source and
+    # passes.
     local built
     if ! ${RUNTIME} image exists ir-collector:latest 2>/dev/null; then
         built=""
@@ -266,7 +261,7 @@ PYEOF
 # failed. Assert the outcome: an analysis that failed, or completed without adjudicating,
 # produces the same downstream picture as a campaign with nothing to find — no verdicts, no
 # compromise, no links — and the failure then reads as a correlation defect layers from its
-# cause. The recorded error is printed because it names the real one.
+# cause.
 corpus_assert_analysis_ran() {
     corpus_checks <<'PYEOF'
 from cases.models import MemoryAnalysisRun

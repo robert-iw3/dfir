@@ -52,9 +52,25 @@ export function verdictBadge(v) {
   return <span className={`badge ${cls}`}>{v}</span>;
 }
 
-export function Loading({ error }) {
+// Twelve dots because the ring reads as motion rather than as a countdown: nothing being
+// waited on here reports progress, so a determinate bar would be inventing one.
+export function Ring() {
+  return (
+    <span className="ring" aria-hidden="true">
+      {Array.from({ length: 12 }, (_, i) => <i key={i} />)}
+    </span>
+  );
+}
+
+export function Loading({ error, label = "Loading…" }) {
   if (error) return <div className="empty">Error: {error}</div>;
-  return <div className="empty">Loading…</div>;
+  return (
+    <div className="empty">
+      <span className="waiting" role="status" aria-live="polite">
+        <Ring /><span>{label}</span>
+      </span>
+    </div>
+  );
 }
 
 export function Empty({ children }) {

@@ -43,12 +43,9 @@ def audited_exception_handler(exc, context):
         from .rbac import role_of
 
         view = context.get("view")
-        # A refused export belongs in the export ledger, beside the ones that succeeded.
-        # A ledger showing only successes answers "what left" and cannot answer "what was
-        # tried", and during an investigation into a responder those are one question.
-        #
-        # The view names its own kind rather than the handler mapping view classes to kinds:
-        # a new export endpoint then arrives ledgered, instead of arriving silent.
+        # A refused export belongs in the export ledger, beside the ones that succeeded. A ledger
+        # showing only successes answers "what left" and cannot answer "what was tried", and during an
+        # investigation into a responder those are one question.
         kind = getattr(view, "export_kind", None)
         if kind and isinstance(exc, PermissionDenied):
             from .exportledger import record_export

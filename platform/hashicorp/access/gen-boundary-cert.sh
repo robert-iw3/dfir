@@ -2,13 +2,12 @@
 # Certificate for the Boundary controller's API listener.
 #
 # WHAT RIDES ON THIS LISTENER. The session client authenticates against it with the analyst's
-# password and then asks it to authorize a session. Without TLS both cross the DMZ-to-enclave link
-# in the clear — the credential that mints enclave access, and the token that is that access.
+# password and then asks it to authorize a session.
 #
 # Only the `api` and `ops` listeners take TLS configuration at all. Boundary's `cluster` and
-# `proxy` listeners negotiate their own ephemeral, mutually-authenticated TLS from the worker-auth
-# material, so worker registration and session data are already encrypted and are not configured
-# here. This certificate covers the one flow Boundary leaves to the operator.
+# `proxy` listeners negotiate their own ephemeral, mutually-authenticated TLS from the worker-
+# auth material, so worker registration and session data are already encrypted and are not
+# configured here.
 #
 # Separate from the receiver's, headscale's and the platform's web certificate. Four different
 # trust relationships; one certificate across them ties the access broker's rotation to the

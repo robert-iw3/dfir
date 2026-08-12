@@ -9,9 +9,8 @@
 #   ./kc-userctl.sh reset  <username> --password '<value>'   use a chosen value instead
 #
 # HOST-BOUND BY CONSTRUCTION: this works through `podman exec` into the local Keycloak
-# container. There is no network path, no listener and no API — on any machine that is
-# not running Keycloak it can do nothing. That is the safeguard: recovering an account
-# requires the same physical access as recovering the identity store itself.
+# container. There is no network path, no listener and no API — on any machine that is not
+# running Keycloak it can do nothing.
 #
 # A reset here never hands out a working session: the printed password admits exactly one
 # login, which Keycloak refuses to complete until it is replaced.

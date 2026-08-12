@@ -57,8 +57,6 @@ def login(sso_base, app_url, user, password, rotate_to=None, ws_id=None):
     # 1. Ask oauth2-proxy where to send the browser (the Keycloak authorize URL).
 
     # 2. Load the Keycloak login page and extract its form action.
-    # Hit the app; unauthenticated, the SSO gate redirects through to the Keycloak
-    # login page. urllib follows the chain for us.
     with op.open(app_url, timeout=25) as r:
         page = r.read().decode("utf-8", "replace")
     m = re.search(r'action="([^"]+)"', page)
@@ -66,7 +64,7 @@ def login(sso_base, app_url, user, password, rotate_to=None, ws_id=None):
         return 1, "FAIL: no login form on the Keycloak page", op, jar
     action = m.group(1).replace("&amp;", "&")
 
-    # 3. Submit credentials. The resulting redirect chain runs the callback.
+    # 3. Submit credentials.
     data = urllib.parse.urlencode({"username": user, "password": password,
                                    "credentialId": ""}).encode()
     try:

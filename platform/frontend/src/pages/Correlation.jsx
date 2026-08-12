@@ -10,6 +10,7 @@ import { Link, useSearchParams } from "react-router-dom";
 import { api } from "../api.js";
 import { useData, Loading } from "../components/common.jsx";
 import AttackGraph from "../components/AttackGraph.jsx";
+import { EvidenceKindBars, RarityScatter, CohesionStrip } from "../components/charts.jsx";
 import { can, useAuth } from "../auth.jsx";
 import { Time, usePrefs, formatTime } from "../components/prefs.jsx";
 
@@ -274,6 +275,7 @@ export default function Correlation() {
   const [graph, setGraph] = useState(null);
   const [timeline, setTimeline] = useState(null);
   const [tradecraft, setTradecraft] = useState(null);
+  const [history, setHistory] = useState(null);
   const [busy, setBusy] = useState(false);
   // Off by default. Declined candidates are the answer to a question an analyst asks
   // deliberately, and drawing every refused pair by default buries the intrusion.
@@ -309,6 +311,7 @@ export default function Correlation() {
     api.campaignGraph(campaignId).then(setGraph).catch(() => setGraph(null));
     api.campaignTimeline(campaignId).then(setTimeline).catch(() => setTimeline(null));
     api.campaignTradecraft(campaignId).then(setTradecraft).catch(() => setTradecraft(null));
+    api.correlationHistory(invId).then(setHistory).catch(() => setHistory(null));
   }, [campaignId]);
 
   const recompute = async () => {
@@ -446,6 +449,14 @@ export default function Correlation() {
                       from finding #{edge.source_finding_id}
                     </div>
                   )}
+                  {(edge.corroboration?.length > 0 || edge.evidence_kinds?.length > 0) && (
+                    <div style={{ marginTop: 10 }}>
+                      <div className="chart-note">What carries this link — a link riding one
+                        shared address dies when the actor rotates; one riding several kinds
+                        does not. Click a bar to search that value everywhere.</div>
+                      <EvidenceKindBars edge={edge} />
+                    </div>
+                  )}
                 </div>
               )}
             </>
@@ -574,6 +585,22 @@ export default function Correlation() {
               </table>
             </div>
           ) : <Loading />}
+
+          <h2>Signal or environment</h2>
+          <div className="panel" style={{ padding: "14px 18px" }}>
+            <p className="chart-note">Each dot is a shared indicator: the further right, the
+              more hosts carry it and the less it can link anyone. Weights are the engine's
+              own, over the deployment population of {indicators?.population ?? "?"}. Click
+              a dot to search it everywhere it appears.</p>
+            <RarityScatter indicators={indicators?.indicators} />
+          </div>
+
+          <h2>Cohesion</h2>
+          <div className="panel" style={{ padding: "14px 18px" }}>
+            <p className="chart-note">Whether each campaign is tightening or fragmenting as
+              evidence lands. A campaign that fragments is one the evidence is arguing with.</p>
+            <CohesionStrip history={history} />
+          </div>
 
           <h2>Shared indicators across hosts</h2>
           <div className="panel">

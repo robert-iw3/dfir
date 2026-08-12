@@ -1,15 +1,7 @@
-# ISF builder — Debian/Ubuntu family.
-#
-# Runs outside the enclave, where downloading debug symbols is possible. Produces a
-# Volatility 3 symbol table for one kernel; only that JSON is carried inward.
-#
-# Two acquisition paths, tried in order by the entrypoint:
-#   1. debuginfod by build-id — distro-agnostic, no repository configuration needed
-#   2. the ddebs archive — Ubuntu/Debian debug packages, which is why this image is
-#      family-specific: the package name and repository layout differ per family
-# The base must match the TARGET's release, not just its family: ddebs pockets are keyed
-# by codename, so a noble builder cannot fetch a resolute kernel's debug symbols. The
-# driver selects this from the requisites' VERSION_ID.
+# ISF builder, Debian/Ubuntu family — runs outside the enclave where debug symbols are
+# downloadable; only the resulting JSON is carried inward. The entrypoint tries debuginfod by
+# build-id, then the ddebs archive; the base must match the TARGET release (ddebs pockets are
+# keyed by codename), selected by the driver from the requisites' VERSION_ID.
 ARG BASE_IMAGE=docker.io/library/ubuntu:24.04
 FROM ${BASE_IMAGE}
 
