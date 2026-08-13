@@ -19,7 +19,8 @@ USER root
 RUN test -f /opt/keycloak/themes/dfir/login/theme.properties \
  && test -f /opt/keycloak/themes/dfir/login/error.ftl \
  && test -f /opt/keycloak/themes/dfir/login/resources/css/login.css \
- && test -f /opt/keycloak/themes/dfir/login/resources/img/logo.jpeg \
+ && test -f /opt/keycloak/themes/dfir/login/resources/img/logo.svg \
+ && test -f /opt/keycloak/themes/dfir/login/footer.ftl \
  && test -s /opt/keycloak/data/password-blacklists/dfir-platform.txt \
  && test -f /opt/keycloak/themes/dfir/login/resources/img/background.jpeg \
  && chown -R keycloak:root /opt/keycloak/themes/dfir \

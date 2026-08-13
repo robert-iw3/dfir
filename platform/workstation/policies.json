@@ -123,7 +123,7 @@
         "Value": true,
         "Status": "locked"
       },
-      "_comment_download_dir": "TRUE is the STRONGER setting here, not the weaker one. False means 'ask where to save', which opens the GTK file chooser — and this container has no desktop portal, no dbus session and software rendering, so that dialog ABORTS Firefox: exporting an IOC bundle killed the browser every time. True sends every download to the one directory named below, which the analyst cannot redirect. A fixed confined path is a tighter constraint than a picker that can write anywhere the process can reach, and browser.download.folderList=2 already declared this directory — it was simply never set.",
+      "_comment_download_dir": "TRUE is the STRONGER setting here, not the weaker one. False means 'ask where to save', which opens the GTK file chooser \u2014 and this container has no desktop portal, no dbus session and software rendering, so that dialog ABORTS Firefox: exporting an IOC bundle killed the browser every time. True sends every download to the one directory named below, which the analyst cannot redirect. A fixed confined path is a tighter constraint than a picker that can write anywhere the process can reach, and browser.download.folderList=2 already declared this directory \u2014 it was simply never set.",
       "browser.download.useDownloadDir": {
         "Value": true,
         "Status": "locked"
@@ -201,6 +201,34 @@
       "print.always_print_silent": {
         "Value": false,
         "Status": "locked"
+      },
+      "browser.download.open_pdf_attachments_inline": {
+        "Value": false,
+        "Status": "locked"
+      },
+      "pdfjs.disabled": {
+        "Value": true,
+        "Status": "locked"
+      }
+    },
+    "Handlers": {
+      "_comment": "Evidence leaves the browser as a file, never as a rendered document. Firefox opening a finished PDF navigates the tab to a file:// URL, which the <all_urls> block above then refuses \u2014 stranding a chrome-less kiosk on the block page with the download already on disk. Saving also keeps the PDF parser away from material recovered from a compromised host.",
+      "mimeTypes": {
+        "application/pdf": {
+          "action": "saveToDisk"
+        },
+        "application/octet-stream": {
+          "action": "saveToDisk"
+        },
+        "text/markdown": {
+          "action": "saveToDisk"
+        },
+        "text/csv": {
+          "action": "saveToDisk"
+        },
+        "application/json": {
+          "action": "saveToDisk"
+        }
       }
     }
   }

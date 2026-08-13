@@ -318,7 +318,7 @@ if has "${LOGIN_HTML}" "/login/dfir"; then
 else
     bad "login page fell back to a built-in theme — branding is not being served"
 fi
-has "${LOGIN_HTML}" "DFIR_TOOLKIT" \
+has "${LOGIN_HTML}" "DFIR_FRAMEWORK" \
     && ok "login page carries the platform wordmark" \
     || bad "login page does not carry the wordmark"
 n_theme="$(${RUNTIME} logs ir-enclave_keycloak_1 2>&1 | grep -c "Failed to find LOGIN theme" || true)"

@@ -1,4 +1,4 @@
-# Deploying the IR Platform
+# Deploying the DFIR Framework
 
 The platform deploys as **four tiers on separate hardware**. Each tier is its own compose
 project; the only coupling between them is the addressing in [`.env`](.env.example).

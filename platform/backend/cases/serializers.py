@@ -255,11 +255,25 @@ class AuditLogSerializer(serializers.ModelSerializer):
 
 class InvestigationSerializer(serializers.ModelSerializer):
     run_count = serializers.IntegerField(source="runs.count", read_only=True)
+    # An archived case stays listed with its cold-storage state and the bundle's counts;
+    # a case missing from the list would read as deleted, which a forensic record must not.
+    archive = serializers.SerializerMethodField()
 
     class Meta:
         model = Investigation
         fields = ["id", "name", "incident_id", "operator", "severity", "status",
-                  "notes", "run_count", "created_at"]
+                  "notes", "run_count", "archive", "created_at"]
+
+    def get_archive(self, obj):
+        arc = obj.archives.order_by("-id").first() if obj.status == "archived" else None
+        if not arc:
+            return None
+        return {"id": arc.id, "state": arc.state,
+                "archived_at": arc.created_at.isoformat(),
+                "archived_while_open": arc.archived_while_open,
+                "restored_until": (arc.restored_until.isoformat()
+                                   if arc.restored_until else None),
+                "row_counts": arc.row_counts, "size_bytes": arc.size_bytes}
 
 
 class InvestigationDetailSerializer(InvestigationSerializer):

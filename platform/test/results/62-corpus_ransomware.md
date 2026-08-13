@@ -2,7 +2,7 @@
 
 *What passing proves:* A ransomware event correlates as ONE campaign despite its signature being on most of the fleet, 13 members having no movement record, two never being encrypted and one only being destroyed — and the hosts whose logs the actor cleared report their compromise date as unanswered rather than guessing.
 
-- Run: `uat_corpus_ransomware.sh` — 2026-08-12 14:31:15Z
+- Run: `uat_corpus_ransomware.sh` — 2026-08-13 20:57:38Z
 
 **Preconditions**
 
@@ -36,7 +36,7 @@
 
 | Result | Assertion — with evidence |
 |---|---|
-| ✅ PASS | captures terminal and compromise settled (24 analyzed, 18 compromised) |
+| ✅ PASS | every capture reached a terminal analysis and compromise settled (24/24 analyzed, 18 compromised) |
 | ✅ PASS | every analysis completed (24) |
 | ✅ PASS | every analysis was adjudicated by the investigation engine (24) |
 
@@ -80,7 +80,7 @@
 | ✅ PASS | no pair is joined by the estate's own scheduled task or backup account, which touch every host in the same hour |
 | ✅ PASS | no clean endpoint appears in any campaign (6 clean) |
 | ✅ PASS | the unrelated data theft is NOT pulled in by the rclone.exe both operators used |
-| ✅ PASS | and the two hosts it did touch are their own campaign (cohesion 0.6782) |
+| ✅ PASS | and the two hosts it did touch are their own campaign (cohesion 0.669) |
 
 **L3 — where the actor removed the history, the date reads as unanswered**
 
@@ -114,7 +114,7 @@
 
 | Result | Assertion — with evidence |
 |---|---|
-| · | deployment host population at correlation time: 92 |
+| · | deployment host population at correlation time: 73 |
 | ✅ PASS | INC-CORPUS-A still classifies 12 compromised with a third fleet present |
 | ✅ PASS | no INC-CORPUS-A campaign reaches a Vault Serpent endpoint |
 | ✅ PASS | INC-CORPUS-B still classifies 4 compromised with a third fleet present |

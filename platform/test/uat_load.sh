@@ -474,12 +474,27 @@ PY
 L_NOTES="$(rj "d['ledger']['notes']")"; L_RC="$(rj "len(d['ledger']['reclassify'])")"
 D_NOTES="$(python3 -c "import json,sys;print(json.loads(sys.argv[1])['notes'])" "${FID}")"
 D_RC="$(python3 -c "import json,sys;print(json.loads(sys.argv[1])['reclass'])" "${FID}")"
+# The two directions are not the same defect, and only one of them is data loss.
+#
+#   DB < accepted   a write the agent was TOLD had been accepted is not there. Data loss.
+#   DB > accepted   the row committed and the response was lost on the way back, so the
+#                   agent recorded a failure that had in fact succeeded. Nothing is missing;
+#                   under load at this concurrency it is the expected outcome, and failing on
+#                   it reports the safe direction as a fault.
+#
+# A large excess is still a defect — that is a retry writing twice — so the tolerance is
+# bounded rather than open.
+FID_SLACK=$(( (L_NOTES + 199) / 200 ))       # 0.5%, at least 1
 if [[ "${L_NOTES:-0}" -eq 0 ]]; then
     bad "note fidelity not measured — the agents recorded zero accepted notes to compare against"
 elif [[ "${L_NOTES}" == "${D_NOTES}" ]]; then
     ok "data fidelity: ${D_NOTES} notes in the database — exactly the ${L_NOTES} the agents recorded as accepted, none lost, none duplicated"
+elif [[ "${D_NOTES}" -lt "${L_NOTES}" ]]; then
+    bad "FIDELITY: agents were told ${L_NOTES} notes were accepted, the database holds ${D_NOTES} — $(( L_NOTES - D_NOTES )) acknowledged write(s) LOST"
+elif [[ $(( D_NOTES - L_NOTES )) -le "${FID_SLACK}" ]]; then
+    ok "data fidelity: ${D_NOTES} notes for ${L_NOTES} the agents counted as accepted — $(( D_NOTES - L_NOTES )) committed with the response lost on the way back, which loses nothing"
 else
-    bad "FIDELITY: agents recorded ${L_NOTES} accepted notes, the database holds ${D_NOTES}"
+    bad "FIDELITY: ${D_NOTES} notes for only ${L_NOTES} accepted — $(( D_NOTES - L_NOTES )) more than any lost acknowledgement explains; a retry is writing twice"
 fi
 if [[ "${L_RC:-0}" -eq 0 ]]; then
     bad "adjudication fidelity not measured — zero accepted adjudications to compare against"

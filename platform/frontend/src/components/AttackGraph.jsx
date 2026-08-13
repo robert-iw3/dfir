@@ -8,19 +8,21 @@
  * than by wall-clock time, so a host reached late by a short path stays near its parent
  * and the shape of the intrusion reads correctly.
  *
- * Three edge classes, drawn differently on purpose:
- *   movement    solid, arrowed — one host was observed reaching another
- *   behavioral  dashed, no arrow — shared tradecraft, no movement recorded between them
- *   declined    faint dotted — the engine considered the pair and refused it
+ * An edge here is a MOVEMENT, carrying the pivot vector that got them there — the technique,
+ * the protocol it rode, and the account it used. That triple is the question an analyst
+ * brings to this graph.
  *
- * The declined class is the one that earns its place. A graph drawing only what linked
- * cannot answer "why aren't these two the same intrusion?", and that is asked of every
- * correlation result an analyst does not already agree with.
+ * Shared-tradecraft links are deliberately NOT drawn: undirected similarity at
+ * near-complete-graph density crosses every node while saying nothing about sequence. They
+ * belong to the tradecraft and linkage panels, which show them at a density that reads.
+ *
+ * Declined candidates stay available behind a toggle, off by default: a graph drawing only
+ * what linked cannot answer "why aren't these two the same intrusion?".
  */
 // The gap between a node's right edge and the next column's left edge is where an edge label has
 // to fit. At COL_W 210 / NODE_W 168 that gap was 42px and every protocol label rendered on top
 // of a node box.
-const LABEL_LANE = 96;
+const LABEL_LANE = 112;
 const NODE_W = 176;
 const COL_W = NODE_W + LABEL_LANE;
 const ROW_H = 92;
@@ -68,9 +70,7 @@ function depths(nodes, edges) {
 export default function AttackGraph({
   nodes,
   edges,
-  behavioralEdges = [],
   declinedEdges = [],
-  showBehavioral = true,
   showDeclined = false,
   onSelect,
   onSelectEdge,
@@ -108,36 +108,53 @@ export default function AttackGraph({
     const x2 = b.x;
     const y2 = b.y + NODE_H / 2;
     const mx = (x1 + x2) / 2;
-    // The label anchors in the LANE, not at the curve's midpoint. For a long edge spanning
-    // several columns the curve's middle lands on top of whatever node sits between them,
-    // which is how every protocol ended up unreadable.
-    const lx = x1 + Math.min(LABEL_LANE / 2, Math.max(12, (x2 - x1) / 2));
     return {
       d: `M ${x1} ${y1} C ${mx} ${y1}, ${mx} ${y2}, ${x2} ${y2}`,
-      mx, my: (y1 + y2) / 2,
-      lx, ly: y1 + (y2 - y1) * 0.12,   // near the source, before the curve bends away
+      x1, y1, x2, y2,
     };
   };
 
   // A label is drawn on a chip so it stays readable wherever it lands — over the panel, over
   // an edge, or over another label. Sized from the text because SVG has no text metrics here.
-  const Label = ({ x, y, text, muted }) => {
-    if (!text) return null;
-    const w = String(text).length * 6.2 + 10;
+  const Label = ({ x, y, lines, muted }) => {
+    const rows = (Array.isArray(lines) ? lines : [lines]).filter(Boolean);
+    if (!rows.length) return null;
+    const w = Math.max(...rows.map((t) => String(t).length)) * 6.2 + 12;
+    const h = rows.length * 12 + 6;
     return (
       <g>
-        <rect x={x - w / 2} y={y - 9} width={w} height={16} rx="3"
+        <rect x={x - w / 2} y={y - h / 2} width={w} height={h} rx="3"
               fill="var(--bg-elev-2)" stroke="var(--border)" strokeWidth="0.5"
-              opacity="0.92" />
-        <text x={x} y={y + 3} textAnchor="middle" fontSize="10"
-              fill={muted ? "var(--text-dim)" : "var(--text)"}>{text}</text>
+              opacity="0.95" />
+        {rows.map((t, i) => (
+          <text key={i} x={x} y={y - h / 2 + 12 + i * 12} textAnchor="middle" fontSize="10"
+                fontFamily={i === 0 ? "var(--mono)" : undefined}
+                fill={i === 0 && !muted ? "var(--accent-strong)" : "var(--text-dim)"}>
+            {t}
+          </text>
+        ))}
       </g>
     );
   };
 
-  const behavioral = showBehavioral ? behavioralEdges.filter(drawable) : [];
   const declined = showDeclined ? declinedEdges.filter(drawable) : [];
   const movement = (edges || []).filter(drawable);
+
+  // The label rides the edge just BEFORE its destination: a host fanning out to six others
+  // gives six edges one shared origin, which stacked all six chips into one pile. The
+  // counter only handles two hosts reaching the same target.
+  const arrivals = new Map();
+  const drawn = movement.map((e) => {
+    const c = curve(e);
+    const seen = arrivals.get(e.dst) || 0;
+    arrivals.set(e.dst, seen + 1);
+    return {
+      e, c,
+      at: { x: c.x2 - LABEL_LANE / 2, y: c.y2 + seen * 26 },
+      // The domain prefix repeats on every edge and costs the width the technique needs.
+      account: e.account ? String(e.account).split("\\").pop() : "",
+    };
+  });
 
   return (
     <div className="panel" style={{ overflowX: "auto", padding: 8 }}>
@@ -146,8 +163,8 @@ export default function AttackGraph({
         height={height}
         role="img"
         aria-label={
-          `Attack graph: ${nodes.length} hosts, ${movement.length} observed movements, ` +
-          `${behavioral.length} behavioral links, ${declined.length} declined candidates`
+          `Attack graph: ${nodes.length} hosts, ${movement.length} observed movements ` +
+          `with their pivot technique, ${declined.length} declined candidates`
         }
       >
         <defs>
@@ -165,41 +182,36 @@ export default function AttackGraph({
                style={{ cursor: onSelectEdge ? "pointer" : "default" }}>
               <title>{`declined ${e.src} ~ ${e.dst} (${e.weight}) — ${e.why || ""}`}</title>
               <path d={c.d} fill="none" stroke="var(--text-dim)" strokeWidth="1"
-                    strokeDasharray="2 5" opacity="0.45" />
+                    strokeDasharray="2 5" opacity="0.3" />
             </g>
           );
         })}
 
-        {behavioral.map((e, i) => {
-          const c = curve(e);
-          return (
-            <g key={`b${i}`} onClick={() => onSelectEdge?.({ ...e, kind: "behavioral" })}
-               style={{ cursor: onSelectEdge ? "pointer" : "default" }}>
-              <title>
-                {`shared tradecraft ${e.src} ~ ${e.dst} (${e.weight}) — ` +
-                 `${(e.evidence_kinds || []).join(", ")}`}
-              </title>
-              <path d={c.d} fill="none" stroke="var(--accent)"
-                    strokeWidth={strokeFor(e.weight)} strokeDasharray="7 4" opacity="0.75" />
-            </g>
-          );
-        })}
+        {/* Paths and labels are two passes, not one group per edge: interleaved, every edge
+            drawn after a label painted over it. */}
+        {drawn.map(({ e, c }, i) => (
+          <g key={`m${i}`} onClick={() => onSelectEdge?.({ ...e, kind: "movement" })}
+             style={{ cursor: onSelectEdge ? "pointer" : "default" }}>
+            <title>
+              {`${e.src} -> ${e.dst}` +
+               `${e.technique ? ` — ${e.technique}` : ""}` +
+               ` via ${e.protocol || "?"}` +
+               `${e.account ? ` as ${e.account}` : ""}` +
+               `${e.weight != null ? ` (${e.weight})` : ""}`}
+            </title>
+            <path d={c.d} fill="none" stroke="var(--text-dim)" opacity="0.4"
+                  strokeWidth={strokeFor(e.weight)} markerEnd="url(#arrow)" />
+          </g>
+        ))}
 
-        {movement.map((e, i) => {
-          const c = curve(e);
-          return (
-            <g key={`m${i}`} onClick={() => onSelectEdge?.({ ...e, kind: "movement" })}
-               style={{ cursor: onSelectEdge ? "pointer" : "default" }}>
-              <title>
-                {`${e.src} -> ${e.dst} via ${e.protocol || "?"}` +
-                 `${e.weight != null ? ` (${e.weight})` : ""}`}
-              </title>
-              <path d={c.d} fill="none" stroke="var(--text-dim)"
-                    strokeWidth={strokeFor(e.weight)} markerEnd="url(#arrow)" />
-              <Label x={c.lx} y={c.ly} text={e.protocol} />
-            </g>
-          );
-        })}
+        {/* The pivot vector: what was used, over what, as whom. Transparent to the pointer so
+            the edge underneath stays the click target. */}
+        <g style={{ pointerEvents: "none" }}>
+          {drawn.map(({ e, at, account }, i) => (
+            <Label key={`l${i}`} x={at.x} y={at.y}
+                   lines={[e.technique, [e.protocol, account].filter(Boolean).join(" · ")]} />
+          ))}
+        </g>
 
         {nodes.map((n) => {
           const p = pos.get(n.hostname);

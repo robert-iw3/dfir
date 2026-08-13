@@ -234,7 +234,7 @@ export default function Admin() {
           {symbols ? `${symbols.outstanding} outstanding` : "…"}
         </span>
         {symbols?.outstanding > 0 && (
-          <a className="btn" href={api.symbolRequisitesUrl()}>Export requisites</a>
+          <a className="btn" download href={api.symbolRequisitesUrl()}>Export requisites</a>
         )}
       </div>
       <div className="panel">

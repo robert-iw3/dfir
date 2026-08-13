@@ -2,7 +2,7 @@
 
 *What passing proves:* The deployed platform serves its API behind the SSO gate, with identity enforced rather than assumed.
 
-- Run: `uat_baseline.sh` — 2026-08-12 14:03:59Z
+- Run: `uat_baseline.sh` — 2026-08-13 21:59:16Z
 
 **Components — every tier answers**
 
@@ -15,7 +15,7 @@
 | ✅ PASS | ir-enclave_worker_1 running |
 | ✅ PASS | ir-enclave_puller_1 running |
 | ✅ PASS | ir-dmz_receiver_1 running |
-| ✅ PASS | receiver resolves by name (receiver -> 10.89.0.22) |
+| ✅ PASS | receiver resolves by name (receiver -> 10.89.0.11) |
 
 **Collector — identity is the machine's, not the container's**
 
@@ -62,7 +62,7 @@
 
 | Result | Assertion — with evidence |
 |---|---|
-| · | collection runs currently recorded: 91 |
+| · | collection runs currently recorded: 117 |
 | ✅ PASS | no machine-id maps to two host records |
 
 **Analysis — the parser gate holds on real evidence**
@@ -76,9 +76,9 @@
 
 | Result | Assertion — with evidence |
 |---|---|
-| ✅ PASS | 6 component(s) reporting resources |
-| ✅ PASS | no reporter is stale |
-| · | open capacity/resource alerts: 4 |
+| ✅ PASS | 7 component(s) reporting resources |
+| · | stale reporters: worker (27e338e1f438),worker (7e7480b4bd16) (expected shortly after a restart) |
+| · | open capacity/resource alerts: 6 |
 
 **Login branding — the custom theme is actually served**
 
@@ -95,11 +95,11 @@
 | ✅ PASS | the code graph matches the tree — services, scripts, routes and their UATs are current |
 | ✅ PASS | every documented link resolves, and every document is in the change-management inventory |
 | ✅ PASS | no narrative comments, and no file is majority prose |
-| ✅ PASS | runtime locks: 105 of 2048 in use (58 volumes, 47 containers) — room to create containers |
+| ✅ PASS | runtime locks: 95 of 2048 in use (46 volumes, 49 containers) — room to create containers |
 
 **Baseline**
 
 | Result | Assertion — with evidence |
 |---|---|
 
-**Verdict: PROVEN** — 35 assertions passed, 0 failed.
+**Verdict: PROVEN** — 34 assertions passed, 0 failed.

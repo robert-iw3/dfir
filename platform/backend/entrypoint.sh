@@ -109,8 +109,13 @@ case "$role" in
         python manage.py migrate --database=opslog --noinput
         python manage.py seed_roles
         python manage.py collectstatic --noinput >/dev/null 2>&1 || true
+        # Access log to a file the shipper can move; everything else stays on stdout so
+        # `podman logs` is still useful while the container is alive.
+        mkdir -p "${IR_APP_LOG_DIR:-/logs/app}" 2>/dev/null || true
         exec gunicorn ir_platform.wsgi:application \
-            --bind 0.0.0.0:8000 --workers "${GUNICORN_WORKERS:-3}" --timeout 120
+            --bind 0.0.0.0:8000 --workers "${GUNICORN_WORKERS:-3}" --timeout 120 \
+            --access-logfile "${IR_APP_LOG_DIR:-/logs/app}/backend-access.log" \
+            --error-logfile -
         ;;
     worker)
         wait_for_db

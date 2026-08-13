@@ -192,11 +192,32 @@ function Component({ row }) {
           <Row label="errors since last report" mono={false}
                warn={Boolean(logs.errors_since_last_report)}
                value={<>{logs.errors_since_last_report ?? 0}<span className="dim"> ({logs.errors_total ?? 0} total)</span></>} />
-          {logs.last_error && <p className="ch-last-error mono">{logs.last_error}</p>}
+          {/* The last error is HISTORY — it stays set forever once anything failed. Without
+              its age, a probe from this morning reads as a live fault; with zero errors since
+              the last report it is muted, because recovered is the fact that matters. */}
+          {logs.last_error && (
+            <p className={`ch-last-error mono${logs.errors_since_last_report ? "" : " ch-error-stale"}`}>
+              {logs.last_error_at && (
+                <span className="dim">
+                  {logs.errors_since_last_report ? "last error " : "recovered — last error "}
+                  {ago(logs.last_error_at)} ·{" "}
+                </span>
+              )}
+              {logs.last_error}
+            </p>
+          )}
         </Group>
       </div>
     </section>
   );
+}
+
+function ago(epochSeconds) {
+  const s = Math.max(0, Math.floor(Date.now() / 1000 - epochSeconds));
+  if (s < 90) return `${s}s ago`;
+  if (s < 5400) return `${Math.round(s / 60)}m ago`;
+  if (s < 129600) return `${Math.round(s / 3600)}h ago`;
+  return `${Math.round(s / 86400)}d ago`;
 }
 
 export default function ComponentHealth() {

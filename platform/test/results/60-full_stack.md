@@ -2,7 +2,7 @@
 
 *What passing proves:* Sealed evidence ships from a collector over pinned TLS, is held opaque in the DMZ, and is pulled inward by the enclave with custody intact.
 
-- Run: `uat_full_stack.sh` — 2026-08-12 18:10:56Z
+- Run: `uat_full_stack.sh` — 2026-08-13 21:11:53Z
 
 **1/9  Deploy all tiers (enclave + DMZ + workstation)**
 
@@ -47,10 +47,10 @@
 
 | Result | Assertion — with evidence |
 |---|---|
-| ✅ PASS | data flow: collection run ingested (runs=117) |
-| ✅ PASS | data flow: findings stored (findings=1417) |
-| ✅ PASS | data flow: capture recorded in object store (captures=103) |
-| ✅ PASS | data flow: true-positive adjudication preserved (tp=234) |
+| ✅ PASS | data flow: collection run ingested (runs=115) |
+| ✅ PASS | data flow: findings stored (findings=1380) |
+| ✅ PASS | data flow: capture recorded in object store (captures=100) |
+| ✅ PASS | data flow: true-positive adjudication preserved (tp=233) |
 | ✅ PASS | sandboxed memory analysis produced 18 finding(s) from the stored capture |
 
 **6/9  The analysis sandbox has no egress; the enclave cannot phone home**
@@ -67,7 +67,7 @@
 | ✅ PASS | workstation → API : BLOCKED |
 | ✅ PASS | workstation → database : BLOCKED |
 | ✅ PASS | workstation → object store: BLOCKED |
-| ✅ PASS | platform name resolves to the broker (10.89.30.90) |
+| ✅ PASS | platform name resolves to the broker (10.89.30.156) |
 | ✅ PASS | no out-of-zone name resolves from the analyst segment (no DNS exfil) |
 | ✅ PASS | the DMZ resolver REFUSES out-of-zone queries (in-zone answers only) |
 
@@ -81,7 +81,7 @@
 | ✅ PASS | analyst: sign-out ends app + IdP session |
 | ✅ PASS | auditor: browser OIDC login end to end (forced first-login change completed) |
 | ✅ PASS | auditor: sign-out ends app + IdP session |
-| ✅ PASS | the deployed accounts are still present and untouched (4 users) — this suite set no analyst password |
+| ✅ PASS | the deployed accounts are still present and untouched (7 users) — this suite set no analyst password |
 
 **8a/9  A dead sign-in callback offers the analyst a way back**
 

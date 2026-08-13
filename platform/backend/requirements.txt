@@ -9,3 +9,7 @@ redis==8.0.1
 boto3==1.43.56          # S3-compatible client (MinIO local, AWS S3 optional)
 gunicorn==26.0.0
 python-dateutil==2.9.0.post0
+# Report typesetting. Pure Python and offline by construction: it embeds no
+# external asset and the base-14 fonts need no download, which is what makes it
+# deployable in an enclave with no egress.
+reportlab==4.4.4

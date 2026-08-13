@@ -1,3 +1,4 @@
+import { Link } from "react-router-dom";
 import { api } from "../api.js";
 import DataTable from "../components/DataTable.jsx";
 import { useServerTable } from "../components/useServerTable.js";
@@ -21,7 +22,8 @@ export default function Hosts() {
           searchPlaceholder="Search hosts…"
           emptyText={t.data ? "No hosts match." : "Loading…"}
           columns={[
-            { key: "hostname", label: "Hostname", mono: true },
+            { key: "hostname", label: "Hostname", mono: true,
+              render: (v, r) => <Link to={`/hosts/${r.id}`}>{v}</Link> },
             { key: "platform", label: "Platform" },
           ]}
         />

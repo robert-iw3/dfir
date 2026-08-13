@@ -53,12 +53,41 @@ ua_override() {
     echo "[browser] User-Agent announces workstation ${IR_WS_ID}"
 }
 
+# Titles Firefox shows when the tab is somewhere the analyst cannot leave: the enterprise
+# block page and the network error pages. A kiosk has no chrome, so landing on one of these
+# strands the workstation until someone restarts the container.
+STUCK_TITLES='Blocked Page|Problem loading|Server Not Found|Unable to connect|Secure Connection Failed|did not connect'
+
+# True when the visible window is one of those, twice running — one sample would restart a
+# page that was mid-load.
+kiosk_stranded() {
+    command -v xdotool >/dev/null 2>&1 || return 1
+    _t="$(DISPLAY="${DISPLAY:-:0}" xdotool getactivewindow getwindowname 2>/dev/null)"
+    case "${_t}" in
+        "") return 1 ;;
+    esac
+    echo "${_t}" | grep -qE "${STUCK_TITLES}"
+}
+
 # A kiosk stranded on an error page recovers itself. The supervision loop below only restarts
-# Firefox when Firefox EXITS.
+# Firefox when Firefox EXITS, so the two checks here are what cover the rest: the platform
+# going away, and the browser being left somewhere else.
 watchdog() {
     was_up=1
+    stuck=0
     while :; do
         sleep "${IR_KIOSK_PROBE_SECONDS:-20}"
+        if kiosk_stranded; then
+            stuck=$((stuck + 1))
+            if [ "${stuck}" -ge 2 ]; then
+                echo "[watchdog] kiosk is stranded off the platform — reopening ${URL}" >&2
+                pkill -f firefox-esr 2>/dev/null || true
+                stuck=0
+                continue
+            fi
+        else
+            stuck=0
+        fi
         if wget -q --spider --no-check-certificate --timeout=8 --tries=1 "$URL" 2>/dev/null; then
             if [ "$was_up" = "0" ]; then
                 echo "[watchdog] platform answering again — reopening the kiosk on it" >&2

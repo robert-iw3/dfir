@@ -781,6 +781,7 @@ services:
       # READ-ONLY: shipping a record must never be able to alter it.
       - traefik-logs:/logs/traefik:ro
       - frontend-logs:/logs/frontend:ro
+      - app-logs:/logs/app:ro
     network_mode: "service:log-shipper-sidecar"
     depends_on: [log-shipper-sidecar]
     restart: on-failure
@@ -876,6 +877,9 @@ services:
     command: ["web"]
     env_file: ../.env
     environment:
+      # Names this tier's application log file, so backend and worker do not append to
+      # one another's and the shipper can key each under its own source.
+      IR_LOG_NAME: backend
       POSTGRES_HOST: ${IR_DB_HOST_APP:-db}
       # Sync workers, so each holds exactly one in-flight request: this count IS the app tier's
       # concurrency. Three put the measured error-rate knee at 30-50 concurrent analysts — below the
@@ -917,6 +921,7 @@ services:
       IR_VAULT: "${IR_VAULT:-1}"
     depends_on: [db, redis, minio, keycloak, vault-agent]
     volumes:
+      - app-logs:/logs/app
       - vault-secrets:/vault/secrets:ro
       # Read-only CA so the health panel can probe the mesh control plane over TLS, and the
       # read-only token it reads the catalog and intentions with.
@@ -955,6 +960,7 @@ services:
     command: ["worker"]
     env_file: ../.env
     environment:
+      IR_LOG_NAME: worker
       POSTGRES_HOST: ${IR_DB_HOST_APP:-db}
       # Celery URLs come from settings defaults: redis://127.0.0.1:6379/0 — the ir-redis
       # upstream bound by this service's own sidecar.
@@ -979,6 +985,7 @@ services:
       internal:
         ipv4_address: ${IR_IP_WORKER}
     volumes:
+      - app-logs:/logs/app
       # Read-only: the agent renders these, the worker consumes them.
       - vault-secrets:/vault/secrets:ro
       # Symbol tables are read-only here: the worker consumes them, the puller installs
@@ -1073,6 +1080,8 @@ volumes:
   # container being granted the ability to inspect another.
   traefik-logs:
   frontend-logs:
+  # The application tier's own logs. Written by backend and worker, read by the shipper.
+  app-logs:
   boundary-db-data:
   boundary-state:
   # Vault's raft store — the secrets themselves.

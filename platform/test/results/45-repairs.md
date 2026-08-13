@@ -2,7 +2,7 @@
 
 *What passing proves:* A repair is requested in the web tier and executed only by the isolated agent's own allow-list; the outcome is recorded once and cannot be forged or replayed.
 
-- Run: `uat_repairs.sh` — 2026-08-12 13:57:55Z
+- Run: `uat_repairs.sh` — 2026-08-13 20:16:03Z
 
 **The catalog and the allow-list**
 

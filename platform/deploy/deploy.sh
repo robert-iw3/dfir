@@ -921,6 +921,14 @@ up_enclave() {
         else wsvc="boundary-egress-${w}"; wname="ir-egress-${w}"; fi
         wctr="ir-enclave_${wsvc}_1"
         dc enclave up -d "${wsvc}" >/dev/null 2>&1
+        # `up -d` can leave the last worker in Created without ever starting it — twice in
+        # one day, both cold starts, and the worker itself is fine (started by hand it
+        # authenticates in under a second). Waiting on it would time out against a container
+        # that was never told to run.
+        if [[ "$(${RUNTIME} inspect "${wctr}" --format '{{.State.Status}}' 2>/dev/null)" == "created" ]]; then
+            warn "${wsvc} was created but never started — starting it directly"
+            ${RUNTIME} start "${wctr}" >/dev/null 2>&1 || true
+        fi
         wait_for "${wctr}" 90 \
             ${RUNTIME} exec "${wctr}" wget -q -O- http://127.0.0.1:9203/health \
             || die "Boundary egress worker ${wname} never became healthy"

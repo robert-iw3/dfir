@@ -1,12 +1,40 @@
-# IR Platform
+# DFIR Framework
 
-A forensic analysis platform for incident response. It ingests evidence collected from
-endpoints, stores it as a durable system of record, analyzes memory captures server-side, and
-presents the results to analysts through an SSO-gated web application.
+The served half of the framework. The offline host toolkit ([`../toolkit/`](../toolkit/))
+covers the endpoint; everything after it happens here — evidence sealed at collection,
+shipped inward, analyzed server-side, correlated across hosts, adjudicated by named
+analysts, written up, and finally archived, with every hand that touched it recorded.
 
-The platform is built for a specific operating assumption: **the endpoint under investigation
-may be compromised, and the evidence itself is hazardous.** Where components sit, which
-direction connections open, and what the analysis worker is permitted to do all follow from that.
+It is built for a specific operating assumption: **the endpoint under investigation may be
+compromised, and the evidence itself is hazardous.** Where components sit, which direction
+connections open, and what the analysis worker is permitted to do all follow from that.
+
+**▶ [Watch the walkthrough](img/concept_demo_alpha.mp4)** — a case worked end to end
+through the interface.
+
+---
+
+## The lifecycle
+
+The framework is organized around the five stages of the digital forensics process. They are
+not a diagram on a wall: they are the columns of the case board, the order the work moves
+in, and the structure of the report at the end. Movement between them is free in both
+directions, because evidence arriving late genuinely sends work back.
+
+| Stage | What happens | Where it lives |
+|---|---|---|
+| **Identification** | Collect the right evidence, sealed at the point of collection — and say which machines could *not* be collected | Collector, DMZ receiver, enclave puller |
+| **Preservation** | Custody verified on arrival and again inward, then continued as a hash-chained ledger; retention and legal hold | Custody chain, `CustodyEvent`, retention lifecycle |
+| **Analysis** | Memory analyzed in a sandbox with no egress; the engine proposes and an analyst decides; hosts correlated into campaigns | Analysis worker, investigation engine, correlation |
+| **Documentation** | The investigation record — notes, verdict changes with their stated reasons, reverse-engineering determinations, and what was ruled **out** | Investigation record, case board, curated tags |
+| **Presentation** | Two reports generated from the case's own rows and typeset to PDF inside the enclave | Report builder, export ledger |
+
+After the case: conclusion, automatic archival to cold storage, and restore. An archived case
+never disappears — it stays listed, marked cold, and comes back verified against its seal.
+
+**The whole path in the order it actually happens:
+[`WORKFLOW-LIFECYCLE.md`](WORKFLOW-LIFECYCLE.md).**
+Every capability, and what the framework refuses to do: [`USER-GUIDE.md`](USER-GUIDE.md).
 
 ---
 
@@ -58,9 +86,9 @@ the audit trail, and — for administrators — user management and platform hea
 
 ## Architecture
 
-![IR Platform architecture](img/architecture.svg)
+![DFIR Framework architecture](img/architecture.svg)
 
-The platform deploys as separate tiers, each on its own hardware:
+The framework deploys as separate tiers, each on its own hardware:
 
 | Tier | Contains |
 |---|---|
@@ -204,6 +232,8 @@ ownership is stable across credential rotation.
 
 | Document | Covers |
 |---|---|
+| [`USER-GUIDE.md`](USER-GUIDE.md) | **Start here.** Every capability, where it lives, and what the platform refuses — including what is deliberately not built |
+| [`WORKFLOW-LIFECYCLE.md`](WORKFLOW-LIFECYCLE.md) | One case from collection to report, in the order it happens |
 | [`WORKFLOW-ANALYST.md`](WORKFLOW-ANALYST.md) | Working an incident: adjudication, triage, the investigation record |
 | [`WORKFLOW-RE.md`](WORKFLOW-RE.md) | Carved regions: staging a session, determinations, purge |
 | [`WORKFLOW-ADMIN.md`](WORKFLOW-ADMIN.md) | Deployment, management access, accounts, symbols, retention |

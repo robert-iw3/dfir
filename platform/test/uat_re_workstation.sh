@@ -54,7 +54,23 @@ for h in Host.objects.all():
         print(h.hostname); break
 " 2>/dev/null | tail -1)
 fi
-[[ -n "${HOSTNAME_ARG}" ]] || { echo "no host has carved regions — run the memory analysis UAT first" >&2; exit 2; }
+# A pristine stack has no carved regions, so the suite seeds its own through the same
+# command replay uses. The boundary under test is the session's, not the regions' origin.
+if [[ -z "${HOSTNAME_ARG}" ]]; then
+    SEED_HOST="uat-re-seed"
+    ${RUNTIME} exec -w /app "${BE}" sh -c "
+python manage.py shell -c \"
+from cases.models import Host
+Host.objects.get_or_create(hostname='${SEED_HOST}',
+                           defaults={'machine_id': 'uat-re-seed-machine', 'platform': 'linux'})\"
+mkdir -p /tmp/uat-re-seed
+head -c 65536 /dev/urandom > /tmp/uat-re-seed/region_0x400000.bin
+head -c 32768 /dev/urandom > /tmp/uat-re-seed/region_0x7f0000.bin
+python manage.py seed_carved_regions --host '${SEED_HOST}' --source /tmp/uat-re-seed
+rm -rf /tmp/uat-re-seed" >/dev/null 2>&1 \
+        && HOSTNAME_ARG="${SEED_HOST}"
+fi
+[[ -n "${HOSTNAME_ARG}" ]] || { echo "no carved regions and seeding failed — cannot exercise the RE boundary" >&2; exit 2; }
 ok "host: ${HOSTNAME_ARG}"
 
 case "${TOOL}" in

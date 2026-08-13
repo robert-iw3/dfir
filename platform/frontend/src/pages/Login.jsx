@@ -19,7 +19,10 @@ export default function Login() {
   return (
     <div style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "100vh", width: "100%" }}>
       <form onSubmit={submit} className="panel" style={{ padding: 32, width: 340 }}>
-        <div className="brand" style={{ marginBottom: 4 }}><span className="dot" /> IR Platform</div>
+        <div className="brand" style={{ marginBottom: 4 }}>
+          <img src="/logo.svg" alt="" className="brand-mark" width="26" height="26" />
+          DFIR Framework
+        </div>
         <div className="brand-sub" style={{ marginBottom: 22 }}>Forensic Analysis · sign in</div>
         <div className="search" style={{ display: "block" }}>
           <input placeholder="Username" value={u} onChange={(e) => setU(e.target.value)}

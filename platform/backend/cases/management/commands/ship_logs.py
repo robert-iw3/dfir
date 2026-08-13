@@ -37,10 +37,16 @@ from cases import storage
 
 # Each source is a file this container can read and a name its objects are keyed under. The
 # mounts are read-only: shipping must never be able to alter the record it is shipping.
+# The web tier's own records, plus the application tier's. Without the second group an
+# admin troubleshooting a failed analysis has the request that started it and nothing about
+# what happened next.
 SOURCES = {
     "traefik-access": "/logs/traefik/access.log",
     "frontend-access": "/logs/frontend/access.log",
     "frontend-error": "/logs/frontend/error.log",
+    "backend-access": "/logs/app/backend-access.log",
+    "backend-app": "/logs/app/backend-app.log",
+    "worker-app": "/logs/app/worker-app.log",
 }
 OFFSETS_KEY = "_state/offsets.json"
 INTERVAL = int(os.environ.get("IR_LOG_SHIP_INTERVAL", "60"))

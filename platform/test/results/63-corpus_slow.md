@@ -2,7 +2,7 @@
 
 *What passing proves:* A campaign that dwells for 238 days correlates as one, with four members carrying no movement record and every indicator rotated away — while two unrelated endpoints running the same unsanctioned tool 190 days apart stay separate, and the host whose delivery evidence aged out reports that it could not be established rather than that nothing was found.
 
-- Run: `uat_corpus_slow.sh` — 2026-08-12 14:38:37Z
+- Run: `uat_corpus_slow.sh` — 2026-08-13 21:05:05Z
 
 **Preconditions**
 
@@ -36,7 +36,7 @@
 
 | Result | Assertion — with evidence |
 |---|---|
-| ✅ PASS | captures terminal and compromise settled (20 analyzed, 9 compromised) |
+| ✅ PASS | every capture reached a terminal analysis and compromise settled (20/20 analyzed, 9 compromised) |
 | ✅ PASS | every analysis completed (20) |
 | ✅ PASS | every analysis was adjudicated by the investigation engine (20) |
 
@@ -71,7 +71,7 @@
 | ✅ PASS | all 7 hosts touched over 238 days are ONE campaign (7 found) |
 | ✅ PASS | the 4 endpoints reached over the VPN — no movement record — are members |
 | ✅ PASS | the two shadow-IT endpoints 190 days apart are NOT in the campaign |
-| ✅ PASS | and the pair is DECLINED on its own merits (weight 0.2968, temporal 0.584) |
+| ✅ PASS | and the pair is DECLINED on its own merits (weight 0.297, temporal 0.584) |
 | ✅ PASS | patient zero is the first host touched, 238 days before the last (RD-WS-04) |
 | ✅ PASS | no clean endpoint appears in any campaign (11 clean) |
 
@@ -107,7 +107,7 @@
 
 | Result | Assertion — with evidence |
 |---|---|
-| · | deployment host population at correlation time: 92 |
+| · | deployment host population at correlation time: 93 |
 | ✅ PASS | INC-CORPUS-A still classifies 12 compromised with a fourth fleet present |
 | ✅ PASS | no INC-CORPUS-A campaign reaches a Glass Heron endpoint |
 | ✅ PASS | INC-CORPUS-B still classifies 4 compromised with a fourth fleet present |

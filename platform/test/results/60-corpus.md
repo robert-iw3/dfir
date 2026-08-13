@@ -2,7 +2,7 @@
 
 *What passing proves:* 25 real collector runs — 16 compromised across two investigations, 9 clean, fleet-wide benign noise on all — ship, ingest, analyze and correlate through the production path; clean hosts classify clean and join no campaign.
 
-- Run: `uat_corpus.sh` — 2026-08-12 14:16:47Z
+- Run: `uat_corpus.sh` — 2026-08-13 20:43:03Z
 
 **Preconditions**
 
@@ -69,13 +69,13 @@
 | ✅ PASS | the Ember/miner pair was CONSIDERED — the shared fleet-wide account makes it a candidate (20 pairs) |
 | ✅ PASS | every Ember/miner candidate was DECLINED — G2 closed by weighting, not by absence |
 | ✅ PASS | the ubiquitous helpdesk account is in the behavior graph |
-| ✅ PASS | the fleet-wide account reads as ENVIRONMENT (rarity 0.334 across 20 carriers) |
-| ✅ PASS | declined weights sit below the threshold (heaviest 0.1835 < 0.35) |
+| ✅ PASS | the fleet-wide account reads as ENVIRONMENT (rarity 0.094 across 20 carriers) |
+| ✅ PASS | declined weights sit below the threshold (heaviest 0.0750 < 0.35) |
 | ✅ PASS | Ember's own pairs LINK on their real evidence (37 at or above threshold) |
 | ✅ PASS | every link decomposes into all four named factors plus their product |
-| ✅ PASS | campaign pz=WS-007: cohesion_min equals its weakest internal link (0.4277) |
-| ✅ PASS | campaign pz=WS-012: cohesion_min equals its weakest internal link (0.4388) |
-| ✅ PASS | the miner campaign scores visibly weaker than Ember (mean 0.4388 vs 0.5669; min 0.4388 vs 0.4277) |
+| ✅ PASS | campaign pz=WS-007: cohesion_min equals its weakest internal link (0.4248) |
+| ✅ PASS | campaign pz=VPN-GW-01: cohesion_min equals its weakest internal link (0.3988) |
+| ✅ PASS | the miner campaign scores visibly weaker than Ember (mean 0.3988 vs 0.5648; min 0.3988 vs 0.4248) |
 | ✅ PASS | the miner rests on shared indicators alone (['indicator']) |
 | ✅ PASS | Ember rests on observed movement as well (['artifact', 'movement']) |
 | ✅ PASS | Quiet Fox links are carried by tradecraft and movement, never a shared indicator (['artifact', 'movement']) |
