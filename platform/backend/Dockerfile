@@ -14,8 +14,10 @@ RUN python3 -m venv /venv \
     && /venv/bin/pip install --no-cache-dir -r requirements.txt
 
 COPY backend/ .
-# Single source for the resource statistics every component reports.
+# Single source for the resource statistics every component reports, and for the
+# custody seal the archive writer and the collector must compute identically.
 COPY shared/sysstats.py ./sysstats.py
+COPY shared/custody.py ./custody.py
 RUN chmod +x entrypoint.sh
 
 # Build-time smoke test: every runtime import resolves in the venv before the image ships.

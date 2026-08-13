@@ -17,6 +17,7 @@ Three roles, enforced by Django groups + DRF permission classes:
 The store-and-forward broker authenticates with a separate *service* token and is the
 only identity allowed to hit the ingest endpoint — it is not one of the roles.
 """
+from django.db import models
 from rest_framework.permissions import BasePermission, SAFE_METHODS
 
 ROLES = ("admin", "analyst", "auditor", "reverse_engineer")
@@ -131,3 +132,55 @@ class CanExport(BasePermission):
 
     def has_permission(self, request, view):
         return may_export(request.user)
+
+
+# --- Case scoping -------------------------------------------------------------------
+# A restricted case is visible to its assigned members and to admins. Auditors see every
+# case by remit: an audit that can be hidden from by compartmenting is not an audit.
+
+def visible_investigation_ids(user):
+    """Ids this identity may see, or None meaning no restriction applies."""
+    role = role_of(user)
+    if role in ("admin", "auditor", "service"):
+        return None
+    from .models import CaseAssignment, Investigation
+    restricted = set(Investigation.objects
+                     .filter(compartment=Investigation.RESTRICTED)
+                     .values_list("id", flat=True))
+    if not restricted:
+        return None
+    assigned = set(CaseAssignment.objects
+                   .filter(username=getattr(user, "username", ""), removed_at__isnull=True)
+                   .values_list("investigation_id", flat=True))
+    return restricted & assigned or set()
+
+
+def scope_investigations(qs, user):
+    ids = visible_investigation_ids(user)
+    if ids is None:
+        return qs
+    from .models import Investigation
+    open_ids = Investigation.objects.exclude(
+        compartment=Investigation.RESTRICTED).values_list("id", flat=True)
+    return qs.filter(models.Q(id__in=open_ids) | models.Q(id__in=ids))
+
+
+def scope_by_investigation(qs, user, path="investigation_id"):
+    """Filter any queryset that can reach an investigation id through `path`."""
+    ids = visible_investigation_ids(user)
+    if ids is None:
+        return qs
+    from .models import Investigation
+    open_ids = Investigation.objects.exclude(
+        compartment=Investigation.RESTRICTED).values_list("id", flat=True)
+    return qs.filter(models.Q(**{f"{path}__in": open_ids})
+                     | models.Q(**{f"{path}__in": ids}))
+
+
+def may_see_investigation(user, inv):
+    if inv is None:
+        return False
+    if inv.compartment != inv.RESTRICTED:
+        return True
+    ids = visible_investigation_ids(user)
+    return ids is None or inv.id in ids

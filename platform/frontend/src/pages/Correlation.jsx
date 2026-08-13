@@ -280,7 +280,6 @@ export default function Correlation() {
   // Off by default. Declined candidates are the answer to a question an analyst asks
   // deliberately, and drawing every refused pair by default buries the intrusion.
   const [showDeclined, setShowDeclined] = useState(false);
-  const [showBehavioral, setShowBehavioral] = useState(true);
   const [edge, setEdge] = useState(null);
   const { data: indicators } = useData(() => api.sharedIndicators());
 
@@ -402,24 +401,17 @@ export default function Correlation() {
                             alignItems: "center" }}>
                 <label className="muted"
                        style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-                  <input type="checkbox" checked={showBehavioral}
-                         onChange={(e) => setShowBehavioral(e.target.checked)} />
-                  shared tradecraft ({graph.behavioral_edges?.length || 0})
-                </label>
-                <label className="muted"
-                       style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
                   <input type="checkbox" checked={showDeclined}
                          onChange={(e) => setShowDeclined(e.target.checked)} />
                   declined candidates ({graph.declined_edges?.length || 0})
                 </label>
                 <span className="muted">
-                  link threshold {graph.thresholds?.link ?? "—"} · border weight = membership band
+                  edge label = pivot technique · protocol · account · link threshold {graph.thresholds?.link ?? "—"} · border weight = membership band
                 </span>
               </div>
               <AttackGraph nodes={graph.nodes} edges={graph.edges}
-                           behavioralEdges={graph.behavioral_edges}
                            declinedEdges={graph.declined_edges}
-                           showBehavioral={showBehavioral} showDeclined={showDeclined}
+                           showDeclined={showDeclined}
                            selected={host}
                            onSelect={(h) => setParam("host", h === host ? "" : h)}
                            onSelectEdge={setEdge} />

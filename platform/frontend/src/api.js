@@ -98,6 +98,7 @@ export const api = {
   hosts: (qs = "") => get(`/hosts/${qs}`),
   findings: (qs = "") => get(`/findings/${qs}`),
   hostRuns: (id) => get(`/hosts/${id}/runs/`),
+  hostOverview: (id) => get(`/hosts/${id}/overview/`),
   iocSearch: (q) => get(`/ioc-search/?q=${encodeURIComponent(q)}`),
   reanalyze: (captureId) => post(`/captures/${captureId}/reanalyze/`),
   purgeCapture: (captureId, reason) => post(`/captures/${captureId}/purge/`, { reason }),
@@ -151,6 +152,66 @@ export const api = {
   investigationStats: (id) => get(`/investigations/${id}/stats/`),
   investigationCoverage: (id) => get(`/investigations/${id}/coverage/`),
   stalledInvestigations: (days) => get(`/investigations/stalled/?days=${days ?? 30}`),
+  archiveDue: () => get("/investigations/archive-due/"),
+  caseTree: (id) => get(`/investigations/${id}/tree/`),
+  caseTags: (id) => get(`/investigations/${id}/tags/`),
+  applyCaseTag: (id, tag, remove = false) =>
+    post(`/investigations/${id}/tags/`, { tag, remove }),
+  tagVocabulary: () => get("/tags/"),
+  createTag: (body) => post("/tags/", body),
+  caseTasks: (id) => get(`/investigations/${id}/tasks/`),
+  saveCaseTask: (id, body) => post(`/investigations/${id}/tasks/`, body),
+  reportTemplates: () => get("/report-templates/"),
+  caseReports: (id) => get(`/investigations/${id}/reports/`),
+  generateReport: (id, body) => post(`/investigations/${id}/reports/`, body),
+  // Reading a report in place is an analyst right; the download below is export.
+  reportMarkdown: async (id) => (await get(`/reports/${id}/`)).text,
+  reportDownloadUrl: (id) => `/api/reports/${id}/download/`,
+  // Fetched as a blob rather than followed as a link: a top-level navigation to the API
+  // is what the kiosk's policy blocks, and it turns a refused export into a browser error
+  // page instead of a message the analyst can act on.
+  downloadBlob: async (url, filename) => {
+    const r = await fetch(url, {
+      headers: getToken() ? { Authorization: `Token ${getToken()}` } : {},
+    });
+    if (!r.ok) {
+      const detail = r.status === 403
+        ? "export requires the export right; reading a report does not imply it"
+        : `${r.status} ${r.statusText}`;
+      throw new Error(detail);
+    }
+    const blob = await r.blob();
+    const href = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = href;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(href);
+  },
+  task: (taskId) => get(`/tasks/${taskId}/`),
+  addTaskNote: (taskId, body) => post(`/tasks/${taskId}/notes/`, { body }),
+  attachEvidence: (taskId, body) => post(`/tasks/${taskId}/attachments/`, body),
+  // Multipart, so it bypasses the JSON wrapper: the browser sets the boundary itself
+  // and a Content-Type we chose would truncate the body at the first part.
+  uploadTaskDocument: async (taskId, file, label) => {
+    const form = new FormData();
+    form.append("file", file);
+    if (label) form.append("label", label);
+    const r = await fetch(`/api/tasks/${taskId}/attachments/`, {
+      method: "POST",
+      headers: getToken() ? { Authorization: `Token ${getToken()}` } : {},
+      body: form,
+    });
+    if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+    return r.json();
+  },
+  detachTaskAttachment: (taskId, id) => del(`/tasks/${taskId}/attachments/?id=${id}`),
+  taskAttachmentUrl: (taskId, id) => `/api/tasks/${taskId}/attachments/${id}/`,
+  taskBoard: (assignee) =>
+    get(`/tasks/board/${assignee ? `?assignee=${encodeURIComponent(assignee)}` : ""}`),
+  restoreInvestigation: (id) => post(`/investigations/${id}/restore/`),
   transitionInvestigation: (id, status) =>
     post(`/investigations/${id}/transition/`, { status }),
   runTimeline: (id) => get(`/runs/${id}/timeline/`),
@@ -178,7 +239,31 @@ export const api = {
       return Promise.resolve();
     }
   },
+  // Working alongside other people. Every one of these is advisory: nothing here can stop
+  // a write, so a failed call degrades to working alone rather than to being blocked.
+  heartbeat: (investigation, location) =>
+    post("/presence/", { investigation: investigation || null, location: location || "" }),
+  presence: (investigation) =>
+    get(`/presence/${investigation ? `?investigation=${investigation}` : ""}`),
+  claimLock: (investigation, refType, refId) =>
+    post("/locks/", { investigation, ref_type: refType, ref_id: refId }),
+  releaseLock: (refType, refId) =>
+    del(`/locks/?ref_type=${encodeURIComponent(refType)}&ref_id=${refId}`),
+  locks: (investigation) =>
+    get(`/locks/${investigation ? `?investigation=${investigation}` : ""}`),
+  notifications: (unreadOnly) => get(`/notifications/${unreadOnly ? "?unread=1" : ""}`),
+  markNotificationsRead: (ids) => post("/notifications/", { ids: ids || [] }),
+  hereNow: () => get("/me/here/"),
+  caseActivity: (id, limit) => get(`/investigations/${id}/activity/?limit=${limit ?? 100}`),
+  search: (q) => get(`/search/?q=${encodeURIComponent(q)}`),
+  handover: (since) =>
+    get(`/handover/${since ? `?since=${encodeURIComponent(since)}` : ""}`),
+
   requestLog: (params) =>
     get(`/opslog/requests/?${new URLSearchParams(params || {}).toString()}`),
   clientErrors: (limit) => get(`/opslog/client-errors/list/?limit=${limit ?? 50}`),
+  logSources: () => get("/opslog/logs/sources/"),
+  logObjects: (source) => get(`/opslog/logs/objects/?source=${encodeURIComponent(source)}`),
+  logObject: (key) => get(`/opslog/logs/objects/?key=${encodeURIComponent(key)}`),
+  logDownloadUrl: (key) => `/api/opslog/logs/download/?key=${encodeURIComponent(key)}`,
 };

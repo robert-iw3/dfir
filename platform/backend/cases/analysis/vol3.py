@@ -41,6 +41,26 @@ def _safe_name(value):
     return re.sub(r"[^A-Za-z0-9._-]", "_", str(value or "")).strip("._-")[:64]
 
 
+# Frame lines, the source echo under them, and the caret rulers Python 3.11+ draws to point
+# at a subexpression. None of it means anything without the analyzer's source in hand.
+_TRACEBACK_NOISE = re.compile(
+    r'^\s*(Traceback \(most recent call last\):|File ".*", line \d+.*|[~^\s|]+)$')
+
+
+def _why(output):
+    """The analyzer's own reason for failing, as one line an analyst can act on.
+
+    Its stderr ends in a Python traceback whose last line is the actual error and whose
+    preceding lines are frames and caret rulers. Passing the raw tail through put source
+    fragments in front of analysts; passing nothing through would leave a failure with no
+    stated cause, which is worse.
+    """
+    lines = [ln.rstrip() for ln in (output or "").strip().splitlines()]
+    meaningful = [ln.strip() for ln in lines if ln.strip()
+                  and not _TRACEBACK_NOISE.match(ln)]
+    return meaningful[-1][:400] if meaningful else "the analyzer exited without a diagnostic"
+
+
 def analyze(image_path, symbols_path, ruleset_version="", timeout=None, deep=False,
             host_label=""):
     """Run the proven analyzer and return findings in the platform's shape.
@@ -103,8 +123,8 @@ def analyze(image_path, symbols_path, ruleset_version="", timeout=None, deep=Fal
 
     findings_files = sorted(glob.glob(os.path.join(out_dir, "Memory_Findings_*.json")))
     if not findings_files:
-        tail = (proc.stderr or proc.stdout or "").strip().splitlines()[-3:]
-        raise RuntimeError(f"analyzer produced no findings file: {' | '.join(tail)}")
+        raise RuntimeError("analyzer produced no findings file: "
+                           f"{_why(proc.stderr or proc.stdout)}")
 
     with open(findings_files[-1], "r", encoding="utf-8") as fh:
         raw = json.load(fh)

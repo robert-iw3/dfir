@@ -106,6 +106,59 @@ def download_to(object_key, local_path, attempts=3):
     raise last
 
 
+# --- Named buckets ------------------------------------------------------------------
+# The archive tier keeps case bundles apart from evidence: retention differs, and a
+# bundle is derived data whose loss is recoverable while a capture's is not.
+
+def ensure_bucket_named(name):
+    s3 = client()
+    try:
+        s3.head_bucket(Bucket=name)
+    except Exception:
+        s3.create_bucket(Bucket=name)
+    return name
+
+
+def put_file_to(bucket_name, local_path, object_key, extra=None):
+    s3 = client()
+    s3.upload_file(local_path, bucket_name, object_key, ExtraArgs=extra or {})
+    head = s3.head_object(Bucket=bucket_name, Key=object_key)
+    return {"etag": head["ETag"].strip('"'), "size": head["ContentLength"]}
+
+
+def put_fileobj_to(bucket_name, fileobj, object_key, extra=None):
+    client().upload_fileobj(fileobj, bucket_name, object_key, ExtraArgs=extra or {})
+    return object_key
+
+
+def get_object_bytes(bucket_name, object_key):
+    return client().get_object(Bucket=bucket_name, Key=object_key)["Body"].read()
+
+
+def list_objects(bucket_name, prefix=""):
+    """Every object under a prefix, paginated. A single list_objects_v2 stops at 1000 keys
+    and would silently under-report a bucket the shipper has been appending to for weeks."""
+    s3 = client()
+    out, token = [], None
+    while True:
+        kw = {"Bucket": bucket_name, "Prefix": prefix}
+        if token:
+            kw["ContinuationToken"] = token
+        page = s3.list_objects_v2(**kw)
+        out.extend(page.get("Contents", []))
+        if not page.get("IsTruncated"):
+            return out
+        token = page.get("NextContinuationToken")
+        if not token:
+            return out
+
+
+def download_from(bucket_name, object_key, local_path):
+    client().download_file(bucket_name, object_key, local_path,
+                           Config=transfer_config())
+    return local_path
+
+
 # --- Carved regions -----------------------------------------------------------------
 # YARA true-positive regions carved out of a capture are live malware. They are kept
 # apart from evidence captures, in a bucket per host, for three reasons: the volume is

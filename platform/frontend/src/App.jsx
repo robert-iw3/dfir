@@ -6,14 +6,17 @@ import DeployWatch from "./components/DeployWatch.jsx";
 import ErrorBoundary from "./components/ErrorBoundary.jsx";
 import { Loading, Ring } from "./components/common.jsx";
 import {
-  IconAudit, IconComponents, IconCorrelation, IconDashboard, IconFindings, IconHealth, IconHosts,
-  IconInvestigations, IconReversing, IconSearch, IconUsers,
+  IconAudit, IconComponents, IconCorrelation, IconDashboard, IconFindings, IconHandover,
+  IconHealth, IconHosts, IconInvestigations, IconReversing, IconSearch, IconUsers,
 } from "./components/icons.jsx";
+import GlobalSearch from "./components/GlobalSearch.jsx";
+import { NotificationBell } from "./components/collab.jsx";
 import Dashboard from "./pages/Dashboard.jsx";
 import Investigations from "./pages/Investigations.jsx";
 import InvestigationDetail from "./pages/InvestigationDetail.jsx";
 import RunDetail from "./pages/RunDetail.jsx";
 import Hosts from "./pages/Hosts.jsx";
+import HostDetail from "./pages/HostDetail.jsx";
 import IocSearch from "./pages/IocSearch.jsx";
 import Correlation from "./pages/Correlation.jsx";
 import Findings from "./pages/Findings.jsx";
@@ -26,6 +29,8 @@ import Repairs from "./pages/Repairs.jsx";
 import AnalysisDiff from "./pages/AnalysisDiff.jsx";
 import Audit from "./pages/Audit.jsx";
 import Users from "./pages/Users.jsx";
+import Handover from "./pages/Handover.jsx";
+import Logs from "./pages/Logs.jsx";
 import Login from "./pages/Login.jsx";
 
 function DisplayPrefs() {
@@ -50,7 +55,10 @@ function Sidebar() {
   const { user, logout } = useAuth();
   return (
     <aside className="sidebar">
-      <div className="brand"><span className="dot" /> IR Platform</div>
+      <div className="brand">
+        <img src="/logo.svg" alt="" className="brand-mark" width="26" height="26" />
+        DFIR Framework
+      </div>
       <div className="brand-sub">Forensic Analysis</div>
       <nav className="nav">
         <NavLink to="/" end><IconDashboard />Dashboard</NavLink>
@@ -58,6 +66,7 @@ function Sidebar() {
         <NavLink to="/hosts"><IconHosts />Hosts</NavLink>
         <NavLink to="/findings"><IconFindings />Findings</NavLink>
         <NavLink to="/correlation"><IconCorrelation />Correlation</NavLink>
+        <NavLink to="/handover"><IconHandover />Shift Handover</NavLink>
         {can(user, "reverse_engineer", "admin") && (
           <NavLink to="/reversing"><IconReversing />Reverse Engineering</NavLink>
         )}
@@ -73,6 +82,7 @@ function Sidebar() {
         {can(user, "admin") && <NavLink to="/mesh-health"><IconComponents />Service Mesh</NavLink>}
         {can(user, "auditor", "admin") && <NavLink to="/brokered-sessions"><IconAudit />Brokered Sessions</NavLink>}
         {can(user, "admin") && <NavLink to="/repairs"><IconHealth />Enclave Repairs</NavLink>}
+        {can(user, "admin") && <NavLink to="/logs"><IconAudit />Logs</NavLink>}
       </nav>
       <div style={{ position: "absolute", bottom: 20, left: 14, right: 14 }}>
         <DisplayPrefs />
@@ -124,6 +134,12 @@ function Shell() {
       <main className="main">
         {/* Sits above every view: a redeployment is something the person reading the page
             needs to be told about, whatever page they are on. */}
+        {/* One row above every view: what you are looking for, and what is waiting for
+            you. Both are global, so neither belongs to a page. */}
+        <div className="topbar">
+          <GlobalSearch />
+          <NotificationBell />
+        </div>
         <DeployWatch />
         {/* Inside the shell, not around it: a view that fails keeps the navigation usable,
             so an analyst can move to another page rather than reload a blank window. Keyed
@@ -135,8 +151,10 @@ function Shell() {
           <Route path="/investigations/:id" element={<InvestigationDetail />} />
           <Route path="/runs/:id" element={<RunDetail />} />
           <Route path="/hosts" element={<Hosts />} />
+          <Route path="/hosts/:id" element={<HostDetail />} />
           <Route path="/findings" element={<Findings />} />
           <Route path="/correlation" element={<Correlation />} />
+          <Route path="/handover" element={<Handover />} />
           <Route path="/reversing" element={<Reversing />} />
           <Route path="/ioc-search" element={<IocSearch />} />
           <Route path="/audit" element={<Audit />} />
@@ -146,6 +164,7 @@ function Shell() {
           <Route path="/mesh-health" element={<MeshHealth />} />
           <Route path="/brokered-sessions" element={<BrokeredSessions />} />
           <Route path="/repairs" element={<Repairs />} />
+          <Route path="/logs" element={<Logs />} />
           {/* Catches in-app navigation to the old path, which react-router resolves
               without a server request. A fresh page load at /admin still never reaches
               here — the ingress refuses it first, which is the point of that rule. */}

@@ -23,6 +23,9 @@ RUNTIME="${IR_RUNTIME:-podman}"
 BE=ir-enclave_backend_1
 be() { ${RUNTIME} exec -i "${BE}" "$@"; }
 
+# Bash reads a non-numeric operand as a variable name and aborts under `set -u`.
+num_or_zero() { local v="${1//[^0-9]/}"; printf '%s' "${v:-0}"; }
+
 # Set by the calling UAT before any block runs; passed to Python as ENVIRONMENT.
 CORPUS_PREFIX="${CORPUS_PREFIX:-}"
 CORPUS_COUNT="${CORPUS_COUNT:-}"
@@ -232,29 +235,40 @@ PYEOF
 # 'completed' — adjudication runs later in the same worker task — so waiting on analysis
 # status alone reads compromise mid-flight. Quiesced means every capture terminal AND the
 # compromised count no longer moving.
+# EVERY capture, not one. Breaking on the first terminal analysis let the assertions run
+# while the rest were still in flight, and an unfinished analysis then read as a host with no
+# verdicts: excluded from its campaign, counted as unadjudicated, and reported as a
+# correlation defect several layers from its cause.
 corpus_await_analysis() {
     local stable=0 prev=-1 _
-    TERMINAL=0; NCOMP=0
+    TERMINAL=0; NCOMP=0; NCAPS=0; PENDING=""
     for _ in $(seq 1 150); do
-        read -r TERMINAL NCOMP <<<"$(corpus_value <<'PYEOF'
+        read -r TERMINAL NCOMP NCAPS PENDING <<<"$(corpus_value <<'PYEOF'
 from cases.models import MemoryCapture, CollectionRun
-caps = MemoryCapture.objects.filter(run__investigation__incident_id__startswith=PREFIX)
-term = sum(1 for c in caps if c.analyses.filter(status__in=("completed", "failed")).exists())
+caps = list(MemoryCapture.objects.filter(
+    run__investigation__incident_id__startswith=PREFIX))
+done = [c for c in caps
+        if c.analyses.filter(status__in=("completed", "failed")).exists()]
+pending = sorted({c.run.host.hostname for c in caps if c not in done})[:6]
 comp = CollectionRun.objects.filter(
     investigation__incident_id__startswith=PREFIX, compromised=True).count()
-print(term, comp)
+print(len(done), comp, len(caps), ",".join(pending) or "-")
 PYEOF
 )"
-        if [[ "${TERMINAL:-0}" -ge 1 && "${NCOMP:-0}" == "${prev}" ]]; then
+        if [[ "$(num_or_zero "${TERMINAL}")" -ge "$(num_or_zero "${NCAPS}")" \
+              && "$(num_or_zero "${NCAPS}")" -gt 0 && "${NCOMP:-0}" == "${prev}" ]]; then
             stable=$((stable + 1)); [[ "${stable}" -ge 2 ]] && break
         else
             stable=0
         fi
         prev="${NCOMP:-0}"; sleep 10
     done
-    [[ "${TERMINAL:-0}" -ge 1 ]] \
-        && ok "captures terminal and compromise settled (${TERMINAL} analyzed, ${NCOMP} compromised)" \
-        || info "no capture reached a terminal state within the wait — classification may read hosts mid-flight"
+    if [[ "$(num_or_zero "${TERMINAL}")" -ge "$(num_or_zero "${NCAPS}")" \
+          && "$(num_or_zero "${NCAPS}")" -gt 0 ]]; then
+        ok "every capture reached a terminal analysis and compromise settled (${TERMINAL}/${NCAPS} analyzed, ${NCOMP} compromised)"
+    else
+        bad "only ${TERMINAL:-0}/${NCAPS:-0} captures finished analysing within the wait — still in flight: ${PENDING}. Everything downstream reads those hosts as having no findings."
+    fi
 }
 
 # "Terminal" counts failed analyses, so the settle gate above is quiet when every analysis
@@ -277,9 +291,17 @@ if qs.exists() and len(ran) == qs.count():
     chk(True, f"every analysis was adjudicated by the investigation engine ({len(ran)})")
 else:
     stalled = [r for r in qs if not ((r.summary or {}).get("adjudication") or {}).get("ran")]
+    # A run that has not finished is not a run that failed to adjudicate. Reporting the two
+    # the same way sent every investigation of this assertion looking for an engine defect.
+    running = [r for r in stalled if r.status not in ("completed", "failed")]
     why = ((stalled[0].summary or {}).get("adjudication") or {}).get("reason") if stalled else None
     hosts = sorted(r.capture.run.host.hostname for r in stalled)[:6]
-    chk(False, f"only {len(ran)}/{qs.count()} analyses adjudicated — {hosts} — {why or 'no reason recorded'}"[:400])
+    if running:
+        chk(False, f"{len(running)} analysis(es) had not finished when this was asserted "
+                   f"({sorted({r.status for r in running})}) — {hosts}"[:400])
+    else:
+        chk(False, f"only {len(ran)}/{qs.count()} analyses adjudicated — {hosts} — "
+                   f"{why or 'completed with no adjudication recorded at all'}"[:400])
 PYEOF
 }
 

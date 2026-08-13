@@ -1,4 +1,4 @@
-/* DFIR_TOOLKIT login page.
+/* DFIR_FRAMEWORK login page.
  *
  * Layered on the stock Keycloak login theme: only presentation is defined here, so the forms,
  * error states and alternate flows (OTP, password reset, consent) keep the upstream markup and
@@ -88,10 +88,9 @@ html, body {
     width: 2.2em;
     height: 2.2em;
     flex: 0 0 auto;
-    background: url("../img/logo.jpeg") no-repeat center center;
-    background-size: cover;
-    border-radius: 8px;
-    box-shadow: 0 2px 14px rgba(0, 0, 0, 0.6);
+    background: url("../img/logo.svg") no-repeat center center;
+    background-size: contain;
+    filter: drop-shadow(0 2px 10px rgba(0, 0, 0, 0.7));
 }
 
 /* ---- the form card ----------------------------------------------------- */
@@ -212,3 +211,35 @@ a, a:hover { color: #7fb3e8; }
   text-decoration: none;
 }
 #ir-auto-return { opacity: 0.75; font-size: 0.9em; }
+
+/* ---- access warning --------------------------------------------------- *
+ * Sits below the form in the card, so it is on screen at the moment credentials are
+ * entered rather than needing a scroll. Amber, not red: it is a standing condition of
+ * use, and an authentication error appearing above it must still be the loudest thing
+ * on the page. */
+#ir-access-warning {
+    margin-top: 1.75rem;
+    padding: 0.85rem 1rem;
+    border: 1px solid rgba(224, 168, 58, 0.45);
+    border-left: 3px solid #e0a83a;
+    border-radius: 6px;
+    background: rgba(224, 168, 58, 0.08);
+    text-align: left;
+}
+#ir-access-warning-title {
+    margin: 0 0 0.4rem;
+    font-size: 0.8rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    color: #f0c66b;
+}
+#ir-access-warning p {
+    margin: 0;
+    font-size: 0.75rem;
+    line-height: 1.5;
+    color: #c7d4e4;
+}
+
+@media (max-width: 480px) {
+    #ir-access-warning { margin-top: 1.25rem; padding: 0.7rem 0.8rem; }
+}

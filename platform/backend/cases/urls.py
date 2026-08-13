@@ -2,7 +2,8 @@ from django.urls import include, path
 from rest_framework.authtoken.views import obtain_auth_token
 from rest_framework.routers import DefaultRouter
 
-from . import aggregates, authviews, reversing, triage, views
+from . import (aggregates, authviews, casework, collab, handover, reporting, reversing,
+               scoping, search, tiering, triage, views)
 
 router = DefaultRouter()
 router.register("investigations", views.InvestigationViewSet, basename="investigation")
@@ -59,6 +60,32 @@ urlpatterns = [
     path("investigations/<int:investigation_id>/transition/",
          aggregates.InvestigationTransitionView.as_view()),
     path("investigations/stalled/", aggregates.stalled_investigations),
+    path("investigations/archive-due/", tiering.ArchiveDueView.as_view()),
+    path("investigations/<int:investigation_id>/tree/",
+         casework.CaseTreeView.as_view()),
+    path("investigations/<int:investigation_id>/tags/",
+         casework.CaseTagAssignView.as_view()),
+    path("investigations/<int:investigation_id>/tasks/",
+         casework.CaseTaskView.as_view()),
+    path("tags/", casework.CaseTagView.as_view()),
+    path("report-templates/", reporting.ReportTemplateView.as_view()),
+    path("investigations/<int:investigation_id>/reports/",
+         reporting.CaseReportView.as_view()),
+    path("reports/<int:report_id>/", reporting.ReportContentView.as_view()),
+    path("reports/<int:report_id>/download/",
+         reporting.ReportDownloadView.as_view()),
+    path("hosts/<int:host_id>/overview/", casework.HostOverviewView.as_view()),
+    path("tasks/board/", casework.TaskBoardView.as_view()),
+    path("tasks/<int:task_id>/", casework.CaseTaskDetailView.as_view()),
+    path("tasks/<int:task_id>/notes/", casework.CaseTaskNoteView.as_view()),
+    path("tasks/<int:task_id>/attachments/", casework.CaseTaskAttachmentView.as_view()),
+    path("tasks/<int:task_id>/attachments/<int:attachment_id>/",
+         casework.CaseTaskAttachmentDownloadView.as_view()),
+    path("investigations/<int:investigation_id>/assignments/",
+         scoping.CaseAssignmentView.as_view()),
+    path("investigations/<int:investigation_id>/compartment/",
+         scoping.CaseCompartmentView.as_view()),
+    path("investigations/<int:investigation_id>/restore/", tiering.RestoreView.as_view()),
     path("investigations/activity/", aggregates.investigations_activity),
     path("findings/funnel/", aggregates.findings_funnel),
     path("findings/backlog/", aggregates.findings_backlog),
@@ -68,6 +95,14 @@ urlpatterns = [
     path("iocs/<str:ioc_type>/<path:value>/spread/", aggregates.ioc_spread),
     path("admin/queue-depth/", aggregates.QueueDepthView.as_view()),
     path("admin/storage-allocation/", aggregates.StorageAllocationView.as_view()),
+    path("presence/", collab.PresenceView.as_view()),
+    path("locks/", collab.LockView.as_view()),
+    path("notifications/", collab.NotificationView.as_view()),
+    path("me/here/", collab.WhoAmIHereView.as_view()),
+    path("investigations/<int:investigation_id>/activity/",
+         collab.ActivityFeedView.as_view()),
+    path("search/", search.GlobalSearchView.as_view()),
+    path("handover/", handover.HandoverView.as_view()),
     # Derived multi-host correlation, served from its own database.
     path("correlation/", include("correlation.urls")),
     path("", include(router.urls)),

@@ -72,8 +72,8 @@
     }
   ],
   "loginTheme": "dfir",
-  "displayName": "DFIR_TOOLKIT",
-  "displayNameHtml": "<span>DFIR_TOOLKIT</span>",
+  "displayName": "DFIR_FRAMEWORK",
+  "displayNameHtml": "DFIR_FRAMEWORK",
   "ssoSessionMaxLifespan": 28800,
   "ssoSessionIdleTimeout": 900,
   "accessTokenLifespan": 300,

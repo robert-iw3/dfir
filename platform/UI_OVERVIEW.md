@@ -1,8 +1,11 @@
 # Web application — screen by screen
 
-The analyst-facing surface of the IR Platform. Every screen below is served from one
+The analyst-facing surface of the DFIR Framework. Every screen below is served from one
 SSO-gated origin and reached through the brokered analyst path described in
 [`README.md`](README.md).
+
+**▶ [Watch the walkthrough](img/concept_demo_alpha.mp4)** — the screens below,
+in the order an analyst moves through them on a real case.
 
 Navigation is role-aware: `analyst` sees the investigative views, `reverse_engineer`
 additionally sees the reverse-engineering queue, `auditor` additionally sees the audit
@@ -244,6 +247,44 @@ to the filtered table behind it by a URL the table already accepts:
   those hosts have no rows for any table to filter, and the chart says so instead of
   pretending a filter exists. The most expensive mistake in an IR is concluding on hosts
   nobody looked at, which is why this chart is allowed to be uncomfortable.
+
+### Case tree
+
+Investigation → host → run → capture → carved region, served in one request and expanded in
+place. The hierarchy already existed; the flat lists that used to render it did not show it.
+
+![Case tree expanded to hosts, runs and captures with their counts](img/case_tree.png)
+
+### Case board
+
+The five stages of the digital forensics process, each stating what it is for. Work moves
+in **both directions** — evidence arriving late genuinely sends a case back to Analysis, and
+a board that only advanced would record that as progress. Blocked is an attribute rather
+than a column, so a stalled task stays in the stage it stalled in and carries its reason.
+
+![The case board across five lifecycle stages, one task blocked](img/investigation_tasks.png)
+
+Opening a card gives the working record for that piece of work: append-only notes from
+whoever wrote them, the stage picker, and attachments — uploaded documents stored with the
+sha256 recorded on receipt, and links to evidence the platform already holds, which copy
+nothing.
+
+![A task open, with notes from two analysts, a document and an evidence link](img/investigation_task_details.png)
+
+![Uploading a document and linking held evidence to a task](img/investigation_uploads.png)
+
+### Reports
+
+Two documents come out of a case, both rendered from its own rows. Every render is recorded
+with its hash and the moment the data was read — a report is a statement about evidence at
+a point in time, so a second render after new evidence is a different document rather than
+an update.
+
+**Generating is not exporting.** Reading a report in the browser keeps it inside the
+enclave and is available to any analyst on the case; taking the file out needs the export
+right and lands in the export ledger.
+
+![Generated reports with their hashes, and a technical report open for reading](img/reports_read.png)
 
 ## Correlation
 
@@ -661,3 +702,17 @@ a management forwarder (see [`platform/admin/`](platform/admin)).
 Density (comfortable or compact) and time zone (UTC or local) are per-workstation
 preferences, persisted locally. Every timestamp is rendered with its zone label —
 ambiguous times are dangerous when correlating activity across hosts.
+
+
+---
+
+## Host detail
+
+One endpoint across every case that touched it — the "have we seen this box before?"
+answer. A hostname is a mutable label, so a rename is history rather than a new machine,
+and identity is `(hostname, machine_id)`.
+
+![A rebuilt host: its rename, its verdict spread, and collections across two cases](img/host_details.png)
+
+Cases the viewer is not assigned to are counted and not named: the existence of a
+compartmented case must not leak through a host it shares.

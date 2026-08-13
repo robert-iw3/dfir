@@ -52,6 +52,35 @@ body {
   line-height: 1.5;
 }
 
+/* Every form control, everywhere. Scoped rules below refine these; without a global base
+   an input in a new component inherits the browser's light default and renders as a white
+   box with dark text on a dark page. */
+input, select, textarea {
+  background: var(--bg-elev-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 7px 10px;
+  font: inherit;
+  font-size: 13px;
+}
+input::placeholder, textarea::placeholder { color: var(--text-dim); }
+input:focus, select:focus, textarea:focus {
+  outline: none;
+  border-color: var(--accent-dim);
+  box-shadow: 0 0 0 3px var(--accent-wash);
+}
+input[type="checkbox"], input[type="radio"] {
+  /* Accent-tinted native controls: restyling them wholesale loses the platform's own
+     focus and indeterminate states for no gain. */
+  accent-color: var(--accent);
+  width: auto;
+  padding: 0;
+  box-shadow: none;
+}
+textarea { resize: vertical; }
+select option { background: var(--bg-elev-2); color: var(--text); }
+
 a { color: var(--accent); text-decoration: none; }
 a:hover { text-decoration: underline; }
 
@@ -75,7 +104,9 @@ a:hover { text-decoration: underline; }
   align-items: center;
   gap: 8px;
 }
-.brand .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 12px var(--accent); }
+/* The mark replaces the status dot it used to sit beside; the glow is kept so the
+   sidebar head still reads as the platform's own rather than a pasted-in icon. */
+.brand .brand-mark { flex: 0 0 auto; filter: drop-shadow(0 0 10px rgba(45, 212, 191, 0.35)); }
 .brand-sub { color: var(--text-dim); font-size: 11px; margin-bottom: 22px; text-transform: uppercase; letter-spacing: 1px; }
 .nav a {
   display: flex;
@@ -228,6 +259,21 @@ td.wrap { white-space: pre-wrap; max-width: 46ch; font-size: 12px; line-height: 
   background: var(--bg-elev-2); color: var(--text-dim); border-color: var(--border);
 }
 .btn.ghost:hover { background: var(--border); color: var(--text); }
+/* Inline actions inside panels. Same treatment as an active nav link, so a control that
+   only reorganizes the view never looks like one that changes evidence. */
+.btn-sm {
+  background: var(--accent-wash);
+  border: 1px solid rgba(45, 212, 191, 0.28);
+  color: var(--accent-strong);
+  padding: 4px 10px;
+  border-radius: var(--radius-sm);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.btn-sm:hover { background: rgba(45, 212, 191, 0.18); color: var(--accent-strong); }
+.btn-sm:disabled { opacity: .45; cursor: default; }
 
 .search { display: flex; gap: 10px; margin-bottom: 18px; }
 .search input {
@@ -535,3 +581,157 @@ td.wrap { white-space: pre-wrap; max-width: 46ch; font-size: 12px; line-height: 
   .ring i { animation: none; }
   .ring i:nth-child(n+2) { opacity: .25; }
 }
+
+/* ---- collaboration chrome ---------------------------------------------- *
+ * Search and notifications sit above every view because both are global. The row is
+ * deliberately quiet: it is navigation furniture, and it competes with nothing on the
+ * page it sits over. */
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 18px;
+}
+
+.gsearch { position: relative; flex: 1; max-width: 560px; }
+.gsearch input {
+  width: 100%;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  padding: 8px 12px;
+  font: inherit;
+  font-size: 13px;
+}
+.gsearch input:focus {
+  outline: none;
+  border-color: var(--accent-dim);
+  box-shadow: 0 0 0 3px var(--accent-wash);
+}
+.gsearch-panel {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  z-index: 40;
+  max-height: 60vh;
+  overflow-y: auto;
+  margin: 0;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.5);
+}
+.gsearch-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 12px;
+  background: none;
+  border: 0;
+  border-bottom: 1px solid var(--border-soft);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.gsearch-row:hover { background: var(--bg-elev-2); }
+.gsearch-title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.bell-wrap { position: relative; margin-left: auto; }
+.bell {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-dim);
+  padding: 7px 11px;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.bell svg { width: 17px; height: 17px; stroke: currentColor; }
+/* The count is the only thing here that earns color: an empty bell must not draw the eye. */
+.bell-count {
+  background: var(--accent);
+  color: #04211e;
+  font-weight: 700;
+  border-radius: 999px;
+  padding: 0 6px;
+  font-size: 11px;
+}
+.bell:hover { color: var(--text); }
+.bell-panel {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  width: 360px;
+  z-index: 40;
+  max-height: 60vh;
+  overflow-y: auto;
+  margin: 0;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.5);
+}
+.bell-row { padding: 8px 12px; border-bottom: 1px solid var(--border-soft); font-size: 12.5px; }
+.bell-row.unread { border-left: 2px solid var(--accent); background: var(--accent-wash); }
+
+/* Presence and soft locks are ADVISORY, and are styled to read that way. Neither uses a
+   severity color, because neither is a problem and neither blocks anything. */
+.presence-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+  font-size: 12px;
+}
+.presence-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--good);
+  margin-right: 4px;
+}
+.lock-notice {
+  margin: 8px 0;
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  border-left: 2px solid var(--accent-2);
+  background: var(--accent-2-wash);
+  font-size: 12.5px;
+  color: var(--text-dim);
+}
+.badge.v-blocked { background: rgba(224,168,58,.15); color: var(--warn); border-color: rgba(224,168,58,.42); }
+.badge.s-critical { background: rgba(255,92,120,.15); color: var(--crit); border-color: rgba(255,92,120,.42); }
+.badge.s-high { background: rgba(242,99,92,.15); color: var(--bad); border-color: rgba(242,99,92,.42); }
+.badge.s-medium { background: rgba(224,168,58,.15); color: var(--warn); border-color: rgba(224,168,58,.42); }
+.badge.s-low { background: var(--bg-elev-2); color: var(--text-dim); border-color: var(--border); }
+
+/* A log is read as text, wrapped, in a bounded pane — never parsed, and never allowed to
+   push the page sideways. */
+.logview {
+  background: var(--bg-elev);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  max-height: 65vh;
+  overflow: auto;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-dim);
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin: 0 0 20px;
+}
+
+/* Earlier failures on a pair that is now carrying traffic. Recessive on purpose: it is
+   history, not a fault, and it must not read as one. */
+.mesh-obs-stale { color: var(--text-dim); opacity: 0.7; font-size: 9px; margin-left: 2px; }
+
+/* An error that has not recurred since the last report. Kept readable but visibly aged,
+   so history cannot be mistaken for a live fault. */
+.ch-error-stale { opacity: 0.55; }

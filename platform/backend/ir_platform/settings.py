@@ -11,6 +11,37 @@ from pathlib import Path
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 
+def _load_vault_env():
+    """Adopt the Vault Agent's rendered secrets, for EVERY process in this container.
+
+    The entrypoint sources this file before exec'ing the server, but `manage.py` run through
+    `podman exec` never runs the entrypoint and would otherwise hold a different custody key
+    from the API — which surfaces as a seal failure that reads as tampering.
+    """
+    path = os.environ.get("IR_VAULT_SECRETS_FILE", "/vault/secrets/app.env")
+    if os.environ.get("IR_VAULT", "0") != "1" or not os.path.isfile(path):
+        return
+    try:
+        with open(path, encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                line = line[7:].lstrip() if line.startswith("export ") else line
+                key, sep, val = line.partition("=")
+                if not sep:
+                    continue
+                # The rendered file is authoritative: it holds the CURRENT lease, and the
+                # image environment holds whatever was baked in at build or compose time.
+                os.environ[key.strip()] = val.strip().strip('"').strip("'")
+    except OSError:
+        # A container without the mount runs on its image environment, as before.
+        pass
+
+
+_load_vault_env()
+
+
 def _env(key, default=None):
     val = os.environ.get(key)
     return val if val not in (None, "") else default
@@ -87,7 +118,7 @@ TEMPLATES = [
 
 DATABASES = {
     "default": {
-        "ENGINE": "django.db.backends.postgresql",
+        "ENGINE": "ir_platform.vaultdb",
         "NAME": _env("POSTGRES_DB", "ir_platform"),
         "USER": _env("POSTGRES_USER", "ir_platform"),
         "PASSWORD": _env("POSTGRES_PASSWORD", "ir_platform"),
@@ -100,7 +131,7 @@ DATABASES = {
     # scale independently. Defaults to a separate database on the same instance; point
     # CORRELATION_POSTGRES_HOST at another cluster to split it physically, no code change.
     "correlation": {
-        "ENGINE": "django.db.backends.postgresql",
+        "ENGINE": "ir_platform.vaultdb",
         "NAME": _env("CORRELATION_POSTGRES_DB", "ir_correlation"),
         "USER": _env("CORRELATION_POSTGRES_USER", _env("POSTGRES_USER", "ir_platform")),
         "PASSWORD": _env("CORRELATION_POSTGRES_PASSWORD", _env("POSTGRES_PASSWORD", "ir_platform")),
@@ -112,7 +143,7 @@ DATABASES = {
     # evidence, so it is kept out of the database that carries chain of custody: it must not
     # compete with collection for I/O, ride evidence backups, or inflate a case restore.
     "opslog": {
-        "ENGINE": "django.db.backends.postgresql",
+        "ENGINE": "ir_platform.vaultdb",
         "NAME": _env("OPSLOG_POSTGRES_DB", "ir_opslog"),
         "USER": _env("OPSLOG_POSTGRES_USER", _env("POSTGRES_USER", "ir_platform")),
         "PASSWORD": _env("OPSLOG_POSTGRES_PASSWORD", _env("POSTGRES_PASSWORD", "ir_platform")),
@@ -190,9 +221,45 @@ STATIC_URL = "static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
+# Application logs go to the console AND to a file, never to one or the other. The console
+# copy is what `podman logs` shows while a container is alive; the file is what the shipper
+# moves into object storage, which is the only copy that survives the container. An admin
+# troubleshooting after the fact has nothing to read otherwise.
+#
+# The directory is created rather than assumed: a missing mount would make FileHandler raise
+# at import and take the whole service down over a log path.
+_LOG_DIR = _env("IR_APP_LOG_DIR", "/logs/app")
+try:
+    os.makedirs(_LOG_DIR, exist_ok=True)
+    _LOG_FILE = os.path.join(_LOG_DIR, f"{_env('IR_LOG_NAME', 'backend')}-app.log")
+    open(_LOG_FILE, "a").close()
+except OSError:
+    _LOG_FILE = ""
+
 LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,
-    "handlers": {"console": {"class": "logging.StreamHandler"}},
-    "root": {"handlers": ["console"], "level": _env("DJANGO_LOG_LEVEL", "INFO")},
+    "formatters": {
+        "plain": {"format": "%(asctime)s %(levelname)s %(name)s %(message)s"},
+    },
+    "handlers": {
+        "console": {"class": "logging.StreamHandler", "formatter": "plain"},
+        **({"file": {
+            "class": "logging.handlers.RotatingFileHandler",
+            "filename": _LOG_FILE,
+            # Bounded on disk: the shipper has already moved the bytes to object storage,
+            # so the file is a buffer, not the archive.
+            "maxBytes": 16 * 1024 * 1024,
+            "backupCount": 2,
+            "formatter": "plain",
+        }} if _LOG_FILE else {}),
+    },
+    "root": {
+        "handlers": ["console"] + (["file"] if _LOG_FILE else []),
+        "level": _env("DJANGO_LOG_LEVEL", "INFO"),
+    },
 }
+
+# Celery hijacks the root logger by default, which would send worker output around the
+# handlers above and leave the worker's file empty.
+CELERY_WORKER_HIJACK_ROOT_LOGGER = False

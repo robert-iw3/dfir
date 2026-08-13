@@ -144,6 +144,8 @@ that is not listed here.
 
 | Document | Claims | Invalidated by |
 |---|---|---|
+| `USER-GUIDE.md` | Every capability, where it lives, and what the platform refuses | any capability added, removed or declined |
+| `WORKFLOW-LIFECYCLE.md` | One case from collection to report, in the order it happens | a stage of the forensic lifecycle changing shape |
 | `WORKFLOW-ANALYST.md` | Working an incident: adjudication, triage, the investigation record | analyst-facing UI or permission changes |
 | `WORKFLOW-RE.md` | Carved regions: staging a session, determinations, purge | RE workstation or carving changes |
 | `WORKFLOW-ADMIN.md` | Deployment, management access, accounts, symbols, retention | deployment, account or access changes |

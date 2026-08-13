@@ -126,6 +126,90 @@ Manual controls, on a capture:
 - **Purge** — delete the image from object storage. The custody record remains.
 - **Legal hold** — retain regardless of disposition.
 
+### Archiving a case to cold storage
+
+A concluded case leaves the hot database on a schedule, as one sealed bundle per case. The
+case itself never disappears from the platform: it stays listed with its dates, its counts
+and an explicit *cold storage* state, because a case missing from the list would be
+indistinguishable from a deleted one.
+
+**What goes cold:** findings, memory findings, process verdicts, IOCs and principals — the
+bulk. **What stays hot:** run, host and capture metadata (the index of what exists), the
+correlation store, and the indicator rollups, so "have we seen this before?" still answers
+across archived cases. The audit ledger is never touched.
+
+**When it happens**, without anyone asking:
+
+| Trigger | Default | Behavior |
+|---|---|---|
+| Concluded, past its grace window | 120 days | archived normally |
+| Still open, past the hard ceiling | 180 days from creation | archived anyway, and flagged `archived_while_open` |
+| Warning window before either | 14 days | listed on the due-for-archival view so someone can finish or extend |
+| **Under legal hold** | — | **refused, always** |
+
+An investigation still open after six months is not an active investigation; it is an
+unfinished one, and the database should not carry the cost of that indefinitely. Nothing is
+lost — it restores like any other case.
+
+Override the windows with `IR_ARCHIVE_GRACE_DAYS`, `IR_ARCHIVE_CEILING_DAYS`,
+`IR_ARCHIVE_WARNING_DAYS` and `IR_RESTORE_TTL_DAYS` in `deploy/.env`.
+
+**See what is due** — *Platform Health → due for archival*, or:
+
+```bash
+podman exec ir-enclave_backend_1 python manage.py archive_case --sweep --dry-run
+```
+
+**Run the sweep** (also re-cools restores whose window has expired):
+
+```bash
+podman exec ir-enclave_backend_1 python manage.py archive_case --sweep
+```
+
+**Archive one case now:**
+
+```bash
+podman exec ir-enclave_backend_1 python manage.py archive_case --investigation 42
+```
+
+Nothing is deleted until the uploaded bundle has been read back out of the archive bucket
+and its custody seal verified. If that check fails the case is left exactly as it was, and
+the command says so.
+
+A case already in cold storage is refused with `already archived` rather than sealed twice.
+Restore it first if you need a fresh bundle.
+
+> **Bundles sealed before 2026-08-13 cannot be restored through the web UI.** Until then a
+> `podman exec ... manage.py` process did not inherit the Vault-rendered secrets the server
+> holds — it never runs the entrypoint that sources them — so a bundle sealed by this command
+> carried a different custody key from the one the API verifies with. The restore reports
+> `HMAC verification failed (unsigned or wrong key)`, which reads as tampering but is not.
+> Settings now load the rendered secrets for every process in the container, so both halves
+> agree. Older bundles stay unverifiable: the key that sealed them is gone.
+
+### Restoring an archived case
+
+Restoring is an admin action from the case itself — *Investigations → the case → Restore* —
+or:
+
+```bash
+podman exec ir-enclave_backend_1 python manage.py restore_case --investigation 42
+```
+
+Three things worth knowing before you need them:
+
+1. **The seal is verified before a single row is inserted.** A tampered archive does not
+   enter the evidence store.
+2. **Rows come back with their original ids**, so a second restore of the same case reports
+   `noop` rather than duplicating anything. Re-running it is safe.
+3. **Restored data carries an expiry** (default 14 days) and the next sweep re-cools it.
+   Restoring for a review does not silently re-inflate the hot tier forever — restore again
+   if you need longer.
+
+The bundle itself is gzipped newline-delimited JSON in a `.tar.gz`, one file per table plus
+a manifest, in the `ir-archive` bucket. It is readable with ordinary tools and restorable
+without this platform if it ever came to that.
+
 ## 7. Monitor
 
 **Platform Health** reports service state, queue depth, analysis throughput and storage

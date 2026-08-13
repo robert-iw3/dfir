@@ -46,15 +46,25 @@ function Cell({ action, self, obs }) {
   const fails = obs?.connect_fail || 0;
   const ok = Math.max(0, (obs?.cx_total || 0) - fails);
   if (action === "allow") {
-    if (fails > 0) {
+    // The counter is CUMULATIVE since the sidecar started, so it cannot by itself say
+    // anything is failing now. A service that starts before its upstream is ready loses a
+    // connection or two and then runs for days; reading that as a current fault paints a
+    // healthy pair red permanently and teaches everyone to ignore the colour.
+    //
+    // Never succeeded is the only thing this evidence supports calling failure.
+    if (fails > 0 && ok === 0) {
       return <td className="mesh-cell mesh-warn"
-                 title={`allowed, but failing in practice — ${fails} of ${obs.cx_total} attempts from the source's own sidecar failed`}>
+                 title={`allowed, but never observed connecting — all ${fails} attempt(s) from the source's own sidecar failed`}>
                ✓<span className="mesh-obs">{fails}✕</span></td>;
     }
     if (ok > 0) {
       return <td className="mesh-cell mesh-allow"
-                 title={`allowed, and observed carrying traffic — ${ok} connection(s) counted by the source's own sidecar`}>
-               ✓<span className="mesh-obs">{ok}</span></td>;
+                 title={fails > 0
+                   ? `allowed and carrying traffic — ${ok} connection(s) counted, and ${fails} earlier attempt(s) failed since this sidecar started (usually the upstream not yet being ready)`
+                   : `allowed, and observed carrying traffic — ${ok} connection(s) counted by the source's own sidecar`}>
+               ✓<span className="mesh-obs">{ok}</span>
+               {fails > 0 && <span className="mesh-obs-stale" title={`${fails} earlier failure(s)`}>·{fails}✕</span>}
+             </td>;
     }
     return <td className="mesh-cell mesh-allow" title="allowed by an explicit rule; no traffic observed">✓</td>;
   }
@@ -218,7 +228,7 @@ export default function MeshHealth() {
         <span className="mesh-key mesh-deny">✕</span> explicit deny ·{" "}
         <span className="mesh-key mesh-default">–</span> no rule; the destination’s default
         applies (default-deny) ·{" "}
-        <span className="mesh-key mesh-warn">✓n✕</span> allowed but failing ·{" "}
+        <span className="mesh-key mesh-warn">✓n✕</span> allowed but never connected ·{" "}
         <span className="mesh-key mesh-breach">!</span> traffic where policy allows none
       </p>
       <p className="muted" style={{ marginTop: 4 }}>

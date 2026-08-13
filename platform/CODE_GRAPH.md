@@ -93,11 +93,13 @@ namespace is unproxied, however healthy it looks.
 | `troubleshooting/diagnose.sh` | — | `dmz/bastion`<br>`dmz/broker`<br>`dmz/distributor`<br>`enclave/boundary`<br>`enclave/boundary-egress`<br>`workstation/tailnet` |
 | `troubleshooting/remediation-agent.sh` | `deploy/deploy.sh`<br>`hashicorp/consul/consul-acl-bootstrap.sh`<br>`hashicorp/vault/rotate-app-creds.sh`<br>`hashicorp/vault/vault-unseal.sh` | `enclave/backend`<br>`enclave/boundary`<br>`enclave/worker`<br>`enclave/worker-sidecar` |
 | `test/lib/corpus_pipeline.sh` | `collector/build.sh` | `dmz/receiver`<br>`enclave/backend`<br>`enclave/puller`<br>`enclave/worker` |
-| `test/run_uats.sh` | — | `agent/remediation-agent`<br>`dmz/broker`<br>`dmz/coredns`<br>`dmz/distributor`<br>`dmz/headscale`<br>`dmz/receiver`<br>`enclave/backend`<br>`enclave/boundary`<br>`enclave/consul`<br>`enclave/coredns`<br>`enclave/keycloak`<br>`enclave/traefik`<br>`enclave/vault`<br>`enclave/worker`<br>`workstation/browser`<br>`workstation/tailnet` |
+| `test/run_uats.sh` | — | `agent/remediation-agent`<br>`dmz/broker`<br>`dmz/coredns`<br>`dmz/distributor`<br>`dmz/headscale`<br>`dmz/receiver`<br>`enclave/backend`<br>`enclave/boundary`<br>`enclave/consul`<br>`enclave/coredns`<br>`enclave/frontend`<br>`enclave/keycloak`<br>`enclave/log-shipper`<br>`enclave/traefik`<br>`enclave/vault`<br>`enclave/worker`<br>`workstation/browser`<br>`workstation/tailnet` |
 | `test/seed_regions.sh` | — | `enclave/backend` |
 | `test/uat_audit.sh` | `test/lib/report.sh` | `dmz/distributor`<br>`enclave/backend` |
 | `test/uat_baseline.sh` | `test/lib/report.sh` | `dmz/receiver`<br>`enclave/backend`<br>`enclave/db`<br>`enclave/keycloak`<br>`enclave/minio`<br>`enclave/puller`<br>`enclave/redis`<br>`enclave/worker` |
 | `test/uat_boundary.sh` | `test/lib/report.sh` | `dmz/bastion`<br>`dmz/broker`<br>`dmz/distributor`<br>`enclave/backend`<br>`enclave/boundary`<br>`enclave/boundary-db`<br>`enclave/boundary-egress`<br>`enclave/boundary-egress-2` |
+| `test/uat_casework.sh` | `test/lib/report.sh` | `enclave/backend` |
+| `test/uat_collab.sh` | `test/lib/report.sh` | `enclave/backend` |
 | `test/uat_consul.sh` | `test/lib/report.sh` | `enclave/backend`<br>`enclave/consul`<br>`enclave/frontend`<br>`enclave/vault-agent`<br>`enclave/worker` |
 | `test/uat_corpus.sh` | `collector/build.sh`<br>`test/lib/report.sh` | `dmz/receiver`<br>`enclave/backend`<br>`enclave/puller`<br>`enclave/worker` |
 | `test/uat_corpus_linux.sh` | `test/lib/corpus_pipeline.sh`<br>`test/lib/report.sh` | — |
@@ -106,15 +108,20 @@ namespace is unproxied, however healthy it looks.
 | `test/uat_dns.sh` | `test/lib/report.sh` | `dmz/bastion`<br>`dmz/coredns`<br>`dmz/receiver`<br>`enclave/backend`<br>`enclave/coredns`<br>`enclave/keycloak`<br>`enclave/puller`<br>`enclave/traefik`<br>`enclave/worker`<br>`workstation/browser` |
 | `test/uat_e2e.sh` | `collector/build.sh`<br>`deploy/deploy.sh`<br>`re-workstation/stage_regions.sh`<br>`test/lib/report.sh`<br>`test/seed_regions.sh`<br>`workstation/launch.sh` | `dmz/receiver`<br>`enclave/backend`<br>`enclave/consul`<br>`enclave/puller`<br>`enclave/vault`<br>`enclave/worker` |
 | `test/uat_full_stack.sh` | `deploy/deploy.sh`<br>`test/lib/evidence.sh`<br>`test/lib/report.sh` | `dmz/broker`<br>`dmz/coredns`<br>`dmz/receiver`<br>`enclave/backend`<br>`enclave/keycloak`<br>`enclave/puller`<br>`enclave/traefik`<br>`enclave/worker`<br>`workstation/browser`<br>`workstation/probe` |
+| `test/uat_health.sh` | `test/lib/report.sh` | `enclave/backend`<br>`enclave/frontend` |
 | `test/uat_keycloak_db.sh` | `deploy/deploy.sh`<br>`hashicorp/keycloak/realm-converge.sh`<br>`test/lib/report.sh` | `enclave/backend`<br>`enclave/consul`<br>`enclave/db`<br>`enclave/kc-vault-agent`<br>`enclave/keycloak`<br>`enclave/vault-agent`<br>`enclave/worker` |
+| `test/uat_lifecycle.sh` | `test/lib/corpus_pipeline.sh`<br>`test/lib/report.sh` | `enclave/backend` |
 | `test/uat_load.sh` | `hashicorp/keycloak/provision-demo-users.sh`<br>`test/lib/report.sh` | `dmz/broker`<br>`enclave/backend`<br>`enclave/db`<br>`enclave/keycloak`<br>`enclave/oauth2-proxy`<br>`enclave/redis` |
+| `test/uat_logging.sh` | `test/lib/report.sh` | `enclave/backend`<br>`enclave/log-shipper`<br>`enclave/worker` |
 | `test/uat_memory_analysis.sh` | — | `enclave/backend`<br>`enclave/worker` |
 | `test/uat_mesh_multihost.sh` | `test/lib/report.sh` | — |
 | `test/uat_re_workstation.sh` | `test/lib/report.sh` | `dmz/receiver`<br>`enclave/backend`<br>`enclave/minio` |
 | `test/uat_repairs.sh` | `test/lib/report.sh` | `agent/remediation-agent`<br>`enclave/backend`<br>`enclave/consul` |
 | `test/uat_schema.sh` | `test/lib/report.sh` | `enclave/backend` |
+| `test/uat_scoping.sh` | `test/lib/report.sh` | `enclave/backend` |
 | `test/uat_srg_webtier.sh` | `ci/clock-sync-check.sh`<br>`ci/image-currency.sh`<br>`ci/password-blacklist-check.sh`<br>`ci/pin-base-images.sh`<br>`test/lib/report.sh` | `dmz/bastion`<br>`enclave/backend`<br>`enclave/consul`<br>`enclave/frontend`<br>`enclave/keycloak`<br>`enclave/log-shipper`<br>`enclave/ntp`<br>`enclave/oauth2-proxy`<br>`enclave/redis`<br>`enclave/traefik` |
 | `test/uat_tailnet.sh` | `test/lib/report.sh` | `dmz/bastion`<br>`dmz/headscale`<br>`workstation/browser`<br>`workstation/tailnet` |
+| `test/uat_tiering.sh` | `test/lib/report.sh` | `enclave/backend` |
 | `test/uat_ui.sh` | — | `enclave/backend` |
 | `test/uat_vault.sh` | `deploy/deploy.sh`<br>`hashicorp/vault/rotate-app-creds.sh`<br>`test/lib/report.sh` | `enclave/backend`<br>`enclave/db`<br>`enclave/vault`<br>`enclave/vault-agent`<br>`enclave/vault-setup`<br>`enclave/vault-sidecar`<br>`enclave/worker` |
 | `ci/clock-sync-check.sh` | — | `enclave/backend`<br>`enclave/ntp` |
@@ -156,9 +163,12 @@ namespace is unproxied, however healthy it looks.
 | `Correlation` | `campaignGraph` → `/api/correlation/campaigns/`<br>`campaignTimeline` → `/api/correlation/campaigns/`<br>`campaignTradecraft` → `/api/correlation/campaigns/`<br>`correlation` → `/api/correlation/investigations/`<br>`correlationHistory` → `/api/correlation/investigations/`<br>`investigations` → `/api/investigations/`<br>`recorrelate`<br>`sharedIndicators` → `/api/correlation/indicators/` |
 | `Dashboard` | `facets` → `/api/facets/`<br>`findingsBacklog` → `/api/findings/backlog/`<br>`findingsFunnel` → `/api/findings/funnel/`<br>`queueDepth` → `/api/admin/queue-depth/`<br>`stalledInvestigations` → `/api/investigations/stalled/`<br>`stats` → `/api/stats/`<br>`summary` |
 | `Findings` | `bulkVerdict`<br>`exportUrl`<br>`findingsMatrix` → `/api/findings/matrix/` |
+| `Handover` | `handover` |
+| `HostDetail` | `hostOverview` → `/api/hosts/` |
 | `InvestigationDetail` | `addNote` → `/api/notes/`<br>`deleteInvestigation` → `/api/investigations/`<br>`investigation` → `/api/investigations/`<br>`investigationCoverage` → `/api/investigations/`<br>`investigationRecord`<br>`investigationStats` → `/api/investigations/`<br>`requestRescan` → `/api/rescans/`<br>`retractNote` → `/api/notes/` |
 | `Investigations` | `investigations` → `/api/investigations/` |
 | `IocSearch` | `iocSearch` → `/api/ioc-search/`<br>`iocSpread` |
+| `Logs` | `clientErrors` → `/api/opslog/client-errors/list/`<br>`downloadBlob`<br>`logDownloadUrl` → `/api/api/opslog/logs/download/`<br>`logObject` → `/api/opslog/logs/objects/`<br>`logObjects` → `/api/opslog/logs/objects/`<br>`logSources` → `/api/opslog/logs/sources/`<br>`requestLog` |
 | `MeshHealth` | `meshHealth` → `/api/admin/mesh-health/` |
 | `Repairs` | `remediation` → `/api/admin/remediation/`<br>`requestRemediation` → `/api/admin/remediation/` |
 | `Reversing` | `analyzeRegion` → `/api/regions/`<br>`regionQueue` → `/api/regions/queue/` |
@@ -172,6 +182,8 @@ namespace is unproxied, however healthy it looks.
 | `uat_audit.sh` | `dmz/distributor`, `enclave/backend` |
 | `uat_baseline.sh` | `dmz/receiver`, `enclave/backend`, `enclave/db`, `enclave/keycloak`, `enclave/minio`, `enclave/puller`, `enclave/redis`, `enclave/worker` |
 | `uat_boundary.sh` | `dmz/bastion`, `dmz/broker`, `dmz/distributor`, `enclave/backend`, `enclave/boundary`, `enclave/boundary-db`, `enclave/boundary-egress`, `enclave/boundary-egress-2` |
+| `uat_casework.sh` | `enclave/backend` |
+| `uat_collab.sh` | `enclave/backend` |
 | `uat_consul.sh` | `enclave/backend`, `enclave/consul`, `enclave/frontend`, `enclave/vault-agent`, `enclave/worker` |
 | `uat_corpus.sh` | `dmz/receiver`, `enclave/backend`, `enclave/puller`, `enclave/worker` |
 | `uat_corpus_linux.sh` | — |
@@ -180,14 +192,19 @@ namespace is unproxied, however healthy it looks.
 | `uat_dns.sh` | `dmz/bastion`, `dmz/coredns`, `dmz/receiver`, `enclave/backend`, `enclave/coredns`, `enclave/keycloak`, `enclave/puller`, `enclave/traefik`, `enclave/worker`, `workstation/browser` |
 | `uat_e2e.sh` | `dmz/receiver`, `enclave/backend`, `enclave/consul`, `enclave/puller`, `enclave/vault`, `enclave/worker` |
 | `uat_full_stack.sh` | `dmz/broker`, `dmz/coredns`, `dmz/receiver`, `enclave/backend`, `enclave/keycloak`, `enclave/puller`, `enclave/traefik`, `enclave/worker`, `workstation/browser`, `workstation/probe` |
+| `uat_health.sh` | `enclave/backend`, `enclave/frontend` |
 | `uat_keycloak_db.sh` | `enclave/backend`, `enclave/consul`, `enclave/db`, `enclave/kc-vault-agent`, `enclave/keycloak`, `enclave/vault-agent`, `enclave/worker` |
+| `uat_lifecycle.sh` | `enclave/backend` |
 | `uat_load.sh` | `dmz/broker`, `enclave/backend`, `enclave/db`, `enclave/keycloak`, `enclave/oauth2-proxy`, `enclave/redis` |
+| `uat_logging.sh` | `enclave/backend`, `enclave/log-shipper`, `enclave/worker` |
 | `uat_memory_analysis.sh` | `enclave/backend`, `enclave/worker` |
 | `uat_mesh_multihost.sh` | — |
 | `uat_re_workstation.sh` | `dmz/receiver`, `enclave/backend`, `enclave/minio` |
 | `uat_repairs.sh` | `agent/remediation-agent`, `enclave/backend`, `enclave/consul` |
 | `uat_schema.sh` | `enclave/backend` |
+| `uat_scoping.sh` | `enclave/backend` |
 | `uat_srg_webtier.sh` | `dmz/bastion`, `enclave/backend`, `enclave/consul`, `enclave/frontend`, `enclave/keycloak`, `enclave/log-shipper`, `enclave/ntp`, `enclave/oauth2-proxy`, `enclave/redis`, `enclave/traefik` |
 | `uat_tailnet.sh` | `dmz/bastion`, `dmz/headscale`, `workstation/browser`, `workstation/tailnet` |
+| `uat_tiering.sh` | `enclave/backend` |
 | `uat_ui.sh` | `enclave/backend` |
 | `uat_vault.sh` | `enclave/backend`, `enclave/db`, `enclave/vault`, `enclave/vault-agent`, `enclave/vault-setup`, `enclave/vault-sidecar`, `enclave/worker` |

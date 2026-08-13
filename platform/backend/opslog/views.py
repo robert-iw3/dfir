@@ -5,7 +5,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from cases.rbac import IsAnalystOrAdmin
+from cases.rbac import IsAdmin
 
 from .models import ClientError, RequestLog
 
@@ -43,7 +43,7 @@ class ClientErrorView(APIView):
 class RequestLogView(APIView):
     """Recent API calls. Defaults to failures, because that is what a person comes here for."""
 
-    permission_classes = [IsAnalystOrAdmin]
+    permission_classes = [IsAdmin]
 
     def get(self, request):
         q = request.query_params
@@ -76,7 +76,7 @@ class RequestLogView(APIView):
 
 
 @api_view(["GET"])
-@permission_classes([IsAnalystOrAdmin])
+@permission_classes([IsAdmin])
 def client_errors(request):
     """Failures the browser saw — the ones no server-side log can contain."""
     limit = min(int(request.query_params.get("limit", 50) or 50), 200)

@@ -770,7 +770,17 @@
   {
    "from": "test/run_uats.sh",
    "kind": "drives",
+   "to": "enclave/frontend"
+  },
+  {
+   "from": "test/run_uats.sh",
+   "kind": "drives",
    "to": "enclave/keycloak"
+  },
+  {
+   "from": "test/run_uats.sh",
+   "kind": "drives",
+   "to": "enclave/log-shipper"
   },
   {
    "from": "test/run_uats.sh",
@@ -906,6 +916,26 @@
    "from": "test/uat_boundary.sh",
    "kind": "drives",
    "to": "enclave/boundary-egress-2"
+  },
+  {
+   "from": "test/uat_casework.sh",
+   "kind": "runs",
+   "to": "test/lib/report.sh"
+  },
+  {
+   "from": "test/uat_casework.sh",
+   "kind": "drives",
+   "to": "enclave/backend"
+  },
+  {
+   "from": "test/uat_collab.sh",
+   "kind": "runs",
+   "to": "test/lib/report.sh"
+  },
+  {
+   "from": "test/uat_collab.sh",
+   "kind": "drives",
+   "to": "enclave/backend"
   },
   {
    "from": "test/uat_consul.sh",
@@ -1178,6 +1208,21 @@
    "to": "workstation/probe"
   },
   {
+   "from": "test/uat_health.sh",
+   "kind": "runs",
+   "to": "test/lib/report.sh"
+  },
+  {
+   "from": "test/uat_health.sh",
+   "kind": "drives",
+   "to": "enclave/backend"
+  },
+  {
+   "from": "test/uat_health.sh",
+   "kind": "drives",
+   "to": "enclave/frontend"
+  },
+  {
    "from": "test/uat_keycloak_db.sh",
    "kind": "runs",
    "to": "deploy/deploy.sh"
@@ -1228,6 +1273,21 @@
    "to": "enclave/worker"
   },
   {
+   "from": "test/uat_lifecycle.sh",
+   "kind": "runs",
+   "to": "test/lib/corpus_pipeline.sh"
+  },
+  {
+   "from": "test/uat_lifecycle.sh",
+   "kind": "runs",
+   "to": "test/lib/report.sh"
+  },
+  {
+   "from": "test/uat_lifecycle.sh",
+   "kind": "drives",
+   "to": "enclave/backend"
+  },
+  {
    "from": "test/uat_load.sh",
    "kind": "runs",
    "to": "hashicorp/keycloak/provision-demo-users.sh"
@@ -1266,6 +1326,26 @@
    "from": "test/uat_load.sh",
    "kind": "drives",
    "to": "enclave/redis"
+  },
+  {
+   "from": "test/uat_logging.sh",
+   "kind": "runs",
+   "to": "test/lib/report.sh"
+  },
+  {
+   "from": "test/uat_logging.sh",
+   "kind": "drives",
+   "to": "enclave/backend"
+  },
+  {
+   "from": "test/uat_logging.sh",
+   "kind": "drives",
+   "to": "enclave/log-shipper"
+  },
+  {
+   "from": "test/uat_logging.sh",
+   "kind": "drives",
+   "to": "enclave/worker"
   },
   {
    "from": "test/uat_memory_analysis.sh",
@@ -1329,6 +1409,16 @@
   },
   {
    "from": "test/uat_schema.sh",
+   "kind": "drives",
+   "to": "enclave/backend"
+  },
+  {
+   "from": "test/uat_scoping.sh",
+   "kind": "runs",
+   "to": "test/lib/report.sh"
+  },
+  {
+   "from": "test/uat_scoping.sh",
    "kind": "drives",
    "to": "enclave/backend"
   },
@@ -1431,6 +1521,16 @@
    "from": "test/uat_tailnet.sh",
    "kind": "drives",
    "to": "workstation/tailnet"
+  },
+  {
+   "from": "test/uat_tiering.sh",
+   "kind": "runs",
+   "to": "test/lib/report.sh"
+  },
+  {
+   "from": "test/uat_tiering.sh",
+   "kind": "drives",
+   "to": "enclave/backend"
   },
   {
    "from": "test/uat_ui.sh",
@@ -1586,6 +1686,16 @@
    "from": "test/uat_boundary.sh",
    "kind": "proves",
    "to": "enclave/boundary-egress-2"
+  },
+  {
+   "from": "test/uat_casework.sh",
+   "kind": "proves",
+   "to": "enclave/backend"
+  },
+  {
+   "from": "test/uat_collab.sh",
+   "kind": "proves",
+   "to": "enclave/backend"
   },
   {
    "from": "test/uat_consul.sh",
@@ -1763,6 +1873,16 @@
    "to": "workstation/probe"
   },
   {
+   "from": "test/uat_health.sh",
+   "kind": "proves",
+   "to": "enclave/backend"
+  },
+  {
+   "from": "test/uat_health.sh",
+   "kind": "proves",
+   "to": "enclave/frontend"
+  },
+  {
    "from": "test/uat_keycloak_db.sh",
    "kind": "proves",
    "to": "enclave/backend"
@@ -1798,6 +1918,11 @@
    "to": "enclave/worker"
   },
   {
+   "from": "test/uat_lifecycle.sh",
+   "kind": "proves",
+   "to": "enclave/backend"
+  },
+  {
    "from": "test/uat_load.sh",
    "kind": "proves",
    "to": "dmz/broker"
@@ -1826,6 +1951,21 @@
    "from": "test/uat_load.sh",
    "kind": "proves",
    "to": "enclave/redis"
+  },
+  {
+   "from": "test/uat_logging.sh",
+   "kind": "proves",
+   "to": "enclave/backend"
+  },
+  {
+   "from": "test/uat_logging.sh",
+   "kind": "proves",
+   "to": "enclave/log-shipper"
+  },
+  {
+   "from": "test/uat_logging.sh",
+   "kind": "proves",
+   "to": "enclave/worker"
   },
   {
    "from": "test/uat_memory_analysis.sh",
@@ -1869,6 +2009,11 @@
   },
   {
    "from": "test/uat_schema.sh",
+   "kind": "proves",
+   "to": "enclave/backend"
+  },
+  {
+   "from": "test/uat_scoping.sh",
    "kind": "proves",
    "to": "enclave/backend"
   },
@@ -1941,6 +2086,11 @@
    "from": "test/uat_tailnet.sh",
    "kind": "proves",
    "to": "workstation/tailnet"
+  },
+  {
+   "from": "test/uat_tiering.sh",
+   "kind": "proves",
+   "to": "enclave/backend"
   },
   {
    "from": "test/uat_ui.sh",
@@ -2029,6 +2179,12 @@
    "exportUrl": "?",
    "findingsMatrix": "/findings/matrix/"
   },
+  "Handover": {
+   "handover": "?"
+  },
+  "HostDetail": {
+   "hostOverview": "/hosts/"
+  },
   "InvestigationDetail": {
    "addNote": "/notes/",
    "deleteInvestigation": "/investigations/",
@@ -2045,6 +2201,15 @@
   "IocSearch": {
    "iocSearch": "/ioc-search/",
    "iocSpread": "?"
+  },
+  "Logs": {
+   "clientErrors": "/opslog/client-errors/list/",
+   "downloadBlob": "?",
+   "logDownloadUrl": "/api/opslog/logs/download/",
+   "logObject": "/opslog/logs/objects/",
+   "logObjects": "/opslog/logs/objects/",
+   "logSources": "/opslog/logs/sources/",
+   "requestLog": "?"
   },
   "MeshHealth": {
    "meshHealth": "/admin/mesh-health/"
@@ -2210,7 +2375,9 @@
     "enclave/boundary",
     "enclave/consul",
     "enclave/coredns",
+    "enclave/frontend",
     "enclave/keycloak",
+    "enclave/log-shipper",
     "enclave/traefik",
     "enclave/vault",
     "enclave/worker",
@@ -2259,6 +2426,22 @@
     "enclave/boundary-db",
     "enclave/boundary-egress",
     "enclave/boundary-egress-2"
+   ],
+   "runs": [
+    "test/lib/report.sh"
+   ]
+  },
+  "test/uat_casework.sh": {
+   "drives": [
+    "enclave/backend"
+   ],
+   "runs": [
+    "test/lib/report.sh"
+   ]
+  },
+  "test/uat_collab.sh": {
+   "drives": [
+    "enclave/backend"
    ],
    "runs": [
     "test/lib/report.sh"
@@ -2363,6 +2546,15 @@
     "test/lib/report.sh"
    ]
   },
+  "test/uat_health.sh": {
+   "drives": [
+    "enclave/backend",
+    "enclave/frontend"
+   ],
+   "runs": [
+    "test/lib/report.sh"
+   ]
+  },
   "test/uat_keycloak_db.sh": {
    "drives": [
     "enclave/backend",
@@ -2379,6 +2571,15 @@
     "test/lib/report.sh"
    ]
   },
+  "test/uat_lifecycle.sh": {
+   "drives": [
+    "enclave/backend"
+   ],
+   "runs": [
+    "test/lib/corpus_pipeline.sh",
+    "test/lib/report.sh"
+   ]
+  },
   "test/uat_load.sh": {
    "drives": [
     "dmz/broker",
@@ -2390,6 +2591,16 @@
    ],
    "runs": [
     "hashicorp/keycloak/provision-demo-users.sh",
+    "test/lib/report.sh"
+   ]
+  },
+  "test/uat_logging.sh": {
+   "drives": [
+    "enclave/backend",
+    "enclave/log-shipper",
+    "enclave/worker"
+   ],
+   "runs": [
     "test/lib/report.sh"
    ]
   },
@@ -2434,6 +2645,14 @@
     "test/lib/report.sh"
    ]
   },
+  "test/uat_scoping.sh": {
+   "drives": [
+    "enclave/backend"
+   ],
+   "runs": [
+    "test/lib/report.sh"
+   ]
+  },
   "test/uat_srg_webtier.sh": {
    "drives": [
     "dmz/bastion",
@@ -2461,6 +2680,14 @@
     "dmz/headscale",
     "workstation/browser",
     "workstation/tailnet"
+   ],
+   "runs": [
+    "test/lib/report.sh"
+   ]
+  },
+  "test/uat_tiering.sh": {
+   "drives": [
+    "enclave/backend"
    ],
    "runs": [
     "test/lib/report.sh"
@@ -2958,6 +3185,12 @@
    "enclave/boundary-egress",
    "enclave/boundary-egress-2"
   ],
+  "uat_casework.sh": [
+   "enclave/backend"
+  ],
+  "uat_collab.sh": [
+   "enclave/backend"
+  ],
   "uat_consul.sh": [
    "enclave/backend",
    "enclave/consul",
@@ -3006,6 +3239,10 @@
    "workstation/browser",
    "workstation/probe"
   ],
+  "uat_health.sh": [
+   "enclave/backend",
+   "enclave/frontend"
+  ],
   "uat_keycloak_db.sh": [
    "enclave/backend",
    "enclave/consul",
@@ -3015,6 +3252,9 @@
    "enclave/vault-agent",
    "enclave/worker"
   ],
+  "uat_lifecycle.sh": [
+   "enclave/backend"
+  ],
   "uat_load.sh": [
    "dmz/broker",
    "enclave/backend",
@@ -3022,6 +3262,11 @@
    "enclave/keycloak",
    "enclave/oauth2-proxy",
    "enclave/redis"
+  ],
+  "uat_logging.sh": [
+   "enclave/backend",
+   "enclave/log-shipper",
+   "enclave/worker"
   ],
   "uat_memory_analysis.sh": [
    "enclave/backend",
@@ -3041,6 +3286,9 @@
   "uat_schema.sh": [
    "enclave/backend"
   ],
+  "uat_scoping.sh": [
+   "enclave/backend"
+  ],
   "uat_srg_webtier.sh": [
    "dmz/bastion",
    "enclave/backend",
@@ -3058,6 +3306,9 @@
    "dmz/headscale",
    "workstation/browser",
    "workstation/tailnet"
+  ],
+  "uat_tiering.sh": [
+   "enclave/backend"
   ],
   "uat_ui.sh": [
    "enclave/backend"

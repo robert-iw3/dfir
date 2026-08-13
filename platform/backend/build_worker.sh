@@ -37,6 +37,7 @@ require dir  "${TOOLKIT_ROOT}/tools/vol3_wheels"              "Volatility wheels
 require dir  "${TOOLKIT_ROOT}/playbooks/linux/threat_hunting" "hunt playbooks"
 require dir  "${TOOLKIT_ROOT}/playbooks/linux/investigation"  "investigation engine"
 require file "${HERE}/../shared/sysstats.py"                  "component self-reporting"
+require file "${HERE}/../shared/custody.py"                   "custody seal"
 require_report
 build_inputs_check_only && { echo "[build] worker inputs resolve"; exit 0; }
 
@@ -53,6 +54,7 @@ cp -r "${TOOLKIT_ROOT}/tools/vol3_wheels" "${CTX}/vol3_wheels"
 # The resource statistics every component reports. Single source in platform/shared/;
 # staged here because a build context cannot reach above itself.
 cp "${HERE}/../shared/sysstats.py" "${CTX}/sysstats.py"
+cp "${HERE}/../shared/custody.py" "${CTX}/custody.py"
 
 echo "[build] staging the analysis subtree"
 mkdir -p "${CTX}/toolkit/playbooks/linux" "${CTX}/toolkit/tools"

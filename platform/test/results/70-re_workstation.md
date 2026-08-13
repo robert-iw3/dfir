@@ -2,7 +2,7 @@
 
 *What passing proves:* Carved regions from a compromised host open in a disassembler that has no network namespace at all.
 
-- Run: `uat_re_workstation.sh` — 2026-08-11 21:55:21Z
+- Run: `uat_re_workstation.sh` — 2026-08-13 22:00:47Z
 
 **0/6  Session under test**
 
@@ -14,7 +14,7 @@
 
 | Result | Assertion — with evidence |
 |---|---|
-| ✅ PASS | 44 region(s) staged |
+| ✅ PASS | 4 region(s) staged |
 | ✅ PASS | session is scoped to exactly one host (e2e-endpoint) |
 | ✅ PASS | mediator refuses to mix a second host into the same session |
 

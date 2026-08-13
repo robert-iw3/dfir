@@ -6,6 +6,7 @@ here; the raw memory image lives in object storage (MinIO/S3) and is referenced 
 ``MemoryCapture``. The canonical verdict ladder is owned by the toolkit's
 finding_schema.py, not redefined here — VERDICTS mirrors it for DB-level indexing.
 """
+from django.conf import settings
 from django.contrib.postgres.indexes import GinIndex
 from django.db import models
 from django.utils import timezone
@@ -43,7 +44,7 @@ class Investigation(TimeStamped):
     `status` was free text, which made every downstream question a guess: whether a case is
     finished, whether it may be archived, how long it has been stalled. Archival in
     particular cannot rest on a string somebody typed — the states below are the contract
-    T4/T5 will archive against.
+    archival runs against.
     """
 
     OPEN = "open"
@@ -61,8 +62,17 @@ class Investigation(TimeStamped):
         ARCHIVED: set(),
     }
 
+    # A restricted case is visible only to its assigned members and to admins. Coarse and
+    # explainable: per-artifact ACLs would let two analysts reach different conclusions from
+    # different visible subsets of the same case, which is what an opposing expert attacks.
+    OPEN_COMPARTMENT = "open"
+    RESTRICTED = "restricted"
+    COMPARTMENTS = [(c, c) for c in (OPEN_COMPARTMENT, RESTRICTED)]
+
     name = models.CharField(max_length=255)
     incident_id = models.CharField(max_length=128, blank=True, db_index=True)
+    compartment = models.CharField(max_length=16, choices=COMPARTMENTS,
+                                   default=OPEN_COMPARTMENT, db_index=True)
     operator = models.CharField(max_length=128, blank=True)
     severity = models.CharField(max_length=32, blank=True)
     status = models.CharField(max_length=32, choices=STATUS, default=OPEN, db_index=True)
@@ -573,6 +583,10 @@ class Note(TimeStamped):
         ("eradication", "Eradication"),
         ("handoff", "Handoff"),              # transfer of the case or a workstream
         ("request", "Request"),              # information or access asked for
+        # Both feed the case reports and belong in the append-only record for the same
+        # reason every other entry does: they are assertions somebody made and owns.
+        ("summary", "Case summary"),         # the one-paragraph account of what happened
+        ("recommendation", "Recommendation"),
     ]
     CONFIDENCE = [("high", "High"), ("medium", "Medium"), ("low", "Low")]
 
@@ -1077,3 +1091,364 @@ class RemediationAction(TimeStamped):
 
     def __str__(self):
         return f"{self.action} [{self.status}]"
+
+
+class InvestigationArchive(TimeStamped):
+    """One case bundle in cold storage, and the record that it went there.
+
+    The hot Investigation row is PROTECTED: an archived case stays listed with its dates and
+    counts, because a case that vanished from the list would be indistinguishable from a
+    deleted one. `row_counts` is the manifest's copy, so the UI can state what the bundle
+    holds without fetching it.
+    """
+
+    STATE = [("archived", "archived"), ("restored", "restored")]
+
+    investigation = models.ForeignKey(
+        Investigation, related_name="archives", on_delete=models.PROTECT)
+    object_key = models.CharField(max_length=512)
+    bundle_sha256 = models.CharField(max_length=64)
+    schema_version = models.CharField(max_length=128, blank=True)
+    row_counts = models.JSONField(default=dict, blank=True)
+    size_bytes = models.BigIntegerField(default=0)
+    # Archived past the hard ceiling while still open — the anomaly flag the stalled-case
+    # list and the handover dashboard read.
+    archived_while_open = models.BooleanField(default=False)
+    state = models.CharField(max_length=16, choices=STATE, default="archived", db_index=True)
+    restored_until = models.DateTimeField(null=True, blank=True, db_index=True)
+    created_by = models.CharField(max_length=128, blank=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"archive of {self.investigation_id} [{self.state}]"
+
+
+class RestoreRequest(TimeStamped):
+    """A restore is a job with an outcome, never a silent query."""
+
+    STATE = [("pending", "pending"), ("completed", "completed"),
+             ("failed", "failed"), ("noop", "noop")]
+
+    archive = models.ForeignKey(
+        InvestigationArchive, related_name="restores", on_delete=models.CASCADE)
+    requested_by = models.CharField(max_length=128, blank=True)
+    state = models.CharField(max_length=16, choices=STATE, default="pending", db_index=True)
+    detail = models.TextField(blank=True, default="")
+    completed_at = models.DateTimeField(null=True, blank=True)
+    expires_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+
+class CaseAssignment(TimeStamped):
+    """Who is working a case. Membership is the scoping unit, not the artifact.
+
+    Assignment governs visibility of a restricted case and is recorded for every case, so
+    "who could see this" is answerable after the fact rather than inferred from a role.
+    """
+
+    investigation = models.ForeignKey(
+        Investigation, related_name="assignments", on_delete=models.CASCADE)
+    username = models.CharField(max_length=150, db_index=True)
+    assigned_by = models.CharField(max_length=150, blank=True)
+    removed_at = models.DateTimeField(null=True, blank=True, db_index=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["investigation", "username"],
+                condition=models.Q(removed_at__isnull=True),
+                name="uniq_active_case_assignment"),
+        ]
+
+    def __str__(self):
+        return f"{self.username} on {self.investigation_id}"
+
+
+class CaseTag(TimeStamped):
+    """A curated tag. Free text produces #malware, #Malware and #malwares — three tags for
+    one idea — so the vocabulary is admin-managed and findings reference it by id."""
+
+    label = models.CharField(max_length=64, unique=True)
+    category = models.CharField(max_length=32, blank=True)
+    description = models.CharField(max_length=255, blank=True)
+    retired = models.BooleanField(default=False, db_index=True)
+
+    class Meta:
+        ordering = ["category", "label"]
+
+    def __str__(self):
+        return self.label
+
+
+class CaseTagAssignment(TimeStamped):
+    """One curated tag applied to one investigation, by whom."""
+
+    investigation = models.ForeignKey(
+        Investigation, related_name="tag_links", on_delete=models.CASCADE)
+    tag = models.ForeignKey(CaseTag, related_name="assignments", on_delete=models.CASCADE)
+    applied_by = models.CharField(max_length=150, blank=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        constraints = [
+            models.UniqueConstraint(fields=["investigation", "tag"],
+                                    name="uniq_case_tag"),
+        ]
+
+
+class CaseTask(TimeStamped):
+    """A unit of work on a case, in the states real incident response moves through.
+
+    Every transition is audited: a board that silently reorders itself is a worse record
+    than no board, because it looks like history.
+    """
+
+    # The digital forensics process, which is the lifecycle this work actually follows.
+    # Movement is free in both directions: evidence arriving late sends a case back to
+    # analysis, and a board that only advances would misrepresent that as progress.
+    IDENTIFICATION = "identification"
+    PRESERVATION = "preservation"
+    ANALYSIS = "analysis"
+    DOCUMENTATION = "documentation"
+    PRESENTATION = "presentation"
+    STATES = [(IDENTIFICATION, "Identification"), (PRESERVATION, "Preservation"),
+              (ANALYSIS, "Analysis"), (DOCUMENTATION, "Documentation"),
+              (PRESENTATION, "Presentation")]
+    STATE_INTENT = {
+        IDENTIFICATION: "Collect the right evidence",
+        PRESERVATION: "Maintain integrity of the evidence",
+        ANALYSIS: "Determine the results' accuracy",
+        DOCUMENTATION: "Document findings to use in court",
+        PRESENTATION: "Summarize and present findings",
+    }
+
+    investigation = models.ForeignKey(
+        Investigation, related_name="tasks", on_delete=models.CASCADE)
+    title = models.CharField(max_length=255)
+    state = models.CharField(max_length=20, choices=STATES, default=IDENTIFICATION,
+                             db_index=True)
+    # Blocked is an ATTRIBUTE, not a column: a blocked task is still in its stage, and
+    # giving it a column of its own loses where the work actually stopped.
+    blocked = models.BooleanField(default=False, db_index=True)
+    blocked_reason = models.CharField(max_length=255, blank=True)
+    due_at = models.DateTimeField(null=True, blank=True)
+    assignee = models.CharField(max_length=150, blank=True, db_index=True)
+    # What the task is about, when it is about one thing: a host, a run, a finding.
+    artifact_type = models.CharField(max_length=32, blank=True)
+    artifact_id = models.IntegerField(null=True, blank=True)
+    detail = models.TextField(blank=True)
+    created_by = models.CharField(max_length=150, blank=True)
+    closed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["state", "-created_at"]
+
+    def __str__(self):
+        return f"{self.title} [{self.state}]"
+
+
+class CaseTaskNote(TimeStamped):
+    """An analyst's working note on a task — the reasoning behind the work, kept with it."""
+
+    task = models.ForeignKey(CaseTask, related_name="notes", on_delete=models.CASCADE)
+    author = models.CharField(max_length=150, blank=True)
+    body = models.TextField()
+
+    class Meta:
+        ordering = ["created_at"]
+
+
+class CaseTaskAttachment(TimeStamped):
+    """A document or an evidence reference carried on a task.
+
+    A DOCUMENT is bytes an analyst uploaded (a scan, a memo, a third-party report); its
+    sha256 is recorded on receipt so the file can be shown to be the one attached. An
+    EVIDENCE reference points at something the platform already holds and copies nothing.
+    """
+
+    DOCUMENT = "document"
+    EVIDENCE = "evidence"
+    KINDS = [(DOCUMENT, DOCUMENT), (EVIDENCE, EVIDENCE)]
+
+    task = models.ForeignKey(CaseTask, related_name="attachments",
+                             on_delete=models.CASCADE)
+    kind = models.CharField(max_length=16, choices=KINDS, db_index=True)
+    label = models.CharField(max_length=255, blank=True)
+    added_by = models.CharField(max_length=150, blank=True)
+    # Document only.
+    filename = models.CharField(max_length=255, blank=True)
+    object_key = models.CharField(max_length=512, blank=True)
+    content_type = models.CharField(max_length=128, blank=True)
+    size_bytes = models.BigIntegerField(default=0)
+    sha256 = models.CharField(max_length=64, blank=True)
+    # Evidence reference only: what it points at, in the platform's own vocabulary.
+    ref_type = models.CharField(max_length=32, blank=True)
+    ref_id = models.IntegerField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+
+class RuledOut(TimeStamped):
+    """A hypothesis that was tested and rejected.
+
+    "We checked the two USB devices; neither was the entry point" is a conclusion, and
+    without a place to record it a report can only say what was found — never what was
+    looked for. The second is what stops a reader inventing their own explanation.
+    """
+
+    investigation = models.ForeignKey(
+        Investigation, related_name="ruled_out", on_delete=models.CASCADE)
+    hypothesis = models.CharField(max_length=255)
+    method = models.TextField(help_text="how it was tested")
+    rationale = models.TextField(blank=True)
+    tested_by = models.CharField(max_length=150, blank=True)
+    # What the conclusion rests on, in the platform's own vocabulary: "finding:41",
+    # "run:7". Free-form so a reference can name evidence held elsewhere.
+    evidence_refs = models.JSONField(default=list, blank=True)
+    concluded_at = models.DateTimeField(default=timezone.now, db_index=True)
+
+    class Meta:
+        ordering = ["-concluded_at"]
+
+    def __str__(self):
+        return f"ruled out: {self.hypothesis}"
+
+
+class ReportTemplate(TimeStamped):
+    """A named, versioned selection of sections. Templates are data, so a deployment's
+    own report format is configuration rather than a release."""
+
+    SUMMARY = "summary"
+    TECHNICAL = "technical"
+    KINDS = [(SUMMARY, SUMMARY), (TECHNICAL, TECHNICAL)]
+
+    name = models.CharField(max_length=128, unique=True)
+    kind = models.CharField(max_length=16, choices=KINDS, db_index=True)
+    version = models.CharField(max_length=32, default="1.0")
+    sections = models.JSONField(default=list)
+    description = models.CharField(max_length=255, blank=True)
+
+    class Meta:
+        ordering = ["kind", "name"]
+
+    def __str__(self):
+        return f"{self.name} v{self.version}"
+
+
+class GeneratedReport(TimeStamped):
+    """One render, recorded.
+
+    A report is a statement about evidence at a moment, so `data_as_of` and the source
+    manifest travel with it — a reader must be able to tell which moment, and a second
+    render after new evidence is a different document rather than an update.
+    """
+
+    investigation = models.ForeignKey(
+        Investigation, related_name="reports", on_delete=models.CASCADE)
+    template = models.ForeignKey(ReportTemplate, related_name="renders",
+                                 on_delete=models.PROTECT)
+    template_version = models.CharField(max_length=32, blank=True)
+    generated_by = models.CharField(max_length=150, blank=True)
+    data_as_of = models.DateTimeField()
+    fmt = models.CharField(max_length=8, default="md")
+    object_key = models.CharField(max_length=512, blank=True)
+    sha256 = models.CharField(max_length=64, blank=True)
+    size_bytes = models.BigIntegerField(default=0)
+    # Every table the render drew from, with row counts: the report's own provenance.
+    sources = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"{self.template_id} report of {self.investigation_id}"
+
+
+class Presence(TimeStamped):
+    """Where each analyst currently is, refreshed by a heartbeat from the open tab.
+
+    One row per person, overwritten in place: presence is a current fact, not a history,
+    and the audit ledger already holds what was actually done. Staleness is judged from
+    `last_seen` at read time rather than by deleting rows on a timer, so a reader always
+    sees the same answer whether or not a sweep has run.
+    """
+
+    user = models.OneToOneField(settings.AUTH_USER_MODEL,
+                                related_name="presence", on_delete=models.CASCADE)
+    investigation = models.ForeignKey(Investigation, related_name="presence", null=True,
+                                      blank=True, on_delete=models.CASCADE)
+    # The view being looked at, as the UI's own route. Free text on purpose: it is
+    # displayed and compared, never dispatched on.
+    location = models.CharField(max_length=255, blank=True)
+    last_seen = models.DateTimeField(auto_now=True, db_index=True)
+
+    class Meta:
+        ordering = ["-last_seen"]
+
+    def __str__(self):
+        return f"{self.user_id} at {self.location}"
+
+
+class ArtifactLock(TimeStamped):
+    """An advisory "I am working on this" marker. It never blocks anyone.
+
+    A hard lock in an incident-response platform means an analyst who shut their laptop can
+    stop a live investigation, so this only ever informs: the UI warns, and the write still
+    goes through. Locks expire on their own for the same reason.
+    """
+
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, related_name="locks",
+                             on_delete=models.CASCADE)
+    investigation = models.ForeignKey(Investigation, related_name="locks",
+                                      on_delete=models.CASCADE)
+    ref_type = models.CharField(max_length=32, db_index=True)
+    ref_id = models.IntegerField(db_index=True)
+    expires_at = models.DateTimeField(db_index=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        constraints = [
+            # One live lock per artifact. A second holder is refused the LOCK, never the
+            # edit — the model enforces who is shown as holder, not who may write.
+            models.UniqueConstraint(fields=["ref_type", "ref_id"], name="uniq_artifact_lock"),
+        ]
+
+    def __str__(self):
+        return f"{self.ref_type}:{self.ref_id} held by {self.user_id}"
+
+
+class Notification(TimeStamped):
+    """An in-app notice addressed to one person.
+
+    Delivery is in-app only and pulled by the client. The enclave has no egress, and it is
+    not gaining one so that a mention can become an email.
+    """
+
+    MENTION = "mention"
+    ASSIGNMENT = "assignment"
+    HANDOVER = "handover"
+    KINDS = [(MENTION, MENTION), (ASSIGNMENT, ASSIGNMENT), (HANDOVER, HANDOVER)]
+
+    user = models.ForeignKey(settings.AUTH_USER_MODEL,
+                             related_name="notifications", on_delete=models.CASCADE)
+    kind = models.CharField(max_length=16, choices=KINDS, db_index=True)
+    actor = models.CharField(max_length=150, blank=True)
+    investigation = models.ForeignKey(Investigation, related_name="notifications",
+                                      null=True, blank=True, on_delete=models.CASCADE)
+    ref_type = models.CharField(max_length=32, blank=True)
+    ref_id = models.IntegerField(null=True, blank=True)
+    body = models.TextField(blank=True)
+    read_at = models.DateTimeField(null=True, blank=True, db_index=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [models.Index(fields=["user", "read_at"])]
+
+    def __str__(self):
+        return f"{self.kind} for {self.user_id}"

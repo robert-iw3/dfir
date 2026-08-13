@@ -4,6 +4,9 @@ import { api } from "../api.js";
 import { can, useAuth } from "../auth.jsx";
 import { useData, Loading, Empty } from "../components/common.jsx";
 import { StatTiles, KillChainChord } from "../components/charts.jsx";
+import { CaseTree, CaseTags, CaseTasks } from "../components/casework.jsx";
+import { CaseReports } from "../components/reports.jsx";
+import { CaseActivity, PresenceBar, usePresence } from "../components/collab.jsx";
 
 const NOTE_KINDS = [
   ["observation", "Observation"], ["analysis", "Analysis"], ["decision", "Decision"],
@@ -203,6 +206,9 @@ export default function InvestigationDetail() {
   // platform computed and every mark drills to the filtered table behind it.
   const { data: stats } = useData(() => api.investigationStats(id), [id]);
   const { data: coverage } = useData(() => api.investigationCoverage(id), [id]);
+  // Above the loading guard: a hook after an early return runs on some renders and not
+  // others, which React treats as a changed hook order and refuses.
+  const here = usePresence(data?.id, `/investigations/${id}`);
   if (!data) return <Loading error={error} />;
   const runs = data.runs ?? [];
   // Hosts an entry can be filed against — the ones this investigation actually collected.
@@ -234,6 +240,9 @@ export default function InvestigationDetail() {
         </div>
         {can(user, "admin") && <button className="btn" style={{ background: "var(--bad)" }} onClick={del}>Delete</button>}
       </div>
+
+      {/* Who else has this case open. Advisory: it changes nothing about what anyone may do. */}
+      <PresenceBar here={here} />
 
       <h2>Shape of the intrusion</h2>
       <StatTiles tiles={stats && [
@@ -323,6 +332,27 @@ export default function InvestigationDetail() {
           </table>
         </div>
       )}
+
+      <h2>Case tree</h2>
+      <p className="page-sub">Everything collected on this case, in the shape it was collected.</p>
+      <CaseTree investigationId={data.id} />
+
+      <h2>Tags</h2>
+      <CaseTags investigationId={data.id} canEdit={can(user, "analyst", "admin")} />
+
+      <h2>Tasks</h2>
+      <CaseTasks investigationId={data.id} canEdit={can(user, "analyst", "admin")} />
+
+      <h2>Activity</h2>
+      <p className="page-sub">
+        Every recorded action on this case, read from the signed audit ledger itself.
+      </p>
+      <CaseActivity investigationId={data.id} />
+
+      <h2>Reports</h2>
+      <CaseReports investigationId={data.id}
+                   canEdit={can(user, "analyst", "admin")}
+                   canExport={Boolean(user?.may_export)} />
 
       <CaseRecord investigationId={data.id} hosts={hosts} record={record}
                   onChange={() => { reloadRecord(); reload(); }} />

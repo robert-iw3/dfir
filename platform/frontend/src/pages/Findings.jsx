@@ -164,9 +164,9 @@ export default function Findings() {
                placeholder="ATT&CK id (T1021)" aria-label="Filter by ATT&CK technique"
                onChange={(e) => t.setExtra("technique", e.target.value.trim())} />
         <span style={{ marginLeft: "auto" }} className="muted">Export:</span>
-        <a className="btn" href={api.exportUrl("csv", exportParams)}>CSV</a>
-        <a className="btn" href={api.exportUrl("json", exportParams)}>JSON</a>
-        <a className="btn" href={api.exportUrl("ioc", exportParams)}>IOC bundle</a>
+        <a className="btn" download href={api.exportUrl("csv", exportParams)}>CSV</a>
+        <a className="btn" download href={api.exportUrl("json", exportParams)}>JSON</a>
+        <a className="btn" download href={api.exportUrl("ioc", exportParams)}>IOC bundle</a>
       </div>
 
       {mayTriage && selected.length > 0 && (

@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128"
+     role="img" aria-label="DFIR Framework">
+  <title>DFIR Framework</title>
+  <!-- Scales from a 16px favicon to a login header: the lens ring is the only shape that
+       has to survive at the small end, so it carries the weight and everything inside it
+       is detail that may blur without the mark becoming unreadable. -->
+  <defs>
+    <clipPath id="lens">
+      <circle cx="52" cy="52" r="33"/>
+    </clipPath>
+  </defs>
+
+  <!-- The field being examined: data at rest, dim, extending past the frame because an
+       investigation always sees a part of something larger. -->
+  <g fill="#8d97b8" font-family="'DejaVu Sans Mono',Menlo,Consolas,monospace"
+     font-size="13" opacity="0.5">
+    <text x="4"  y="26">01001</text>
+    <text x="4"  y="44">10110</text>
+    <text x="4"  y="62">00101</text>
+    <text x="4"  y="80">11010</text>
+    <text x="4"  y="98">01101</text>
+    <text x="66" y="26">10</text>
+    <text x="92" y="112">0110</text>
+    <text x="4" y="116">1001</text>
+  </g>
+
+  <!-- What the lens resolves: the same field, legible and in the platform's accent. The
+       point of the mark is that examination changes nothing except what can be read. -->
+  <g clip-path="url(#lens)">
+    <circle cx="52" cy="52" r="33" fill="#0d1020"/>
+    <g fill="#2dd4bf" font-family="'DejaVu Sans Mono',Menlo,Consolas,monospace"
+       font-size="15" font-weight="600">
+      <text x="24" y="40">1001</text>
+      <text x="24" y="58">0110</text>
+      <text x="24" y="76">1011</text>
+    </g>
+  </g>
+
+  <!-- Ring and handle last, so they sit above both fields. -->
+  <circle cx="52" cy="52" r="33" fill="none" stroke="#2dd4bf" stroke-width="7"/>
+  <path d="M76 76 L104 104" stroke="#2dd4bf" stroke-width="11" stroke-linecap="round"/>
+</svg>

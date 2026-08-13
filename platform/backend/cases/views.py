@@ -23,6 +23,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from . import brokeredsessions
+from . import collab
 from . import componenthealth
 from . import remediation
 from . import meshhealth
@@ -54,7 +55,10 @@ from .models import (
 from .exportledger import record_export
 from .rbac import (
     CanExport,
+    may_export,
     IsAdmin,
+    scope_by_investigation,
+    scope_investigations,
     IsAnalystOrAdmin,
     IsAuditorOrAdmin,
     IsService,
@@ -114,6 +118,9 @@ def me(request):
         "username": request.user.username,
         "email": getattr(request.user, "email", ""),
         "role": role_of(request.user),
+        # Export is a right held alongside a role, so the UI cannot derive it from the
+        # role alone — offering a button that will be refused is worse than not offering it.
+        "may_export": may_export(request.user),
     })
 
 
@@ -169,12 +176,17 @@ class UsersView(APIView):
 
 class InvestigationViewSet(viewsets.ReadOnlyModelViewSet):
     queryset = Investigation.objects.all()
+    # Scoping is applied in get_queryset, so retrieve() 404s a compartment an identity
+    # is not assigned to rather than answering it.
     permission_classes = [IsAuthenticated]
     pagination_class = StandardPagination
     filter_backends = [filters.SearchFilter, filters.OrderingFilter]
     search_fields = ["name", "incident_id", "operator", "severity", "status"]
     ordering_fields = ["created_at", "name", "severity", "status"]
     ordering = ["-created_at"]
+
+    def get_queryset(self):
+        return scope_investigations(super().get_queryset(), self.request.user)
 
     def get_serializer_class(self):
         return (InvestigationDetailSerializer if self.action == "retrieve"
@@ -210,7 +222,7 @@ class CollectionRunViewSet(viewsets.ReadOnlyModelViewSet):
     ordering = ["-created_at"]
 
     def get_queryset(self):
-        qs = super().get_queryset()
+        qs = scope_by_investigation(super().get_queryset(), self.request.user)
         params = self.request.query_params
         if params.get("investigation"):
             qs = qs.filter(investigation_id=params["investigation"])
@@ -326,7 +338,8 @@ class MemoryFindingViewSet(viewsets.ReadOnlyModelViewSet):
     ordering = ["-severity"]
 
     def get_queryset(self):
-        qs = super().get_queryset()
+        qs = scope_by_investigation(super().get_queryset(), self.request.user,
+                                    "analysis__capture__run__investigation_id")
         params = self.request.query_params
         if params.get("analysis"):
             qs = qs.filter(analysis_id=params["analysis"])
@@ -355,7 +368,8 @@ class FindingViewSet(viewsets.ReadOnlyModelViewSet):
     ordering = ["-created_at"]
 
     def get_queryset(self):
-        qs = super().get_queryset()
+        qs = scope_by_investigation(super().get_queryset(), self.request.user,
+                                    "run__investigation_id")
         params = self.request.query_params
         if params.get("run"):
             qs = qs.filter(run_id=params["run"])
@@ -439,7 +453,7 @@ class NoteViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
-        qs = super().get_queryset()
+        qs = scope_by_investigation(super().get_queryset(), self.request.user)
         params = self.request.query_params
         for field in ("investigation", "run", "host", "kind"):
             if params.get(field):
@@ -457,11 +471,15 @@ class NoteViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         note = serializer.save(author=self.request.user.username,
                                author_role=role_of(self.request.user))
+        mentioned = collab.notify_mentions(
+            f"{note.summary or ''} {note.body or ''}", self.request.user.username,
+            note.investigation, ref_type="note", ref_id=note.id)
         audit_mod.audit(self.request.user.username, "note.create",
                         role=role_of(self.request.user), method="POST",
                         path=self.request.path, object_type="Note", object_id=note.id,
                         detail={"investigation": note.investigation_id, "run": note.run_id,
-                                "host": note.host_id, "kind": note.kind})
+                                "host": note.host_id, "kind": note.kind,
+                                "mentioned": mentioned})
 
     @action(detail=True, methods=["post"])
     def retract(self, request, pk=None):

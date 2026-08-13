@@ -1,33 +1,31 @@
 ## Load — measured
 
-_50 agents · 60s sustained activity · arrivals paced at 2/s — a fleet · generated 2026-08-12 14:16:47Z_
+_50 agents · 60s sustained activity · arrivals paced at 2/s — a fleet · generated 2026-08-13 20:43:03Z_
 
 ### Provisioning (through the platform's own admin API, arrivals paced at 2/s)
 
 | Attempted | Created | p50 ms | p95 ms |
 |---|---|---|---|
-| 50 | 50 | 319 | 439 |
+| 50 | 50 | 316 | 338 |
 
 ### Login storm (full OIDC, forced credential change included)
 
 | Attempted | Completed | Failed | p50 ms | p95 ms | max ms |
 |---|---|---|---|---|---|
-| 50 | 50 | 0 | 772 | 2469 | 2939 |
-
-**1 login(s) had to retry through a refused connection** — the brokered session turned over mid-run; the availability figure below covers the same window.
+| 50 | 50 | 0 | 723 | 748 | 771 |
 
 ### Sustained activity, with writes colliding on one investigation
 
 | Operation | n | ok | 5xx | resets | p50 ms | p95 ms | p99 ms |
 |---|---|---|---|---|---|---|---|
-| export | 151 | 149 | 2 | 0 | 92 | 250 | 492 |
-| me | 857 | 848 | 9 | 0 | 31 | 830 | 1920 |
-| poll | 857 | 846 | 11 | 0 | 9 | 67 | 116 |
-| rbac_refusal | 186 | 185 | 1 | 0 | 60 | 378 | 2165 |
-| read_findings | 857 | 844 | 13 | 0 | 43 | 134 | 206 |
-| read_stats | 857 | 836 | 21 | 0 | 72 | 188 | 288 |
-| write_note | 671 | 661 | 10 | 0 | 88 | 403 | 517 |
-| write_verdict | 671 | 662 | 9 | 0 | 79 | 747 | 1444 |
+| export | 149 | 143 | 6 | 0 | 57 | 469 | 557 |
+| me | 842 | 828 | 14 | 0 | 32 | 1222 | 2716 |
+| poll | 842 | 830 | 12 | 0 | 7 | 115 | 213 |
+| rbac_refusal | 179 | 177 | 2 | 0 | 50 | 422 | 639 |
+| read_findings | 842 | 830 | 12 | 0 | 40 | 176 | 285 |
+| read_stats | 842 | 830 | 12 | 0 | 53 | 239 | 345 |
+| write_note | 663 | 653 | 10 | 0 | 82 | 442 | 568 |
+| write_verdict | 663 | 653 | 10 | 0 | 68 | 1159 | 2422 |
 
 ### Ramp
 
@@ -38,12 +36,12 @@ _50 agents · 60s sustained activity · arrivals paced at 2/s — a fleet · gen
 
 | Measure | Value |
 |---|---|
-| Availability (independent 1 Hz sampler) | 100.00% over 215 samples |
+| Availability (independent 1 Hz sampler) | 100.00% over 214 samples |
 | Health-probe p95 | 3 ms |
 | Peak DB connections | 0 of 100 |
 | Deadlocks / rollbacks during contention | 0 / 0 |
-| Notes written (agent ledger) | 1021 |
-| Adjudications written | 1022 |
-| Exports completed / refused | 40 / 259 |
-| RBAC refusals counted as correct | 275 |
+| Notes written (agent ledger) | 1013 |
+| Adjudications written | 1013 |
+| Exports completed / refused | 40 / 253 |
+| RBAC refusals counted as correct | 267 |
 | Confidentiality violations | 0 |

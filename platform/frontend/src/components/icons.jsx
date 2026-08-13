@@ -75,3 +75,13 @@ export const IconComponents = () => (
     <rect x="14" y="14" width="7" height="7" rx="1" />
   </svg>
 );
+
+// A baton passing between two hands: the shift changes, the work does not stop.
+export const IconHandover = () => (
+  <svg {...base}><path d="M4 14a3 3 0 0 1 3-3h3" /><path d="m9 8 3 3-3 3" /><path d="M20 10a3 3 0 0 1-3 3h-3" /><path d="M6.5 19.5h11" /></svg>
+);
+
+// A bell: what is waiting for you specifically, as distinct from what happened on a case.
+export const IconBell = () => (
+  <svg {...base}><path d="M18 9a6 6 0 1 0-12 0c0 5-2 6-2 6h16s-2-1-2-6Z" /><path d="M10.3 19a2 2 0 0 0 3.4 0" /></svg>
+);

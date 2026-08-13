@@ -106,13 +106,15 @@
   * [Linux investigation engine](playbooks/linux/investigation/README.md)
     * [IR Toolkit Linux mwcp_parsers](playbooks/linux/threat_hunting/mwcp_parsers/README.md)
 
-## IR Platform
+## DFIR Framework — the platform
 
-* [IR Platform](platform/README.md)
+* [DFIR Framework — the platform](platform/README.md)
+  * [Working an investigation, collection to report](platform/WORKFLOW-LIFECYCLE.md)
+  * [User guide — every capability, and what the framework refuses](platform/USER-GUIDE.md)
   * [Security model — the principles, what enforces each, and the test that proves it](platform/SECURITY-MODEL.md)
   * [Code graph — components, wiring, and what proves what](platform/CODE_GRAPH.md)
   * [Change management — decide the blast radius before writing the change](platform/CHANGE-MANAGEMENT.md)
-  * [Deploying the IR Platform](platform/deploy/README.md)
+  * [Deploying the DFIR Framework](platform/deploy/README.md)
   * [Network design — VLANs, routing, firewall and IDPS placement](platform/deploy/NETWORKING.md)
   * [Collection on a suspect endpoint](platform/collector/README.md)
   * [Symbol acquisition (ISF)](platform/symbols/README.md)
