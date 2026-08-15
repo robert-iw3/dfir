@@ -2,7 +2,7 @@
 
 *What passing proves:* An analyst workstation reaches the platform only over an authenticated WireGuard tunnel to the bastion, with no route to any internal host.
 
-- Run: `uat_tailnet.sh` — 2026-08-13 20:14:03Z
+- Run: `uat_tailnet.sh` — 2026-08-14 23:49:52Z
 
 **Control plane**
 
@@ -84,11 +84,11 @@
 | ✅ PASS | every configured workstation is a distinct node on the control plane (2: analyst ws-002) |
 | ✅ PASS | 2 workstations hold 2 distinct machine keys and 2 distinct tailnet addresses |
 | ✅ PASS | 2 separate tailnet state volumes — no workstation writes another's node identity |
-| · | ws-002: no diagnostics probe deployed — start it with the diagnostics profile to assert its path |
+| ✅ PASS | ws-002 reached the platform through its own tunnel (HTTP 200) |
 
 **Tailnet**
 
 | Result | Assertion — with evidence |
 |---|---|
 
-**Verdict: PROVEN** — 30 assertions passed, 0 failed.
+**Verdict: PROVEN** — 31 assertions passed, 0 failed.

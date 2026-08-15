@@ -2,7 +2,7 @@
 
 *What passing proves:* A request crosses the ingress, the web tier and the API; each writes its own record; the shipper moves all of them into object storage away from evidence; and an admin reads and exports them through the platform rather than by shelling into the host. An analyst is refused throughout.
 
-- Run: `uat_logging.sh` — 2026-08-13 20:17:06Z
+- Run: `uat_logging.sh` — 2026-08-14 23:53:17Z
 
 **1/5  Every tier writes a log FILE, not just container output**
 
@@ -11,7 +11,7 @@
 | ✅ PASS | an analyst and an admin, to test the read boundary |
 | ✅ PASS | the API writes its application log to a file, not only to container output |
 | ✅ PASS | and its access log too |
-| ✅ PASS | this run's own request is in it (2 line(s) carrying uat-logging-1786652227) |
+| ✅ PASS | this run's own request is in it (2 line(s) carrying uat-logging-1786751598) |
 | ✅ PASS | the analysis worker writes its own, separately from the API's |
 | ✅ PASS | and container output still works — the file copy did not replace it |
 
@@ -21,7 +21,7 @@
 |---|---|
 | ✅ PASS | the log shipper is running as its own service |
 | ✅ PASS | a shipping pass completes and says what it moved |
-| ✅ PASS | the archive is readable and lists 4 source(s) |
+| ✅ PASS | the archive is readable and lists 10 source(s) |
 | ✅ PASS | backend-app reached object storage |
 | ✅ PASS | backend-access reached object storage |
 | ✅ PASS | so did the web tier's own logs |
@@ -31,7 +31,7 @@
 | Result | Assertion — with evidence |
 |---|---|
 | ✅ PASS | the objects for a source are listed newest first |
-| ✅ PASS | and one can be read back, 3818 bytes of it |
+| ✅ PASS | and one can be read back, 9409 bytes of it |
 | ✅ PASS | labelled as an operational record and NOT evidence — it carries no custody seal and must not imply one |
 | ✅ PASS | THE LINE THIS RUN CAUSED IS IN THE ARCHIVE — written by a container, read through the API |
 
@@ -52,6 +52,6 @@
 |---|---|
 | ✅ PASS | reading a log is recorded (log.read) |
 | ✅ PASS | and the ledger still verifies after them |
-| ✅ PASS | the API's own request log is readable alongside the archive (16 row(s)) |
+| ✅ PASS | the API's own request log is readable alongside the archive (50 row(s)) |
 
 **Verdict: PROVEN** — 25 assertions passed, 0 failed.

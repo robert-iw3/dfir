@@ -2,7 +2,7 @@
 
 *What passing proves:* Services address each other by dynamic name, and no tier can resolve anything outside its zone — closing DNS as an exfiltration channel from the tier that parses hostile memory.
 
-- Run: `uat_dns.sh` — 2026-08-13 20:13:50Z
+- Run: `uat_dns.sh` — 2026-08-14 23:49:26Z
 
 **Resolvers**
 
@@ -23,11 +23,11 @@
 
 | Result | Assertion — with evidence |
 |---|---|
-| ✅ PASS | ir-platform.local resolves to 10.89.30.5 from the analyst browser |
+| ✅ PASS | ir-platform.local resolves to 10.89.30.234 from the analyst browser |
 | ✅ PASS | the answer is the bastion's CURRENT address (resolved, not pinned) |
-| ✅ PASS | bastion resolves by name (10.89.30.5) |
-| ✅ PASS | headscale resolves by name (10.89.30.4) |
-| ✅ PASS | receiver resolves by name (10.89.30.3) |
+| ✅ PASS | bastion resolves by name (10.89.0.13) |
+| ✅ PASS | headscale resolves by name (10.89.0.12) |
+| ✅ PASS | receiver resolves by name (10.89.0.11) |
 
 **Enclave — services resolve each other by name**
 
@@ -39,13 +39,13 @@
 | ✅ PASS | keycloak resolves (10.89.1.211) |
 | ✅ PASS | backend resolves (10.89.1.204) |
 | ✅ PASS | worker resolves (10.89.1.205) |
-| ✅ PASS | traefik resolves (10.89.1.173) |
+| ✅ PASS | traefik resolves (10.89.1.172) |
 
 **Enclave — exactly ONE cross-tier name: the receiver**
 
 | Result | Assertion — with evidence |
 |---|---|
-| ✅ PASS | receiver resolves from the puller (10.89.0.24) — the evidence path inward |
+| ✅ PASS | receiver resolves from the puller (10.89.0.11) — the evidence path inward |
 | ✅ PASS | bastion is NOT resolvable from the enclave (only receiver is) |
 | ✅ PASS | headscale is NOT resolvable from the enclave (only receiver is) |
 

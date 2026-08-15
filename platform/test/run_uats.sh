@@ -45,6 +45,8 @@ SUITE=(
     "corpus_linux:ir-enclave_worker_1 ir-dmz_receiver_1"
     "corpus_ransomware:ir-enclave_worker_1 ir-dmz_receiver_1"
     "corpus_slow:ir-enclave_worker_1 ir-dmz_receiver_1"
+    "corpus_twin:ir-enclave_worker_1 ir-dmz_receiver_1"
+    "workers:ir-enclave_worker_1 ir-dmz_receiver_1"
     "ui:ir-enclave_backend_1"
     "re_workstation:ir-enclave_backend_1"
     "memory_analysis:ir-enclave_worker_1"

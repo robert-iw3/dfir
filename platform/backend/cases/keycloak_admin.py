@@ -99,6 +99,23 @@ def create_user(username, email, role, password, temporary=True):
     return user_id
 
 
+def delete_user(username):
+    """Delete a Keycloak user by exact username. Returns the deleted user's KC id.
+
+    Deletion, not disablement: a disabled account still occupies the username and still
+    lists, and the admin asked for it to be gone. The platform's own records that NAME the
+    user (audit rows, adjudications, notes) carry the username as text and are untouched —
+    who did what stays answerable after the account is removed.
+    """
+    token = _admin_token()
+    found, _ = _api("GET", f"/users?username={urllib.parse.quote(username)}&exact=true", token)
+    if not found:
+        raise KeycloakError(f"no user '{username}' in realm {_realm()}")
+    user_id = found[0]["id"]
+    _api("DELETE", f"/users/{user_id}", token)
+    return user_id
+
+
 def list_users():
     token = _admin_token()
     users, _ = _api("GET", "/users?max=500", token)

@@ -2,7 +2,7 @@
 
 *What passing proves:* A component that errors shows it with a count and a message; one that recovers keeps the record but reads as recovered, with the moment it happened; and the roll-up degrades a component only for what is wrong NOW.
 
-- Run: `uat_health.sh` — 2026-08-13 20:17:14Z
+- Run: `uat_health.sh` — 2026-08-14 23:53:29Z
 
 **1/4  The self-report carries what an honest error record needs**
 
@@ -31,6 +31,6 @@
 |---|---|
 | ✅ PASS | the card labels a recovered error as recovered, with when it happened |
 | ✅ PASS | and visually mutes it — history must not read as a live fault |
-| ✅ PASS | all 4 real components have reported within two intervals — the page shows the present, not a cache |
+| ✅ PASS | all 5 real components have reported within two intervals — the page shows the present, not a cache |
 
 **Verdict: PROVEN** — 9 assertions passed, 0 failed.

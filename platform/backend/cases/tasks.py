@@ -6,6 +6,7 @@ storage and analyzes it centrally, so the same capture can be re-analyzed later 
 newer detection version (the historical-analysis goal).
 """
 import os
+import socket
 import re
 import shutil
 import tempfile
@@ -142,6 +143,12 @@ def analyze_capture(self, capture_id, ruleset_version=""):
         ruleset_version=ruleset_version or "current",
         status="running",
         started_at=timezone.now(),
+        # Which worker performed this analysis. Reproducibility material like the engine and
+        # ruleset versions — with replicas consuming one queue, "who analyzed it" is no
+        # longer answerable any other way — and the UAT's proof that N workers really share
+        # the load reads exactly this.
+        summary={"analysis_worker": os.environ.get("IR_HEALTH_REPORT_ROLE", "worker"),
+                 "analysis_container": socket.gethostname()},
     )
     tmp_dir = tempfile.mkdtemp(prefix="ir-mem-")
     local = os.path.join(tmp_dir, "capture.bin")
@@ -217,7 +224,9 @@ def analyze_capture(self, capture_id, ruleset_version=""):
                 evidence=f.get("evidence", {}),
             ) for f in result["findings"]
         ])
-        run.summary = result["summary"]
+        # Merge, never assign: the run's own attribution (which worker, which container)
+        # was written at start and must survive the analyzer's summary landing.
+        run.summary = {**run.summary, **result["summary"]}
         run.status = "completed"
         # Automated hits enter the analyst's triage queue as findings. Without this the
         # results are visible only on the capture panel and never get adjudicated.

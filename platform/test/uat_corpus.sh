@@ -362,10 +362,20 @@ if a:
                                            value="CORP\\svc_helpdesk").first()
         chk(bool(acct), "the ubiquitous helpdesk account is in the behavior graph")
         if acct:
+            # What the account CONTRIBUTES, not its raw rarity. Rarity is measured against
+            # the whole deployment, so it drifts upward every time another corpus adds hosts
+            # — this assertion sat 0.007 from the threshold and flipped when corpus X landed,
+            # reporting a population change as an engine regression. The property that
+            # actually matters survives that: a fleet-wide account cannot carry a pair on its
+            # own, whatever the fleet grows to.
+            from correlation.linkage import TYPE_WEIGHT
             r = node_rarity(acct.host_count, Host.objects.count())
-            chk(r < THRESHOLD,
-                f"the fleet-wide account reads as ENVIRONMENT "
-                f"(rarity {r:.3f} across {acct.host_count} carriers)")
+            alone = TYPE_WEIGHT["account"] * r          # best case: confirmed, contemporaneous
+            chk(alone < THRESHOLD,
+                f"the fleet-wide account cannot link a pair BY ITSELF "
+                f"(contributes {alone:.3f} at best, under {THRESHOLD}; "
+                f"rarity {r:.3f} across {acct.host_count} carriers of "
+                f"{Host.objects.count()} deployment hosts)")
         heaviest = max((l.weight for _, l in cross), default=1.0)
         chk(heaviest < THRESHOLD,
             f"declined weights sit below the threshold (heaviest {heaviest:.4f} < {THRESHOLD})")

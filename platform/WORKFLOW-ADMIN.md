@@ -244,6 +244,32 @@ own hardware.
 
 ---
 
+## Scaling analysis capacity
+
+The platform analyzes one capture per worker. `IR_WORKER_REPLICAS` in `deploy/.env` declares
+how many workers run — **default 1**; the flagged-fleet case (a SIEM reports twenty hosts and
+memory arrives from all of them) is what raising it is for.
+
+1. Set `IR_WORKER_REPLICAS=<n>` in `deploy/.env` (50 is this phase's cap).
+2. Add one address per replica — `IR_IP_WORKERn=10.89.1.<211+n>`. `deploy.sh` refuses to
+   proceed without them and prints the exact lines to add.
+3. `./deploy/deploy.sh enclave` — stamps `worker-2..n` and their sidecars from
+   `gen-worker-overlay.py`, registers each as its own mesh instance under the one
+   `ir-worker` service name, and gives each its own scratch volume.
+
+Lowering the number and redeploying removes and deregisters the excess; the primary worker is
+never touched. Each replica reports its own row in *Component Health*, and every analysis
+records the worker that ran it.
+
+**Before raising it,** read "Parallel analysis — configuration and sizing" in the platform
+[`README.md`](README.md): each concurrent analysis needs its own scratch space for a whole
+staged capture, ~1.5 cores and 4-8 GB, and 3 Postgres connections — and the object store and
+scratch volumes belong on separate devices before any real concurrency.
+
+`test/uat_workers.sh` validates a multi-worker deployment (it reports N/A at one worker):
+distinct mesh identities, isolated scratch, a surge carried by every worker, each capture
+analyzed exactly once, and true overlap by the platform's own timestamps.
+
 ## Adding an analyst workstation
 
 Each workstation is its own tailnet node. Two sharing a node name are one node to the control

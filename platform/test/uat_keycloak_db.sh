@@ -246,10 +246,14 @@ else
     # deploy path — the thing that must bring identity back with its data.
     ${RUNTIME} rm -f "${KC}" >/dev/null 2>&1
     ok "Keycloak container removed"
-    if bash "${PLATFORM}/deploy/deploy.sh" enclave >/dev/null 2>&1; then
+    # The deploy's output is KEPT: discarded, its failure says "see its output" about output
+    # that no longer exists, and a broken deploy is indistinguishable from a broken platform.
+    deploy_log="$(mktemp)"
+    if bash "${PLATFORM}/deploy/deploy.sh" enclave >"${deploy_log}" 2>&1; then
         ok "enclave redeployed through deploy.sh"
     else
-        bad "deploy.sh enclave failed after the removal — see its output"
+        bad "deploy.sh enclave failed after the removal: $(grep -aE '✘|die:' "${deploy_log}" | tail -3 | tr '\n' ' ')"
+        sed 's/\x1b\[[0-9;]*m//g' "${deploy_log}" | tail -25 >&2
     fi
     # The deploy's gate is "listening", not "settled": the late-stage sidecar sweep can
     # bounce the database path under a just-started Keycloak, which restarts once more. A

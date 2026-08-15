@@ -268,11 +268,99 @@ def build_links(crun, compromised, host_first, edges, population=None, first_sta
     return links
 
 
-def cluster(compromised, links):
-    """Connected components over links at or above the threshold.
+def _articulation_points(adjacency, component):
+    """Hosts whose removal disconnects the component (Tarjan), iterative.
+
+    Recursion would be bounded by campaign size, which is attacker-controlled.
+    """
+    disc, low, parent, points = {}, {}, {}, set()
+    counter = 0
+    for root in sorted(component):
+        if root in disc:
+            continue
+        root_children = 0
+        stack = [(root, iter(sorted(adjacency[root] & component)))]
+        disc[root] = low[root] = counter
+        counter += 1
+        while stack:
+            node, children = stack[-1]
+            nxt = next(children, None)
+            if nxt is None:
+                stack.pop()
+                if stack:
+                    up = stack[-1][0]
+                    low[up] = min(low[up], low[node])
+                    if up != root and low[node] >= disc[up]:
+                        points.add(up)
+                continue
+            if nxt not in disc:
+                parent[nxt] = node
+                if node == root:
+                    root_children += 1
+                disc[nxt] = low[nxt] = counter
+                counter += 1
+                stack.append((nxt, iter(sorted(adjacency[nxt] & component))))
+            elif nxt != parent.get(node):
+                low[node] = min(low[node], disc[nxt])
+        if root_children > 1:
+            points.add(root)
+    return points
+
+
+def _parts_without(adjacency, component, cut):
+    """The pieces the component falls into once `cut` is removed."""
+    rest = component - {cut}
+    seen, parts = set(), []
+    for host in sorted(rest):
+        if host in seen:
+            continue
+        stack, group = [host], set()
+        while stack:
+            cur = stack.pop()
+            if cur in group:
+                continue
+            group.add(cur)
+            stack.extend((adjacency[cur] & rest) - group)
+        seen |= group
+        parts.append(group)
+    return parts
+
+
+def _actor_signature(hosts, links, component, confined):
+    """What the actor working `hosts` brought, as shared evidence worth attributing.
+
+    A contribution only counts when it is CONFINED to this component. PsExec on both
+    campaigns and on two administrators outside them is the estate's, not an actor's, and a
+    signature built from it says every operator in the industry is one group. What stays is
+    what nothing outside the component carries: an implant hash, a C2 address, a builder
+    mutex.
+    """
+    out = set()
+    for (a, b), link in links.items():
+        if a not in hosts or b not in hosts:
+            continue
+        for c in (link.factors or {}).get("corroboration", []):
+            key = (c.get("kind"), c.get("subkind"), str(c.get("value", "")))
+            # Techniques are what everyone does; they never distinguish an actor.
+            if c.get("kind") == "technique":
+                continue
+            if key in confined:
+                out.add(key)
+    return out
+
+
+def cluster(compromised, links, carriers=None):
+    """Connected components over links at or above the threshold, split where two actors
+    only appear joined because they share a victim.
 
     A pair below the threshold is not merged, however many weak things it shares — which is
     what stops one fleet-wide account from fusing unrelated compromises.
+
+    Components are then tested for the case connectedness cannot express: a host compromised
+    by TWO actors links honestly to both, and transitivity fuses their campaigns into one
+    that names an actor who does not exist. Where removing a single host separates the
+    component into parts that share no actor signature, they are emitted separately — each
+    keeping the shared host, because it genuinely belongs to both.
     """
     adjacency = defaultdict(set)
     for (a, b), link in links.items():
@@ -280,7 +368,7 @@ def cluster(compromised, links):
             adjacency[a].add(b)
             adjacency[b].add(a)
 
-    seen, clusters = set(), []
+    seen, components = set(), []
     for host in sorted(compromised):
         if host in seen:
             continue
@@ -292,8 +380,39 @@ def cluster(compromised, links):
             group.add(cur)
             stack.extend(adjacency[cur] - group)
         seen |= group
-        clusters.append(group)
+        components.append(group)
+
+    clusters = []
+    for component in components:
+        clusters.extend(_split_shared_victim(component, adjacency, links, carriers))
     return clusters
+
+
+def _split_shared_victim(component, adjacency, links, carriers):
+    """One component in, one or more campaigns out."""
+    if len(component) < 4 or not carriers:
+        return [component]
+
+    # Evidence nothing outside this component carries. Anything wider is the environment's.
+    confined = {key for key, hosts in carriers.items()
+                if hosts and set(hosts) <= component}
+
+    for cut in sorted(_articulation_points(adjacency, component)):
+        parts = _parts_without(adjacency, component, cut)
+        if len(parts) < 2:
+            continue
+        signatures = [_actor_signature(p | {cut}, links, component, confined) for p in parts]
+        # Every part must carry an actor signature of its own, and no two may share one.
+        # Without both, this is one campaign with a chokepoint — a jump host, or a victim
+        # reached only through a domain controller — and splitting it would invent a second
+        # actor as surely as merging invented a single one.
+        if not all(signatures):
+            continue
+        if any(signatures[i] & signatures[j]
+               for i in range(len(signatures)) for j in range(i + 1, len(signatures))):
+            continue
+        return [p | {cut} for p in parts]
+    return [component]
 
 
 def cohesion(group, links):

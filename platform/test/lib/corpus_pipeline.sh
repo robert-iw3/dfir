@@ -29,6 +29,14 @@ num_or_zero() { local v="${1//[^0-9]/}"; printf '%s' "${v:-0}"; }
 # Set by the calling UAT before any block runs; passed to Python as ENVIRONMENT.
 CORPUS_PREFIX="${CORPUS_PREFIX:-}"
 CORPUS_COUNT="${CORPUS_COUNT:-}"
+# Collections, not machines. They are the same number in every corpus where each host is
+# collected once — and deliberately are not where a corpus renames a machine between two
+# collections, which must resolve to ONE host.
+CORPUS_HOSTS="${CORPUS_HOSTS:-${CORPUS_COUNT}}"
+# The ESTATE this corpus describes. Rarity is a fraction of the fleet, and the corpora share
+# one deployment: without this, each fictional estate is measured against the accumulated
+# host table of all of them, and adding a corpus changes another's linkage.
+CORPUS_FLEET="${CORPUS_FLEET:-${CORPUS_HOSTS}}"
 CORPUS_MANIFEST="${CORPUS_MANIFEST:-}"
 
 # What every block opens with. Single-quoted, so this shell expands none of it.
@@ -37,6 +45,7 @@ import json, os, django
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "ir_platform.settings"); django.setup()
 PREFIX = os.environ["CORPUS_PREFIX"]
 COUNT = int(os.environ.get("CORPUS_COUNT") or 0)
+HOSTS = int(os.environ.get("CORPUS_HOSTS") or COUNT)
 
 
 def manifest():
@@ -60,6 +69,8 @@ be_py() {
         | ${RUNTIME} exec -i \
             -e CORPUS_PREFIX="${CORPUS_PREFIX}" \
             -e CORPUS_COUNT="${CORPUS_COUNT}" \
+            -e CORPUS_HOSTS="${CORPUS_HOSTS}" \
+            -e IR_DEPLOYMENT_HOSTS="${CORPUS_FLEET}" \
             -e CORPUS_MANIFEST="${CORPUS_MANIFEST}" \
             "${BE}" python3 -
 }
@@ -225,7 +236,7 @@ from cases.models import CollectionRun
 runs = CollectionRun.objects.filter(
     investigation__incident_id__startswith=PREFIX).select_related("host")
 hosts = {r.host.hostname: r.host.machine_id for r in runs}
-chk(len(hosts) == COUNT and len(set(hosts.values())) == COUNT,
+chk(len(hosts) == HOSTS and len(set(hosts.values())) == HOSTS,
     f"{len(hosts)} distinct hosts with {len(set(hosts.values()))} distinct machine ids — "
     f"no endpoint merged into another")
 PYEOF

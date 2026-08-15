@@ -17,7 +17,7 @@ be() { ${RUNTIME} exec -i "${BE}" "$@"; }
 ${RUNTIME} inspect "${BE}" >/dev/null 2>&1 || {
     bad "backend is not running — nothing to assert against"; report_finish; exit 1; }
 
-say "0/4  A restricted case, one member and one outsider"
+say "0/5  A restricted case, one member and one outsider"
 SETUP="$(be python manage.py shell -c '
 import hashlib
 from django.contrib.auth.models import Group, User
@@ -82,7 +82,7 @@ d = json.load(urllib.request.urlopen(req, timeout=8))
 print(d.get('count', len(d if isinstance(d, list) else d.get('results', []))))" 2>/dev/null | tail -1
 }
 
-say "1/4  The outsider is refused every route to the case"
+say "1/5  The outsider is refused every route to the case"
 [[ "$(code "${TOK_O}" "/investigations/${RINV}/")" == "404" ]] \
     && ok "detail by direct id: 404 — an unassigned analyst is not told the case exists" \
     || bad "the outsider read the restricted case detail (got $(code "${TOK_O}" "/investigations/${RINV}/"))"
@@ -101,7 +101,7 @@ OUT_N="$(count "${TOK_O}" "/notes/?investigation=${RINV}")"
 [[ "${OUT_N}" == "0" ]] && ok "notes filtered to the case: 0 rows" \
                         || bad "the outsider read ${OUT_N} note(s) of the restricted case"
 
-say "2/4  The member reads the same case normally"
+say "2/5  The member reads the same case normally"
 [[ "$(code "${TOK_M}" "/investigations/${RINV}/")" == "200" ]] \
     && ok "detail: 200 for the assigned analyst" \
     || bad "the assigned member was refused the case ($(code "${TOK_M}" "/investigations/${RINV}/"))"
@@ -110,12 +110,12 @@ MEM_F="$(count "${TOK_M}" "/findings/?investigation=${RINV}")"
     && ok "findings: 1 row — the scope permits, it does not merely refuse" \
     || bad "the member saw ${MEM_F} findings, expected 1"
 
-say "3/4  The open case is unaffected — compartmenting is not a global deny"
+say "3/5  The open case is unaffected — compartmenting is not a global deny"
 [[ "$(code "${TOK_O}" "/investigations/${OINV}/")" == "200" ]] \
     && ok "the outsider reads the OPEN case normally (200)" \
     || bad "an open case was hidden from an analyst — the scope over-reaches"
 
-say "4/4  Assignment is an admin action, driven through the API and audited"
+say "4/5  Assignment is an admin action, driven through the API and audited"
 # An admin token, because assignment must be refused to an analyst and that refusal is
 # itself an assertion.
 TOK_A="$(be python manage.py shell -c "
@@ -172,6 +172,53 @@ print(AuditLog.objects.filter(action__in=('case.assign','case.unassign','case.co
 [[ "${AFTER:-0}" -ge $(( ${BEFORE:-0} + 3 )) ]] \
     && ok "the trail gained an entry per action (${BEFORE} -> ${AFTER}: assign, unassign, compartment)" \
     || bad "audit entries missing: ${BEFORE} -> ${AFTER}, expected at least 3 more"
+
+say "5/5  Account administration — every role provisions, and deletion is real"
+# The Users page's own endpoint, driven end to end: the platform provisions in Keycloak and
+# mirrors locally, so a deletion has to remove both — and must refuse the two dangerous
+# shapes, an analyst doing it and an admin deleting themselves.
+udel() { # token username -> code
+    be python -c "
+import urllib.request, urllib.error
+req = urllib.request.Request('http://127.0.0.1:8000/api/users/?username=$2',
+                             method='DELETE', headers={'Authorization': 'Token $1'})
+try:
+    print(urllib.request.urlopen(req, timeout=20).getcode())
+except urllib.error.HTTPError as e:
+    print(e.code)
+except Exception:
+    print(0)" 2>/dev/null | tail -1
+}
+UC="$(post "${TOK_A}" "/users/" "{'username': 'uat-scope-re', 'email': 'uat-scope-re@example.invalid', 'role': 'reverse_engineer', 'password': 'Uat-Scope-Re!x91'}")"
+[[ "${UC}" == "201" ]] \
+    && ok "a reverse_engineer provisions through the admin endpoint — the fourth role is not second-class" \
+    || bad "reverse_engineer provisioning failed (${UC})"
+[[ "$(post "${TOK_A}" "/users/" "{'username': 'uat-scope-bad', 'email': 'b@example.invalid', 'role': 'wizard', 'password': 'Uat-Scope-Re!x91'}")" == "400" ]] \
+    && ok "an unknown role is refused with the full vocabulary in the answer" \
+    || bad "an unknown role was accepted"
+[[ "$(udel "${TOK_O}" "uat-scope-re")" == "403" ]] \
+    && ok "an analyst cannot delete an account — administration is the admin's act" \
+    || bad "a non-admin deleted a user"
+ADMIN_NAME="$(be python manage.py shell -c "
+from django.contrib.auth.models import User
+print(User.objects.filter(is_superuser=True).first().username)" 2>/dev/null | tail -1)"
+[[ "$(udel "${TOK_A}" "${ADMIN_NAME}")" == "400" ]] \
+    && ok "an admin cannot delete their own account — the session that issued it must belong to someone" \
+    || bad "self-deletion was allowed"
+[[ "$(udel "${TOK_A}" "uat-scope-re")" == "200" ]] \
+    && ok "the admin deletes the account" || bad "deletion failed"
+GONE="$(be python manage.py shell -c "
+from django.contrib.auth.models import User
+from cases.models import AuditLog
+print(int(not User.objects.filter(username='uat-scope-re').exists()),
+      AuditLog.objects.filter(action='user.delete', object_id='uat-scope-re').count())" 2>/dev/null | tail -1)"
+read -r U_GONE U_AUD <<<"${GONE}"
+[[ "${U_GONE}" == "1" && "${U_AUD:-0}" -ge 1 ]] \
+    && ok "gone from Keycloak AND the local mirror, and the deletion is in the ledger" \
+    || bad "deletion incomplete: local_gone=${U_GONE} audited=${U_AUD:-0}"
+[[ "$(udel "${TOK_A}" "uat-scope-re")" == "502" ]] \
+    && ok "deleting an absent account says so rather than pretending it worked" \
+    || bad "a second deletion did not report the absence"
 
 report_finish
 exit "${FAILED}"
