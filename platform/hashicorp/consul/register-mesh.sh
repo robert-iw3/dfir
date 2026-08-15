@@ -59,8 +59,11 @@ addr_of() { # container  service-key
 # Through Consul's own CLI, not its HTTP API: the image ships busybox wget, which cannot send a
 # PUT with a body, so the API route registered nothing and every sidecar failed to find its
 # service. Each service registers with ITS OWN token, not the management one.
-register() { # name json
-    local name="$1" json="$2" tok="${SEC}/tokens/$1.token"
+register() { # label json [token-name]
+    # The token is scoped to the service NAME; the label may be an instance id. Defaulting
+    # the token to the label would send ir-worker-2 looking for ir-worker-2.token, which
+    # does not exist and must not: one name, one token, N instances.
+    local name="$1" json="$2" tok="${SEC}/tokens/${3:-$1}.token"
     [[ -r "${tok}" ]] || { say "no token for ${name} — run gen-consul-secrets.sh"; return 1; }
     printf '%s' "${json}" | ${RUNTIME} exec -i \
         -e CONSUL_HTTP_ADDR=https://127.0.0.1:8501 \
@@ -76,11 +79,14 @@ ups() { # destination local_port
 }
 
 # service <consul-name> <container> <port> [upstream-json,...]
-service() {
-    local name="$1" container="$2" port="$3" upstreams="${4:-}"
+# Register one INSTANCE of a service: same name as its siblings, distinct id. Intentions
+# and ACL tokens are scoped to the name, so every instance inherits both unchanged — which
+# is what makes "add another worker" a zero-policy operation.
+service_instance() {
+    local name="$1" id="$2" container="$3" port="$4" upstreams="${5:-}"
     local ip; ip="$(addr_of "${container}" "${name}")"
     if [[ -z "${ip}" ]]; then
-        say "SKIP ${name} — no IR_MESH_ADDR override and ${container} is not on ir-enclave_internal"
+        say "SKIP ${id} — no IR_MESH_ADDR override and ${container} is not on ir-enclave_internal"
         return 0
     fi
 
@@ -97,11 +103,11 @@ service() {
         bind='"config": { "bind_address": "0.0.0.0", "bind_port": 21000 },'
     fi
 
-    if register "${name}" "$(cat <<JSON
+    if register "${id}" "$(cat <<JSON
 {
   "service": {
     "name": "${name}",
-    "id": "${name}",
+    "id": "${id}",
     "address": "${ip}",
     "port": ${port},
     "connect": {
@@ -113,12 +119,17 @@ service() {
   }
 }
 JSON
-)"; then
-        say "registered ${name} at ${ip}:${port} (proxy :${sport})$( [[ -n "${upstreams}" ]] && printf ' (+upstreams)' )"
+)" "${name}"; then
+        say "registered ${id} at ${ip}:${port} (proxy :${sport})$( [[ -n "${upstreams}" ]] && printf ' (+upstreams)' )"
     else
-        say "FAILED to register ${name} — its sidecar will not find a service to front"
+        say "FAILED to register ${id} — its sidecar will not find a service to front"
         return 1
     fi
+}
+
+# The single-instance form every existing call uses: same value for name and id.
+service() { # name container port upstreams
+    service_instance "$1" "$1" "$2" "$3" "${4:-}"
 }
 
 # ---------------------------------------------------------------------------
@@ -135,9 +146,12 @@ DATA_UPSTREAMS="$(ups ir-postgres 5432),$(ups ir-minio 9000)"
 APP_UPSTREAMS="${DATA_UPSTREAMS},$(ups ir-redis 6379)"
 service ir-backend ir-enclave_backend_1 8000 "${APP_UPSTREAMS}"
 service ir-worker  ir-enclave_worker_1  9999 "${APP_UPSTREAMS}"
-# CONCEPT (Track W, awaiting testing): replicas register under the same service NAME with a
-# distinct ID, so the intentions cover every replica unchanged. Needs an id-aware service().
-# service_instance ir-worker ir-worker-2 ir-enclave_worker-2_1 9999 "${APP_UPSTREAMS}"
+# Worker replicas: same NAME, distinct IDs, so the worker intentions cover every one of
+# them with no policy change. The count comes from the same setting the overlay is
+# generated from, so registration and containers can never disagree about how many exist.
+for _n in $(seq 2 "${IR_WORKER_REPLICAS:-1}"); do
+    service_instance ir-worker "ir-worker-${_n}" "ir-enclave_worker-${_n}_1" 9999 "${APP_UPSTREAMS}"
+done
 service ir-puller  ir-enclave_puller_1  9998 "${DATA_UPSTREAMS}"
 
 # Vault's database secrets engine dials Postgres to mint and revoke the dynamic users. Without a

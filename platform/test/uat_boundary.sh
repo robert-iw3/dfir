@@ -303,6 +303,30 @@ say "Reporting authenticity — the UI's access record against the controller's 
 # two independent reads of the controller, not the page checked against itself.
 BE=ir-enclave_backend_1
 sleep 3  # session byte counters propagate worker -> controller after the section-5 request
+# Sessions are supervised: when one ends, the broker cancels and re-establishes it within
+# seconds. A single sample can therefore catch the fleet at N-1 through no fault of the
+# platform. Settle FIRST, then read the controller and assert the exact count — which still
+# catches a port left with no path and a ghost of a replaced broker.
+for _ in $(seq 1 20); do
+    n_live="$(${RUNTIME} exec -i -w /app "${BE}" python - <<'LIVE' 2>/dev/null
+import json, os, urllib.request
+import django
+os.environ.setdefault("DJANGO_SETTINGS_MODULE", "ir_platform.settings")
+django.setup()
+from django.contrib.auth.models import User
+from rest_framework.authtoken.models import Token
+
+token = Token.objects.get_or_create(user=User.objects.filter(is_superuser=True).first())[0].key
+req = urllib.request.Request("http://127.0.0.1:8000/api/brokered-sessions/",
+                             headers={"Authorization": "Token " + token})
+page = json.loads(urllib.request.urlopen(req, timeout=30).read())
+print(sum(1 for s in page.get("sessions", []) if s.get("active")))
+LIVE
+)"
+    [[ "${n_live:-x}" =~ ^[0-9]+$ && "${n_live}" -eq "${SESSIONS_N}" ]] && break
+    sleep 3
+done
+
 truth="$(bctl sessions list -scope-id "${BOUNDARY_PROJECT_ID:-}" -recursive -include-terminated)"
 broker_ip="$(${RUNTIME} inspect -f '{{(index .NetworkSettings.Networks "ir-dmzlink").IPAddress}}' "${BASTION}" 2>/dev/null)"
 
@@ -348,11 +372,35 @@ page_ids = {s["id"] for s in page.get("sessions", [])}
 truth_ids = {i["id"] for i in truth}
 # Containment, not equality: supervisors churn sessions between the two reads, so the page may
 # hold more — but every id the controller knew must be on the page.
-missing = truth_ids - page_ids
 invented = page_ids - truth_ids
-say(not missing,
-    f"the record is complete: every one of the controller's {len(truth_ids)} sessions is on the "
-    f"page ({len(page_ids)} shown)" if not missing else f"{len(missing)} controller session(s) missing from the page")
+# The page is a bounded window over an unbounded record, so completeness is two claims that
+# stay true at any size: the count covers the WHOLE record, and no LIVE session is ever paged
+# out — a closed session scrolling off is paging, a running one disappearing is a blind spot.
+truth_live = {i["id"] for i in truth if i.get("status") in ("active", "pending")}
+missing_live = truth_live - page_ids
+say(page.get("total", 0) >= len(truth_ids),
+    f"the record is complete: the page accounts for all {page.get('total', 0)} sessions the "
+    f"controller holds ({len(truth_ids)} read), showing {page.get('shown', len(page_ids))}"
+    if page.get("total", 0) >= len(truth_ids)
+    else f"the page totals {page.get('total', 0)} against the controller's {len(truth_ids)} — the record is short")
+say(not missing_live,
+    f"every live session is on the page, whatever the window ({len(truth_live)} live)"
+    if not missing_live else f"{len(missing_live)} LIVE session(s) paged out of the answer")
+
+# The window under pressure: a deliberately tiny page must still carry every live session and
+# still report the whole record. Proven at a small size because the real one only bites after
+# the deployment has run long enough to exceed it, which is exactly when nobody is looking.
+small = json.loads(urllib.request.urlopen(urllib.request.Request(
+    "http://127.0.0.1:8000/api/brokered-sessions/?limit=5",
+    headers={"Authorization": "Token " + token}), timeout=30).read())
+small_live = {s["id"] for s in small.get("sessions", []) if s.get("active")}
+page_live_ids = {s["id"] for s in page.get("sessions", []) if s.get("active")}
+say(page_live_ids <= small_live and small.get("total") == page.get("total"),
+    f"a 5-row window still carries all {len(small_live)} live sessions and still totals "
+    f"{small.get('total')} — paging bounds the READ, never the record"
+    if page_live_ids <= small_live and small.get("total") == page.get("total")
+    else f"a small window lost live sessions ({len(page_live_ids - small_live)}) or "
+         f"misreported the total ({small.get('total')} vs {page.get('total')})")
 say(all(i in truth_ids or True for i in invented) and len(invented) <= len(page_ids),
     f"{len(invented)} page session(s) postdate the controller read — none is a ghost of a replaced broker"
     if invented else "the page shows no session the controller does not have")

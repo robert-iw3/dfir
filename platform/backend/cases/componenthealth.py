@@ -238,7 +238,21 @@ def report_component(component, tier, metrics, note=""):
         defaults={"tier": tier or "", "reported_at": when, "metrics": metrics,
                   "note": note or ""},
     )
+    _retire_earlier_instances(component)
     return obj
+
+
+def _retire_earlier_instances(component):
+    """Drop rows for the same role from containers that no longer exist.
+
+    Components are identified `role (container)`, so every recreate stranded a row that
+    read as a live component gone silent — one worker showed as four, three of them alarming.
+    """
+    role, sep, _ = component.partition(" (")
+    if not sep:
+        return
+    (ComponentHealth.objects.filter(component__startswith=f"{role} (")
+                            .exclude(component=component).delete())
 
 
 def overview():

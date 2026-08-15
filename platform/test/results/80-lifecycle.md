@@ -2,7 +2,7 @@
 
 *What passing proves:* Ember Fox is collected from endpoints, sealed, shipped, pulled inward, analyzed and correlated; three analysts carry it across the board with their own notes and a peer review; and the case ends as a technical report and a plain-language summary whose figures match the evidence they came from, before going cold and coming back whole.
 
-- Run: `uat_lifecycle.sh` — 2026-08-13 20:17:18Z
+- Run: `uat_lifecycle.sh` — 2026-08-14 23:53:33Z
 
 **1/9  Identification — real collections from the endpoints**
 
@@ -41,7 +41,7 @@
 | ✅ PASS | every capture reached a terminal analysis and compromise settled (25/25 analyzed, 16 compromised) |
 | ✅ PASS | every analysis completed (25) |
 | ✅ PASS | every analysis was adjudicated by the investigation engine (25) |
-| ✅ PASS | correlation ran for INC-CORPUS (2 investigation(s)) |
+| ✅ PASS | correlation ran for INC-CORPUS (7 investigation(s)) |
 | ✅ PASS | Ember Fox is investigation 10 |
 
 **4/9  Three analysts, each with their own identity**
@@ -70,7 +70,7 @@
 | Result | Assertion — with evidence |
 |---|---|
 | ✅ PASS | the rebuilt machine is ONE host (12) with 2 collections across two cases, not two hosts |
-| ✅ PASS | the host page answers 'seen before?': 2 collections over 2 cases, 1 rename, 21 findings |
+| ✅ PASS | the host page answers 'seen before?': 2 collections over 2 cases, 9 rename, 21 findings |
 
 **6/9  Documentation — the record, including what was ruled OUT**
 
@@ -85,7 +85,7 @@
 | ✅ PASS | the technical report generates |
 | ✅ PASS | the plain-language summary generates |
 | ✅ PASS | and the same report renders to PDF inside the enclave, offline |
-| ✅ PASS | the PDF is a real document — 21 paginated pages, not one long dump |
+| ✅ PASS | the PDF is a real document — 23 paginated pages, not one long dump |
 | ✅ PASS | it is typeset — a body face, bold headings and a monospace for identifiers |
 
 **8/9  The report is the evidence — every figure checked against its table**
@@ -103,10 +103,10 @@
 | ✅ PASS | the report declares its timezone |
 | ✅ PASS | custody and ledger verification are recomputed at render, not read from a flag |
 | ✅ PASS | every indicator is defanged — nothing in the report can be clicked into a live C2 |
-| ✅ PASS | all 3 renders are recorded with their hash and the moment the data was read |
+| ✅ PASS | all 19 renders are recorded with their hash and the moment the data was read |
 | ✅ PASS | taking the report OUT is refused without the export right — generating is not exporting |
 | ✅ PASS | an identity holding the right takes it out |
-| ✅ PASS | and the export ledger records what left the platform (1 row(s)) |
+| ✅ PASS | and the export ledger records what left the platform (5 row(s)) |
 | ✅ PASS | every step of the lifecycle is in the audit ledger (5 action kinds) and the chain still verifies |
 
 **9/9  Retention — the finished case goes cold and comes back whole**
@@ -123,7 +123,7 @@
 | ✅ PASS | the queue states its own windows — 120-day grace, 180-day ceiling |
 | ✅ PASS | restoring is admin-only — an analyst cannot pull a case back on their own authority |
 | ✅ PASS | an admin restores it through the API, verified against its seal first |
-| ✅ PASS | the findings come back identical, original ids and all (4a473a0429f6…) |
+| ✅ PASS | the findings come back identical, original ids and all (4defcfdaff82…) |
 | ✅ PASS | so do the indicators (182) and the adjudicated verdicts (20) |
 | ✅ PASS | the report regenerates from the restored case with the figures it had before it went cold (250 findings, 20 captures) |
 | ✅ PASS | and it is still drawn from the tables, not from the bundle — custody verified against the restored rows |

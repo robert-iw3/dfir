@@ -241,6 +241,7 @@ export const api = {
   },
   // Working alongside other people. Every one of these is advisory: nothing here can stop
   // a write, so a failed call degrades to working alone rather than to being blocked.
+  deleteUser: (username) => del(`/users/?username=${encodeURIComponent(username)}`),
   heartbeat: (investigation, location) =>
     post("/presence/", { investigation: investigation || null, location: location || "" }),
   presence: (investigation) =>

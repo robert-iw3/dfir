@@ -466,6 +466,8 @@ from cases.models import ExportLedger, FindingReclassification, Note
 print(json.dumps({
     "notes": Note.objects.filter(summary__startswith="${MARKER}").count(),
     "reclass": FindingReclassification.objects.filter(note__startswith="${MARKER}").count(),
+    "reclass_ids": list(FindingReclassification.objects.filter(
+        note__startswith="${MARKER}").values_list("id", flat=True)),
     "exp_ok": ExportLedger.objects.filter(actor__startswith="${MARKER}", outcome="completed").count(),
     "exp_den": ExportLedger.objects.filter(actor__startswith="${MARKER}", outcome="denied").count(),
 }))
@@ -484,6 +486,12 @@ D_RC="$(python3 -c "import json,sys;print(json.loads(sys.argv[1])['reclass'])" "
 #
 # A large excess is still a defect — that is a retry writing twice — so the tolerance is
 # bounded rather than open.
+num_or_0() { local v="${1//[^0-9]/}"; printf '%s' "${v:-0}"; }
+# A write whose connection dropped before the response arrived may well have committed. The
+# agents counted those per operation, so the excess has a CAUSE to be measured against
+# instead of a percentage that is only ever a guess about how much drift looks normal.
+RC_RESETS="$(rj "d['activity']['write_verdict']['resets']")"
+EXP_RESETS="$(rj "d['activity']['export']['resets']")"
 FID_SLACK=$(( (L_NOTES + 199) / 200 ))       # 0.5%, at least 1
 if [[ "${L_NOTES:-0}" -eq 0 ]]; then
     bad "note fidelity not measured — the agents recorded zero accepted notes to compare against"
@@ -496,12 +504,34 @@ elif [[ $(( D_NOTES - L_NOTES )) -le "${FID_SLACK}" ]]; then
 else
     bad "FIDELITY: ${D_NOTES} notes for only ${L_NOTES} accepted — $(( D_NOTES - L_NOTES )) more than any lost acknowledgement explains; a retry is writing twice"
 fi
+# Totals cannot tell a lost write from an unacknowledged one, and the two have opposite
+# meanings. The agents recorded the id of every adjudication the platform said it had
+# accepted, so the sets are joined by id: an id the agent holds and the database does not is
+# data loss; a row the database holds and the agent never heard of is a commit whose response
+# was lost on the way back, which loses nothing. Deliberate contention makes repeats on the
+# same finding normal, so identity has to come from the row id, not from the values.
+L_RC_IDS="$(rj "json.dumps([x['id'] for x in d['ledger']['reclassify'] if x.get('id')])")"
+L_RC_ANON="$(rj "sum(1 for x in d['ledger']['reclassify'] if not x.get('id'))")"
+D_RC_IDS="$(python3 -c "import json,sys;print(json.dumps(json.loads(sys.argv[1])['reclass_ids']))" "${FID}")"
+RC_JOIN="$(python3 -c "
+import json, sys
+led, db = set(json.loads(sys.argv[1])), set(json.loads(sys.argv[2]))
+print(len(led - db), len(db - led))" "${L_RC_IDS}" "${D_RC_IDS}" 2>/dev/null)"
+read -r RC_LOST RC_UNACKED <<<"${RC_JOIN}"
 if [[ "${L_RC:-0}" -eq 0 ]]; then
     bad "adjudication fidelity not measured — zero accepted adjudications to compare against"
-elif [[ "${L_RC}" == "${D_RC}" ]]; then
-    ok "data fidelity: ${D_RC} reclassification history rows — one per accepted adjudication under contention"
+elif [[ -z "${RC_JOIN}" ]]; then
+    bad "adjudication fidelity not measured — the ledger and the database could not be joined by row id"
+elif [[ "${L_RC_ANON:-0}" =~ ^[0-9]+$ && "${L_RC_ANON}" -gt 0 ]]; then
+    bad "FIDELITY: ${L_RC_ANON} accepted adjudication(s) came back without a row id — the platform confirmed a write it cannot name"
+elif [[ ! "${RC_LOST}" =~ ^[0-9]+$ || "${RC_LOST}" -gt 0 ]]; then
+    bad "FIDELITY: ${RC_LOST} adjudication(s) the platform said it had accepted are NOT in the database — acknowledged writes LOST"
+elif [[ "${RC_UNACKED}" -eq 0 ]]; then
+    ok "data fidelity: every one of ${L_RC} accepted adjudications is in the database by id, and the database holds no others"
+elif [[ "${RC_UNACKED}" -le "$(num_or_0 "${RC_RESETS}")" ]]; then
+    ok "data fidelity: all ${L_RC} accepted adjudications are present; ${RC_UNACKED} further row(s) committed with the response lost on the way back — one for each of the ${RC_RESETS} connection(s) the agents saw dropped, which loses nothing"
 else
-    bad "FIDELITY: ${L_RC} accepted adjudications vs ${D_RC} history rows — a write was lost or doubled under contention"
+    bad "FIDELITY: ${RC_UNACKED} history rows beyond the ${L_RC} accepted, but only ${RC_RESETS} response(s) were lost — the excess is a retry writing twice"
 fi
 D_EOK="$(python3 -c "import json,sys;print(json.loads(sys.argv[1])['exp_ok'])" "${FID}")"
 D_EDEN="$(python3 -c "import json,sys;print(json.loads(sys.argv[1])['exp_den'])" "${FID}")"
@@ -509,8 +539,12 @@ if [[ "$(( ${EXP_OK:-0} + ${EXP_DEN:-0} ))" -eq 0 ]]; then
     bad "export ledger accounting not measured — the agents attempted zero exports"
 elif [[ "${D_EOK}" == "${EXP_OK}" && "${D_EDEN}" == "${EXP_DEN}" ]]; then
     ok "the export ledger accounts for every attempt under load (${D_EOK} completed, ${D_EDEN} denied — matching the agents exactly)"
+elif [[ "${D_EOK}" -lt "${EXP_OK}" || "${D_EDEN}" -lt "${EXP_DEN}" ]]; then
+    bad "export ledger SHORT: agents were told ${EXP_OK}/${EXP_DEN}, the ledger holds ${D_EOK}/${D_EDEN} — an export decision was not recorded"
+elif [[ $(( (D_EOK - EXP_OK) + (D_EDEN - EXP_DEN) )) -le "$(num_or_0 "${EXP_RESETS}")" ]]; then
+    ok "the export ledger accounts for every attempt (${D_EOK} completed, ${D_EDEN} denied); $(( (D_EOK - EXP_OK) + (D_EDEN - EXP_DEN) )) decision(s) recorded whose response never reached the agent, within the ${EXP_RESETS} dropped connection(s)"
 else
-    bad "export ledger drift: agents ${EXP_OK}/${EXP_DEN}, ledger ${D_EOK}/${D_EDEN}"
+    bad "export ledger drift beyond dropped connections: agents ${EXP_OK}/${EXP_DEN}, ledger ${D_EOK}/${D_EDEN}, only ${EXP_RESETS} response(s) lost"
 fi
 
 # Integrity after the storm.

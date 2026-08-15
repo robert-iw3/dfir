@@ -1,4 +1,4 @@
-# DFIR Framework
+# DFIR Framework — the platform
 
 The served half of the framework. The offline host toolkit ([`../toolkit/`](../toolkit/))
 covers the endpoint; everything after it happens here — evidence sealed at collection,
@@ -317,27 +317,40 @@ behind it, and their open questions, are in
 | Web Server SRG | DISA Web Server SRG hardening of the web tier and its runtime |
 | Ansible automation | Multi-host deployment and host preparation, lint-gated |
 
-### Known limit: analysis throughput
+### Parallel analysis — configuration and sizing
 
-The platform analyzes **one capture at a time**. A 24 GB capture takes 75–100 minutes, so a
-20-host incident is roughly a day of wall-clock and a 100-host incident is closer to a week.
+The platform analyzes **N captures at once**: one queue, N workers, each taking one capture.
+Proven by `test/uat_workers.sh` — five workers draining a 25-endpoint surge with six analyses
+in flight at one instant, every capture analyzed exactly once, every analysis attributed to
+the worker that ran it.
 
-The ceiling is staging I/O rather than CPU: each analysis copies the whole capture from the
-object store to local disk before Volatility can seek in it. Where the object store and the
-staging volume share a device, a single transfer at default concurrency is enough to make
-the object store report its own drive unhealthy and refuse reads — which is why transfer
-concurrency is deliberately low (`IR_S3_CONCURRENCY`) and why separating those devices is a
-prerequisite for any concurrency above one.
+**Configuration** (`deploy/.env`):
 
-Two related settings are load-bearing for anyone raising throughput:
+| Setting | Default | Meaning |
+|---|---|---|
+| `IR_WORKER_REPLICAS` | `1` | Workers, primary included. `5` runs worker + worker-2..5. Raising it stamps replica pairs from a generator; lowering it removes and deregisters the excess on the next deploy. |
+| `IR_IP_WORKERn` | `.213+` | One static address per replica — configuration, not discovery. |
+| `IR_VOL3_TIMEOUT` | `10800` | Bounds one analysis; the broker's visibility timeout derives from it. Raising one without the other redelivers a running analysis mid-pass. |
+| `IR_YARA_PROC_TIMEOUT` | — | Bounds the per-process YARA scan; too low costs matches *and* the carved regions that come from them (reported as *YARA Scan Coverage Incomplete*). |
+| `IR_S3_CONCURRENCY` | low | Staging transfer concurrency. Where the object store and scratch share a device, one aggressive transfer makes the store report its own drive unhealthy. |
 
-- `IR_VOL3_TIMEOUT` bounds a single analysis. The broker's visibility timeout is derived
-  from it; raising one without the other causes a running analysis to be redelivered and
-  analyzed a second time in parallel.
-- `IR_YARA_PROC_TIMEOUT` bounds the per-process YARA scan. Too low and the scan abandons
-  processes part-way, which costs both the matches and the carved regions that come from
-  them; the analyzer reports this as *YARA Scan Coverage Incomplete*.
+**Sizing rules** — each concurrent analysis costs, independently:
 
-Scaling this out — horizontal workers, per-capture distributed locking, admission control by
-staging capacity, and removing the staging copy — is the **Parallel analysis capacity**
-track above.
+- **Scratch disk:** one full capture staged per slot. `N × largest supported capture`, plus
+  carve headroom, must fit the filesystem backing the scratch volumes. Every replica has its
+  own volume so no analysis can evict another's staging.
+- **CPU:** one Volatility pass saturates a core and bursts wider. Budget ≥ 1.5 cores per
+  slot; replicas run `CELERY_CONCURRENCY=1` so an OOM kills one analysis, not two.
+- **Memory:** analyzer working set scales with capture size; 4–8 GB per slot for real
+  captures.
+- **Postgres:** `max_connections ≥ 60 (base tier) + 3 × workers`. At the defaults (100),
+  the wall is ~13 workers; raise it before raising the fleet past that.
+- **I/O separation:** object store and scratch on separate devices is the prerequisite for
+  any real concurrency — the staging copy is the bottleneck, not CPU.
+
+**Phase caps.** 50 workers is the supported ceiling for this phase (the enterprise-surge
+target: a SIEM flags a fleet, memory arrives from every host at once). 43 replicas is the
+single-host address ceiling — past one host, capacity means analysis hosts on the multihost
+mesh, and automatic provisioning of those is the Nomad/Ansible track. Per-capture latency is
+unchanged (a 24 GB capture is still 75–100 minutes); parallelism buys fleet throughput, so a
+20-host incident at 5 workers is an afternoon rather than a day.

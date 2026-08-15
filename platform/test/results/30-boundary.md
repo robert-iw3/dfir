@@ -2,7 +2,7 @@
 
 *What passing proves:* The analyst's hop into the enclave is an authenticated, authorized, auditable session against exactly one target; the DMZ holds no authority and has no route of its own.
 
-- Run: `uat_boundary.sh` — 2026-08-13 21:58:22Z
+- Run: `uat_boundary.sh` — 2026-08-14 23:50:15Z
 
 **Placement — authority in the enclave, a client in the DMZ**
 
@@ -52,8 +52,8 @@
 
 | Result | Assertion — with evidence |
 |---|---|
-| ✅ PASS | session s_HKfmdNM4p6 was canceled and the analyst path kept carrying — traffic flows |
-| ✅ PASS | the recovery is a NEW authorized session (s_PqmZw9w4Q7), and s_HKfmdNM4p6 is gone — not a lingering socket |
+| ✅ PASS | session s_eu4xPEUz6C was canceled and the analyst path kept carrying — traffic flows |
+| ✅ PASS | the recovery is a NEW authorized session (s_SPN6IzfaE9), and s_eu4xPEUz6C is gone — not a lingering socket |
 
 **The DMZ has no route of its own**
 
@@ -75,11 +75,13 @@
 | Result | Assertion — with evidence |
 |---|---|
 | ✅ PASS | the page reads live from Boundary with its own credential |
-| ✅ PASS | the record is complete: every one of the controller's 29 sessions is on the page (29 shown) |
+| ✅ PASS | the record is complete: the page accounts for all 74 sessions the controller holds (74 read), showing 74 |
+| ✅ PASS | every live session is on the page, whatever the window (8 live) |
+| ✅ PASS | a 5-row window still carries all 8 live sessions and still totals 74 — paging bounds the READ, never the record |
 | ✅ PASS | the page shows no session the controller does not have |
 | ✅ PASS | every session the controller reports live is live on the page (8 of 8) |
 | ✅ PASS | 8 live sessions, one per brokered port (expected 8) — separate failure domains, and no ghosts of replaced brokers |
-| ✅ PASS | every session that carried a connection came from the running broker (7 of 8 addressed, 10.89.0.13) |
+| ✅ PASS | every session that carried a connection came from the running broker (8 of 8 addressed, 10.89.0.13) |
 | ✅ PASS | every session resolves to its own session principal (8 distinct, all analyst-s*) |
 | ✅ PASS | byte counters are real — the session that carried the request shows transfer |
 | ✅ PASS | the page's auditor credential authenticates on its own |
@@ -102,9 +104,9 @@
 | ✅ PASS | the distributor holds no TLS material — encryption stays end to end |
 | ✅ PASS | no backend health probing — the checker cannot cause the failure it would report |
 | ✅ PASS | redispatch is on — a connection to a dead session is retried on a sibling rather than dropped |
-| ✅ PASS | held connections were carried by 2 of 3 egress workers (w1=0 w2=1 w3=4 ) — connection setup no longer funnels through one handshake path |
-| · | 5 of 8 cold connections established in one burst ({'SSLEOFError': 3}) — the egress worker's setup ceiling, M3 |
-| ✅ PASS | 5 connections reached 4 distinct sessions of 8 (busiest 40%, 18443=0 18444=1 18445=0 18446=2 18447=1 18448=0 18449=1 18450=0 ) — no session carries the fleet |
+| ✅ PASS | held connections were carried by 3 of 3 egress workers (w1=3 w2=3 w3=1 ) — connection setup no longer funnels through one handshake path |
+| · | 7 of 8 cold connections established in one burst ({'SSLEOFError': 1}) — the egress worker's setup ceiling, M3 |
+| ✅ PASS | 7 connections reached 6 distinct sessions of 8 (busiest 28%, 18443=1 18444=1 18445=1 18446=1 18447=2 18448=0 18449=1 18450=0 ) — no session carries the fleet |
 
 **One session's death is not the fleet's — measured, not asserted**
 
@@ -128,4 +130,4 @@
 |---|---|
 | ✅ PASS | brokered access holds: authority in the enclave, one target, attributable, encrypted, carrying traffic, and reported truthfully |
 
-**Verdict: PROVEN** — 52 assertions passed, 0 failed.
+**Verdict: PROVEN** — 54 assertions passed, 0 failed.

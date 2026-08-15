@@ -22,7 +22,9 @@ import re
 import ssl
 import urllib.error
 import urllib.request
-from datetime import datetime
+from datetime import datetime, timedelta
+
+from django.db.models import Q
 
 from .models import SsoSession
 
@@ -34,7 +36,11 @@ AUTH_METHOD_ID = os.environ.get("BOUNDARY_AUTH_METHOD_ID", "")
 SCOPE_ID = os.environ.get("BOUNDARY_PROJECT_ID", "")
 # How many recent sign-ons are considered when attributing a session to a person. Bounded so
 # an audit page reading a long history does not walk the whole table.
-ATTRIBUTION_LIMIT = 500
+# How long an un-ended sign-on still counts as the person being there. A sign-on ends when
+# the analyst signs off; one that stops without saying so is bounded by this instead, which
+# is the platform's own idle timeout. Never a row count: a count-based window silently drops
+# attribution for older sessions once the deployment is busy enough to fill it.
+SIGNON_IDLE_GRACE = timedelta(seconds=int(os.environ.get("IR_SIGNON_IDLE_GRACE", "3600")))
 # The configured workstation set, in the order the distributor's pinning map is rendered
 # from: the Nth workstation's connections land on session principal analyst-sN. One variable
 # on both sides, so the pairing cannot drift.
@@ -58,6 +64,11 @@ ORG_ID = os.environ.get("BOUNDARY_ORG_ID", "")
 # session READ, never the list — and an access record grows without limit, so a page that fans
 # out over all of it stops loading exactly when an incident makes it busy.
 DETAIL_LIMIT = int(os.environ.get("IR_BOUNDARY_SESSION_DETAIL_LIMIT", "25"))
+# How many sessions one read returns. Every session the deployment has ever opened is kept —
+# an access record that forgets is not an access record — but returning all of them grows
+# without bound, so the read is a window over the record and `total` still reports the whole.
+PAGE_LIMIT = int(os.environ.get("IR_BOUNDARY_SESSION_PAGE", "200"))
+MAX_PAGE_LIMIT = 1000
 
 
 def _ctx():
@@ -196,10 +207,24 @@ def _attribute(items):
     are working at once. `attribution` says which case each row is, so a session is never
     presented as belonging to one person on evidence that cannot support it.
     """
+    # Bounded by the window the sessions on this page actually span, not by a row count.
+    opens = [o for o in (_parse(i.get("created_time")) for i in items) if o]
+    earliest = min(opens) - SIGNON_IDLE_GRACE if opens else None
+    signons = SsoSession.objects.filter(started_at__isnull=False)
+    if earliest:
+        # A sign-on matters here only if it could still have been open when the earliest
+        # session on the page started.
+        signons = signons.filter(Q(ended_at__isnull=True) | Q(ended_at__gte=earliest),
+                                 last_seen_at__gte=earliest - SIGNON_IDLE_GRACE)
     windows = [
-        (s.started_at, s.ended_at or s.last_seen_at, s.username, s.workstation)
-        for s in SsoSession.objects.filter(started_at__isnull=False)
-                                   .order_by("-started_at")[:ATTRIBUTION_LIMIT]
+        # An un-ended sign-on is an OPEN interval. Collapsing it to last_seen_at ended the
+        # analyst's window at their last request, so the moment the broker re-established
+        # their session — routine, and invisible to them — the new session opened after that
+        # instant and the page reported that nobody was using it.
+        (s.started_at,
+         s.ended_at or (s.last_seen_at + SIGNON_IDLE_GRACE if s.last_seen_at else None),
+         s.username, s.workstation)
+        for s in signons.order_by("-started_at")
     ]
     for item in items:
         opened = _parse(item.get("created_time"))
@@ -240,8 +265,8 @@ def _overlaps(window, opened, closed):
     return end is None or end >= opened
 
 
-def overview(include_terminated=True):
-    """Every brokered session Boundary knows about, newest first."""
+def overview(include_terminated=True, limit=None, offset=0):
+    """Brokered sessions Boundary knows about, newest first, one bounded window at a time."""
     if not AUTH_METHOD_ID:
         return {"reachable": False,
                 "error": "Boundary is not provisioned for this deployment (no auth method id)",
@@ -266,18 +291,34 @@ def overview(include_terminated=True):
 
     raw = out.get("items") or []
     raw.sort(key=lambda s: s.get("created_time") or "", reverse=True)
-    # Newest first, then detail for those — the recent ones are what an incident asks about.
-    for i, item in enumerate(raw[:DETAIL_LIMIT]):
+    total = len(raw)
+
+    # A live session is never paged out of the answer: the running fleet is what an operator
+    # acts on, and it must not fall off the end as closed sessions accumulate in front of it.
+    size = PAGE_LIMIT if limit is None else max(1, min(int(limit), MAX_PAGE_LIMIT))
+    start = max(0, int(offset or 0))
+    live = [i for i in raw if (i.get("status") or "") in ACTIVE_STATES]
+    live_ids = {i.get("id") for i in live}
+    rest = [i for i in raw if i.get("id") not in live_ids]
+    window = (live + rest[start:start + size]) if start == 0 else rest[start:start + size]
+
+    # Detail for the newest of the window — the recent ones are what an incident asks about.
+    for i, item in enumerate(window[:DETAIL_LIMIT]):
         detail = _call(f"sessions/{item.get('id')}", token=token)
         if detail:
-            raw[i] = detail.get("item", detail)
+            window[i] = detail.get("item", detail)
 
     users, targets = _names(token)
-    items = [_shape(i, users, targets) for i in raw]
+    items = [_shape(i, users, targets) for i in window]
     _attribute(items)
     return {
         "reachable": True,
         "sessions": items,
         "active": sum(1 for s in items if s["active"]),
-        "total": len(items),
+        "shown": len(items),
+        "offset": start,
+        "truncated": len(items) < total,
+        # The whole record, not the size of this window: a page that reported its own length
+        # as the total would say the deployment had fewer sessions than it has.
+        "total": total,
     }

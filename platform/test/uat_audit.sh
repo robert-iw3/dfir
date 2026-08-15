@@ -338,7 +338,10 @@ else
     if grep -q NOPROBE "${OUT_A}" "${OUT_B}" 2>/dev/null; then
         bad "a workstation's diagnostics probe could not be started — the concurrent case is unmeasured (start with: deploy.sh workstation, diagnostics profile)"
     elif ! grep -q '^LOGIN=0' "${OUT_A}" || ! grep -q '^LOGIN=0' "${OUT_B}"; then
+        # The driver's own output is printed: MESSAGE= is empty when the driver died before
+        # reaching a verdict, and then the failure above names nothing at all.
         bad "a concurrent sign-on did not complete — ${WS_A}: $(sed -n 's/^MESSAGE=//p' "${OUT_A}" | head -1) / ${WS_B}: $(sed -n 's/^MESSAGE=//p' "${OUT_B}" | head -1)"
+        { echo "--- ${WS_A} driver:"; tail -6 "${OUT_A}"; echo "--- ${WS_B} driver:"; tail -6 "${OUT_B}"; } >&2
     else
         ok "two analysts signed on CONCURRENTLY from two workstations (${A2A}@${WS_A}, ${A2B}@${WS_B})"
         # The kiosk's statement survived the whole path: the sign-on records name the
@@ -376,6 +379,37 @@ print(f'{fmt(a)}|{fmt(b)}')")"
     fi
     rm -f "${OUT_A}" "${OUT_B}"
 fi
+
+say "A-3b  Attribution survives a session the broker replaces under the analyst"
+# The defect this encodes: an un-ended sign-on was treated as ending at its last request, so
+# a routine re-establishment — which the analyst never sees — opened a session that started
+# after that instant, and the page answered "nobody" about a session in active use.
+A3B="$(q "
+from datetime import timedelta
+from django.utils import timezone
+from cases import brokeredsessions as bs
+from cases.models import SsoSession
+now = timezone.now()
+who = 'uat-a3b-analyst'
+SsoSession.objects.filter(username=who).delete()
+ws = (bs.WS_IDS or ['analyst'])[0]
+# Open: signed on, still working, last request a while ago, never signed off.
+SsoSession.objects.create(session_key='uat-a3b-' + str(now.timestamp()), username=who,
+                          workstation=ws, started_at=now - timedelta(minutes=20),
+                          last_seen_at=now - timedelta(minutes=10))
+# The session the broker established AFTER that last request — a routine replacement.
+item = {'id': 's_uat_a3b', 'principal': 'analyst-s1', 'status': 'active',
+        'created_time': (now - timedelta(minutes=2)).isoformat().replace('+00:00', 'Z')}
+bs._attribute([item])
+SsoSession.objects.filter(username=who).delete()
+print(item['attribution'] + ' ' + ','.join(item['analysts']))")"
+read -r A3B_ATTR A3B_WHO <<<"${A3B}"
+# The claim is that the analyst is NOT LOST, which is what the defect destroyed. Whether the
+# verdict is exact or overlapping depends on who else was signed on at the time — real
+# information about the deployment, not about this defect; 'none' is the failure.
+[[ "${A3B_ATTR}" != "none" && "${A3B_ATTR}" != "" && "${A3B_WHO}" == *"uat-a3b-analyst"* ]] \
+    && ok "a session opened after the analyst's last request still names them (${A3B_ATTR}:${A3B_WHO})" \
+    || bad "a replaced session reports '${A3B_ATTR:-no answer}:${A3B_WHO:-}' — a live analyst's identity is lost when the broker re-establishes"
 
 report_finish
 exit "${FAILED}"

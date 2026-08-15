@@ -44,10 +44,22 @@ SOURCES = {
     "traefik-access": "/logs/traefik/access.log",
     "frontend-access": "/logs/frontend/access.log",
     "frontend-error": "/logs/frontend/error.log",
-    "backend-access": "/logs/app/backend-access.log",
-    "backend-app": "/logs/app/backend-app.log",
-    "worker-app": "/logs/app/worker-app.log",
 }
+
+
+def discover_sources():
+    """The fixed web-tier files plus every log in the shared app directory.
+
+    The app directory is discovered, not listed: worker replicas each write their own file
+    (worker-2-app.log, ...), the replica count is an operator setting, and a fixed list here
+    would silently never ship the logs of any worker added after it was written.
+    """
+    import glob
+    out = dict(SOURCES)
+    for path in sorted(glob.glob("/logs/app/*.log")):
+        name = os.path.basename(path)[:-4]
+        out.setdefault(name, path)
+    return out
 OFFSETS_KEY = "_state/offsets.json"
 INTERVAL = int(os.environ.get("IR_LOG_SHIP_INTERVAL", "60"))
 # Bounded so one pass cannot try to hold an arbitrarily large file in memory; the remainder is
@@ -117,7 +129,7 @@ def ship_once(stdout=None) -> int:
     host = socket.gethostname()
     shipped = 0
 
-    for name, path in SOURCES.items():
+    for name, path in discover_sources().items():
         p = Path(path)
         if not p.exists():
             continue
@@ -176,8 +188,8 @@ class Command(BaseCommand):
         # how a processing failure reaches the admin (SRG-APP-000108-WSR-000166).
         from cases import healthreporter
 
-        self.stdout.write(f"[ship-logs] following {len(SOURCES)} source(s) every {INTERVAL}s "
-                          f"-> s3://{bucket_name()}/")
+        self.stdout.write(f"[ship-logs] following {len(discover_sources())} source(s) every "
+                          f"{INTERVAL}s -> s3://{bucket_name()}/")
         started = False
         while True:
             try:

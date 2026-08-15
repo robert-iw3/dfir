@@ -1,31 +1,31 @@
 ## Load — measured
 
-_50 agents · 60s sustained activity · arrivals paced at 2/s — a fleet · generated 2026-08-13 20:43:03Z_
+_50 agents · 60s sustained activity · arrivals paced at 2/s — a fleet · generated 2026-08-15 01:21:21Z_
 
 ### Provisioning (through the platform's own admin API, arrivals paced at 2/s)
 
 | Attempted | Created | p50 ms | p95 ms |
 |---|---|---|---|
-| 50 | 50 | 316 | 338 |
+| 50 | 50 | 352 | 786 |
 
 ### Login storm (full OIDC, forced credential change included)
 
 | Attempted | Completed | Failed | p50 ms | p95 ms | max ms |
 |---|---|---|---|---|---|
-| 50 | 50 | 0 | 723 | 748 | 771 |
+| 50 | 50 | 0 | 775 | 1849 | 2270 |
 
 ### Sustained activity, with writes colliding on one investigation
 
 | Operation | n | ok | 5xx | resets | p50 ms | p95 ms | p99 ms |
 |---|---|---|---|---|---|---|---|
-| export | 149 | 143 | 6 | 0 | 57 | 469 | 557 |
-| me | 842 | 828 | 14 | 0 | 32 | 1222 | 2716 |
-| poll | 842 | 830 | 12 | 0 | 7 | 115 | 213 |
-| rbac_refusal | 179 | 177 | 2 | 0 | 50 | 422 | 639 |
-| read_findings | 842 | 830 | 12 | 0 | 40 | 176 | 285 |
-| read_stats | 842 | 830 | 12 | 0 | 53 | 239 | 345 |
-| write_note | 663 | 653 | 10 | 0 | 82 | 442 | 568 |
-| write_verdict | 663 | 653 | 10 | 0 | 68 | 1159 | 2422 |
+| export | 141 | 140 | 1 | 0 | 45 | 286 | 346 |
+| me | 791 | 786 | 4 | 1 | 28 | 3354 | 10427 |
+| poll | 791 | 786 | 5 | 0 | 8 | 50 | 152 |
+| rbac_refusal | 159 | 157 | 2 | 0 | 43 | 216 | 345 |
+| read_findings | 791 | 787 | 4 | 0 | 36 | 135 | 245 |
+| read_stats | 791 | 787 | 4 | 0 | 82 | 225 | 412 |
+| write_note | 632 | 622 | 9 | 1 | 57 | 298 | 449 |
+| write_verdict | 632 | 626 | 6 | 0 | 51 | 581 | 1409 |
 
 ### Ramp
 
@@ -36,12 +36,12 @@ _50 agents · 60s sustained activity · arrivals paced at 2/s — a fleet · gen
 
 | Measure | Value |
 |---|---|
-| Availability (independent 1 Hz sampler) | 100.00% over 214 samples |
-| Health-probe p95 | 3 ms |
+| Availability (independent 1 Hz sampler) | 99.54% over 216 samples |
+| Health-probe p95 | 5 ms |
 | Peak DB connections | 0 of 100 |
 | Deadlocks / rollbacks during contention | 0 / 0 |
-| Notes written (agent ledger) | 1013 |
-| Adjudications written | 1013 |
-| Exports completed / refused | 40 / 253 |
-| RBAC refusals counted as correct | 267 |
+| Notes written (agent ledger) | 981 |
+| Adjudications written | 986 |
+| Exports completed / refused | 40 / 250 |
+| RBAC refusals counted as correct | 247 |
 | Confidentiality violations | 0 |

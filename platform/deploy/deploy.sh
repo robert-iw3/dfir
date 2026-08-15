@@ -175,6 +175,20 @@ dc() {
     if [[ "${tier}" == "enclave" && "${IR_MESH_MULTIHOST:-0}" == "1" ]]; then
         overlay=(-f docker-compose.multihost.yml)
     fi
+    # Replica pairs live in their own overlay so a single-worker deployment never parses
+    # them. Loaded whenever replicas are declared — including for `down`, which must parse
+    # the same files `up` did or it strands the replica containers. Generated here, not by
+    # hand: the walk target is a 50-worker surge and nobody maintains that as YAML.
+    if [[ "${tier}" == "enclave" ]]; then
+        # Runs at ANY count, because the generator both writes the pairs and DELETES the
+        # overlay when none are declared. Called only above 1, a scale-down left the old
+        # overlay on disk describing workers the deployment no longer runs.
+        python3 "${HERE}/gen-worker-overlay.py" "${IR_WORKER_REPLICAS:-1}" >/dev/null \
+            || die "worker overlay generation failed — check IR_WORKER_REPLICAS and .env addresses"
+        if [[ "${IR_WORKER_REPLICAS:-1}" -gt 1 ]]; then
+            overlay+=(-f docker-compose.workers.yml)
+        fi
+    fi
     # The agent compose interpolates these; a `down` must parse the same file `up` did.
     if [[ "${tier}" == "agent" ]]; then
         export IR_RUNTIME_SOCKET="${IR_RUNTIME_SOCKET:-${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/podman/podman.sock}"
@@ -286,8 +300,12 @@ recreate_if_stale() { # tier  service...
 
     for svc in "$@"; do
         name="${proj}_${svc}_1"
+        # A worker replica runs the primary's image — there is no ir-worker-2 image, and
+        # resolving it literally would silently exempt every replica from the check.
+        local image_svc="${svc}"
+        [[ "${svc}" =~ ^worker-[0-9]+$ ]] && image_svc="worker"
         running="$(${RUNTIME} inspect "${name}" --format '{{.Image}}' 2>/dev/null)" || continue
-        current="$(${RUNTIME} image inspect "localhost/ir-${svc}:latest" \
+        current="$(${RUNTIME} image inspect "localhost/ir-${image_svc}:latest" \
                    --format '{{.Id}}' 2>/dev/null)" || continue
         if [[ -n "${running}" && -n "${current}" && "${running}" != "${current}" ]]; then
             stale+=("${name}")
@@ -438,6 +456,7 @@ verify_image() { # tier  service...
         case "${svc}" in
             frontend) src="${HERE}/../frontend" ;;
             backend|worker) src="${HERE}/../backend ${HERE}/../shared" ;;
+            worker-*) src="${HERE}/../backend ${HERE}/../shared" ;;
             keycloak) src="${HERE}/../keycloak" ;;
             *) continue ;;
         esac
@@ -1250,19 +1269,46 @@ re-run deploy, or provision manually with hashicorp/keycloak/provision-demo-user
     # build once, then remove whatever landed on the wrong image and create again — the second pass
     # builds nothing, which is what settles it.
 
+    # Replicas are ordinary members of the application tier: same image, same staleness
+    # rules, same credential replacement. The list is empty at 1 worker, and every use below
+    # expands to nothing then. Declared before the busy-guard so set -u holds on both paths.
+    local wreps=() n
+    for n in $(seq 2 "${IR_WORKER_REPLICAS:-1}"); do wreps+=("worker-${n}"); done
     # A running analysis takes the whole stage out of scope: any compose action here can reach the
     # worker through the graph.
     if [[ "${IR_FORCE_RECREATE:-0}" != "1" ]] && analysis_in_progress "$(proj enclave)"; then
         warn "a memory analysis is running — leaving the application tier as it is"
         warn "re-run when it finishes, or IR_FORCE_RECREATE=1 to deploy and discard it"
     else
-        recreate_if_stale enclave backend frontend worker
-        dc enclave up -d --build backend frontend worker >/dev/null 2>&1
-        recreate_if_stale enclave backend frontend worker
+        recreate_if_stale enclave backend frontend worker "${wreps[@]}"
+        dc enclave up -d --build backend frontend worker "${wreps[@]}" >/dev/null 2>&1
+        recreate_if_stale enclave backend frontend worker "${wreps[@]}"
         # A revoked credential is invisible to the image check — same image, dropped role.
         # These usually get replaced for image drift anyway, which is luck, not a guarantee.
-        recreate_on_stale_credential enclave backend worker
-        dc enclave up -d backend frontend worker >/dev/null 2>&1
+        recreate_on_stale_credential enclave backend worker "${wreps[@]}"
+        dc enclave up -d backend frontend worker "${wreps[@]}" >/dev/null 2>&1
+        # podman-compose sometimes leaves the last of a batch in Created without starting
+        # it — the egress workers hit this on every cold start until guarded the same way.
+        for n in "${wreps[@]}"; do
+            if [[ "$(${RUNTIME} inspect "ir-enclave_${n}_1" --format '{{.State.Status}}' 2>/dev/null)" == "created" ]]; then
+                warn "${n} was created but never started — starting it directly"
+                ${RUNTIME} start "ir-enclave_${n}_1" >/dev/null 2>&1 || true
+            fi
+        done
+        # SCALE-DOWN: replicas beyond the declared count are removed and deregistered.
+        # Without this, lowering IR_WORKER_REPLICAS leaves containers the compose files no
+        # longer describe — running, consuming the queue, invisible to every later deploy.
+        local extra_n
+        for extra_n in $(${RUNTIME} ps -a --format '{{.Names}}' 2>/dev/null \
+                         | sed -n 's/^ir-enclave_worker-\([0-9]\+\)_1$/\1/p'); do
+            if [[ "${extra_n}" -gt "${IR_WORKER_REPLICAS:-1}" ]]; then
+                warn "worker-${extra_n} exceeds IR_WORKER_REPLICAS=${IR_WORKER_REPLICAS:-1} — removing it"
+                detach_then_remove "ir-enclave_worker-${extra_n}-sidecar_1" "ir-enclave_worker-${extra_n}_1"
+                ${RUNTIME} exec ir-enclave_consul_1 sh -c \
+                    "CONSUL_HTTP_ADDR=https://127.0.0.1:8501 CONSUL_CACERT=/consul/tls/consul-ca.pem \
+                     consul services deregister -id=ir-worker-${extra_n}" >/dev/null 2>&1 || true
+            fi
+        done
     fi
     # Sidecars IMMEDIATELY, before the health gate: with Postgres on loopback the backend cannot reach
     # it until its proxy exists, and the gap is only bounded by the app's start-up retries.
@@ -1270,21 +1316,25 @@ re-run deploy, or provision manually with hashicorp/keycloak/provision-demo-user
     # --no-deps on every sidecar start, or compose walks depends_on and recreates the service AFTER
     # its old address was registered.
     if [[ "${IR_MESH:-1}" == "1" ]]; then
-        # CONCEPT (Track W, awaiting testing): worker replicas join mesh_attach, verify_image
-        # and mesh_orphan_check below as worker-2, worker-3....
-        mesh_attach backend worker frontend
+        mesh_attach backend worker frontend "${wreps[@]}"
         ok "application sidecars up — every data-tier connection now passes an intention check"
     fi
-    verify_image enclave backend frontend worker keycloak
+    verify_image enclave backend frontend worker keycloak "${wreps[@]}"
     # AFTER verify_image, which recreates a service left on a stale image — and a recreated
     # service has a new network namespace, stranding the proxy attached a moment ago. Sweeping
     # here makes namespace reconciliation the LAST thing the stage does, so nothing that runs
     # after it can undo the attach.
     if [[ "${IR_MESH:-1}" == "1" ]]; then
-        mesh_orphan_check db minio redis vault backend worker frontend puller oauth2-proxy log-shipper keycloak
+        mesh_orphan_check db minio redis vault backend worker frontend puller oauth2-proxy log-shipper keycloak "${wreps[@]}"
     fi
     wait_for ir-enclave_backend_1 180 pyprobe ir-enclave_backend_1 http://127.0.0.1:8000/api/health/ \
         || die "API never became healthy"
+
+    # After the API is up, because it writes through it. Runs whether or not a container was
+    # just removed: a health row outlives its container, so a fleet that shrank in an earlier
+    # deploy still shows replicas that no longer exist as live components gone silent.
+    ${RUNTIME} exec -i ir-enclave_backend_1 python manage.py retire_workers \
+        "${IR_WORKER_REPLICAS:-1}" 2>/dev/null || true
 
     say "Enclave · stage 4/4 — SSO gate + ingress + puller"
     # The gate holds its sessions in Redis, which is loopback-bound behind a sidecar, so its
