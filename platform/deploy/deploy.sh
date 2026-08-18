@@ -6,9 +6,12 @@
 #   deploy.sh enclave       # internal enclave host
 #   deploy.sh dmz           # DMZ host
 #   deploy.sh workstation [id]   # analyst machine; `id` names this workstation's tailnet
-#                                # node and its compose project (default: analyst)
+#                                # node and its compose project. With no id, every workstation
+#                                # IR_WS_IDS declares comes up.
 #   deploy.sh all           # single-host validation (all tiers)
 #   deploy.sh status        # health of every stage
+#   deploy.sh rotate <NAME>... | --all   # retire generated secrets; the next
+#                                       # deploy of that tier provisions new ones
 #   deploy.sh down <tier|all> [--purge]   # --purge also deletes volumes:
 #                                         # ALL evidence, captures and analyses
 #
@@ -84,7 +87,12 @@ pki_logon_render() {
         # Rendered explicitly to the disabled form rather than left as found: a deployment that
         # once had it on must not keep asking for certificates after it is turned off.
         sed -i 's|^      clientAuth:.*|      # __CLIENT_AUTH__|; /^        caFiles:/d; /^          - \/certs\/pki\//d; /^        clientAuthType:/d' "${dyn}"
-        grep -q "__CLIENT_AUTH__" "${dyn}" || warn "the ingress client-auth block could not be reset"
+        # Disabled means no ACTIVE clientAuth line — whether this run replaced one with the
+        # marker or there was never one to replace. Requiring the marker reported a failure to
+        # reset something nothing had set.
+        if grep -qE '^[[:space:]]*clientAuth:' "${dyn}"; then
+            warn "the ingress still asks for client certificates — smartcard logon is off but the block survived"
+        fi
         return 0
     fi
 
@@ -174,6 +182,20 @@ dc() {
     local overlay=()
     if [[ "${tier}" == "enclave" && "${IR_MESH_MULTIHOST:-0}" == "1" ]]; then
         overlay=(-f docker-compose.multihost.yml)
+    fi
+    # Replica pairs live in their own overlay so a single-worker deployment never parses
+    # them. Loaded whenever replicas are declared — including for `down`, which must parse
+    # the same files `up` did or it strands the replica containers. Generated here, not by
+    # hand: the walk target is a 50-worker surge and nobody maintains that as YAML.
+    if [[ "${tier}" == "enclave" ]]; then
+        # Runs at ANY count, because the generator both writes the pairs and DELETES the
+        # overlay when none are declared. Called only above 1, a scale-down left the old
+        # overlay on disk describing workers the deployment no longer runs.
+        python3 "${HERE}/gen-worker-overlay.py" "${IR_WORKER_REPLICAS:-1}" >/dev/null \
+            || die "worker overlay generation failed — check IR_WORKER_REPLICAS and .env addresses"
+        if [[ "${IR_WORKER_REPLICAS:-1}" -gt 1 ]]; then
+            overlay+=(-f docker-compose.workers.yml)
+        fi
     fi
     # The agent compose interpolates these; a `down` must parse the same file `up` did.
     if [[ "${tier}" == "agent" ]]; then
@@ -286,8 +308,12 @@ recreate_if_stale() { # tier  service...
 
     for svc in "$@"; do
         name="${proj}_${svc}_1"
+        # A worker replica runs the primary's image — there is no ir-worker-2 image, and
+        # resolving it literally would silently exempt every replica from the check.
+        local image_svc="${svc}"
+        [[ "${svc}" =~ ^worker-[0-9]+$ ]] && image_svc="worker"
         running="$(${RUNTIME} inspect "${name}" --format '{{.Image}}' 2>/dev/null)" || continue
-        current="$(${RUNTIME} image inspect "localhost/ir-${svc}:latest" \
+        current="$(${RUNTIME} image inspect "localhost/ir-${image_svc}:latest" \
                    --format '{{.Id}}' 2>/dev/null)" || continue
         if [[ -n "${running}" && -n "${current}" && "${running}" != "${current}" ]]; then
             stale+=("${name}")
@@ -438,6 +464,7 @@ verify_image() { # tier  service...
         case "${svc}" in
             frontend) src="${HERE}/../frontend" ;;
             backend|worker) src="${HERE}/../backend ${HERE}/../shared" ;;
+            worker-*) src="${HERE}/../backend ${HERE}/../shared" ;;
             keycloak) src="${HERE}/../keycloak" ;;
             *) continue ;;
         esac
@@ -789,7 +816,102 @@ PY
 
 # --- staged tier bring-ups -------------------------------------------------
 
+# Bring the running Keycloak's admin password to the value this deployment holds, trying the
+# credentials a previous deployment could have left behind. Silent about which one worked: the
+# useful signal is whether the deployment and the store now agree.
+# Retire a generated secret so the next deploy of its tier provisions a new one.
+#
+# Rotation is not a separate ceremony: `ensure_secret` already provisions anything absent, so
+# retiring a value IS the rotation, and the deploy that follows applies it. Kept in the
+# codebase rather than written down as a procedure, because a procedure is a thing an operator
+# performs differently each time and cannot be asserted.
+#
+# The retired value is kept, commented, beside its replacement. A key that encrypted something
+# still has to verify it — the custody seal's retired-key list is the reason that matters.
+ROTATABLE=(BOUNDARY_WORKER_AUTH_KEY BOUNDARY_RECOVERY_KEY IR_OIDC_CLIENT_SECRET
+           KC_BOOTSTRAP_ADMIN_PASSWORD RECEIVER_PULLER_TOKEN IR_SSO_PROXY_SECRET
+           IR_PLATFORM_ADMIN_PASSWORD
+           IR_CUSTODY_HMAC_KEY)
+
+rotate_secrets() {  # <name...|--all>
+    local env_file="${HERE}/.env" names=() n line
+    if [[ "${1:-}" == "--all" ]]; then
+        names=("${ROTATABLE[@]}")
+    else
+        names=("$@")
+    fi
+    [[ ${#names[@]} -gt 0 ]] || die "usage: deploy.sh rotate <NAME>... | --all   (see ROTATABLE)"
+    for n in "${names[@]}"; do
+        # Boundary's root key encrypts its own database. Clearing it here would generate a key
+        # that cannot read what the old one wrote, and the failure surfaces later as a
+        # controller that will not start. Rotating it is a Boundary operation on the store,
+        # not a config edit, so this refuses rather than half-doing it.
+        if [[ "${n}" == "BOUNDARY_ROOT_KEY" ]]; then
+            warn "BOUNDARY_ROOT_KEY encrypts the Boundary database — rotate it through Boundary,"
+            warn "  not by regenerating config. Refused."
+            continue
+        fi
+        grep -qx -- "${n}" <<<"$(printf '%s\n' "${ROTATABLE[@]}")" \
+            || { warn "${n} is not a rotatable generated secret — skipped"; continue; }
+        line="$(grep -m1 "^${n}=" "${env_file}" 2>/dev/null || true)"
+        if [[ -z "${line}" ]]; then
+            ok "${n} is not set — the next deploy generates it"
+            continue
+        fi
+        # Retired above the live entry, so what a bundle or an archive was sealed with is
+        # still recoverable after the value it used has been replaced. Rewritten in python
+        # because the value is arbitrary bytes and sed would need it escaped to be safe.
+        python3 - "${env_file}" "${n}" <<'PYEOF'
+import sys
+path, name = sys.argv[1], sys.argv[2]
+out, done = [], False
+for line in open(path).read().splitlines():
+    if not done and line.startswith(name + "="):
+        value = line.split("=", 1)[1]
+        if value:
+            out.append("# retired {} — kept so material sealed under it still verifies".format(name))
+            out.append("# {}_RETIRED={}".format(name, value))
+        out.append(name + "=")
+        done = True
+    else:
+        out.append(line)
+open(path, "w").write("\n".join(out) + "\n")
+PYEOF
+        ok "retired ${n} — the next deploy of its tier provisions a new one"
+    done
+    say "Rotation staged. Apply it with the deploy that owns each secret:"
+    printf '    deploy.sh enclave      # Boundary, Keycloak, OIDC, custody\n'
+    printf '    deploy.sh dmz          # the receiver credential\n'
+}
+
+converge_kc_admin() {
+    local want="${KC_BOOTSTRAP_ADMIN_PASSWORD:-}" prev
+    [[ -n "${want}" ]] || return 0
+    kc_auth() {  # <password>
+        ${RUNTIME} exec -i ir-enclave_keycloak_1 \
+            /opt/keycloak/bin/kcadm.sh config credentials --server http://127.0.0.1:8080 \
+            --realm master --user "${KEYCLOAK_ADMIN:-admin}" --password "$1" >/dev/null 2>&1
+    }
+    if kc_auth "${want}"; then
+        ok "Keycloak admin credential matches this deployment"
+        return 0
+    fi
+    for prev in "${KEYCLOAK_ADMIN_PASSWORD:-}" admin; do
+        [[ -n "${prev}" ]] || continue
+        kc_auth "${prev}" || continue
+        if ${RUNTIME} exec -i ir-enclave_keycloak_1 \
+                /opt/keycloak/bin/kcadm.sh set-password -r master \
+                --username "${KEYCLOAK_ADMIN:-admin}" --new-password "${want}" >/dev/null 2>&1; then
+            ok "rotated the Keycloak admin password to this deployment's own"
+            return 0
+        fi
+    done
+    warn "could not converge the Keycloak admin password — realm and account steps may fail"
+}
+
 up_enclave() {
+    ensure_enclave_secrets
+    ensure_puller_token
     resolve_vault_config
     ensure_vault_image
     reap_orphans enclave
@@ -1215,6 +1337,13 @@ up_enclave() {
     wait_for ir-enclave_keycloak_1 300 logmatch ir-enclave_keycloak_1 "Listening on" \
         || die "Keycloak never started — the SSO gate cannot come up without it"
 
+    # The bootstrap admin password is a BOOTSTRAP-ONLY write: Keycloak applies
+    # KC_BOOTSTRAP_ADMIN_PASSWORD when it creates the account and never again, so a store that
+    # already exists keeps whatever password first created it. Generating a new one without
+    # this step leaves the deployment holding a credential the database does not have, and
+    # every kcadm call after it fails for a reason that reads as "Keycloak is down".
+    # Converged rather than assumed, which is the same rule the Consul config entries follow.
+    converge_kc_admin
     # The realm FILE is enforced on every deploy. With the store persistent, --import-realm
     # applies only on first start; without this converge a changed password policy or
     # brute-force threshold deploys cleanly and changes nothing.
@@ -1250,19 +1379,46 @@ re-run deploy, or provision manually with hashicorp/keycloak/provision-demo-user
     # build once, then remove whatever landed on the wrong image and create again — the second pass
     # builds nothing, which is what settles it.
 
+    # Replicas are ordinary members of the application tier: same image, same staleness
+    # rules, same credential replacement. The list is empty at 1 worker, and every use below
+    # expands to nothing then. Declared before the busy-guard so set -u holds on both paths.
+    local wreps=() n
+    for n in $(seq 2 "${IR_WORKER_REPLICAS:-1}"); do wreps+=("worker-${n}"); done
     # A running analysis takes the whole stage out of scope: any compose action here can reach the
     # worker through the graph.
     if [[ "${IR_FORCE_RECREATE:-0}" != "1" ]] && analysis_in_progress "$(proj enclave)"; then
         warn "a memory analysis is running — leaving the application tier as it is"
         warn "re-run when it finishes, or IR_FORCE_RECREATE=1 to deploy and discard it"
     else
-        recreate_if_stale enclave backend frontend worker
-        dc enclave up -d --build backend frontend worker >/dev/null 2>&1
-        recreate_if_stale enclave backend frontend worker
+        recreate_if_stale enclave backend frontend worker "${wreps[@]}"
+        dc enclave up -d --build backend frontend worker "${wreps[@]}" >/dev/null 2>&1
+        recreate_if_stale enclave backend frontend worker "${wreps[@]}"
         # A revoked credential is invisible to the image check — same image, dropped role.
         # These usually get replaced for image drift anyway, which is luck, not a guarantee.
-        recreate_on_stale_credential enclave backend worker
-        dc enclave up -d backend frontend worker >/dev/null 2>&1
+        recreate_on_stale_credential enclave backend worker "${wreps[@]}"
+        dc enclave up -d backend frontend worker "${wreps[@]}" >/dev/null 2>&1
+        # podman-compose sometimes leaves the last of a batch in Created without starting
+        # it — the egress workers hit this on every cold start until guarded the same way.
+        for n in "${wreps[@]}"; do
+            if [[ "$(${RUNTIME} inspect "ir-enclave_${n}_1" --format '{{.State.Status}}' 2>/dev/null)" == "created" ]]; then
+                warn "${n} was created but never started — starting it directly"
+                ${RUNTIME} start "ir-enclave_${n}_1" >/dev/null 2>&1 || true
+            fi
+        done
+        # SCALE-DOWN: replicas beyond the declared count are removed and deregistered.
+        # Without this, lowering IR_WORKER_REPLICAS leaves containers the compose files no
+        # longer describe — running, consuming the queue, invisible to every later deploy.
+        local extra_n
+        for extra_n in $(${RUNTIME} ps -a --format '{{.Names}}' 2>/dev/null \
+                         | sed -n 's/^ir-enclave_worker-\([0-9]\+\)_1$/\1/p'); do
+            if [[ "${extra_n}" -gt "${IR_WORKER_REPLICAS:-1}" ]]; then
+                warn "worker-${extra_n} exceeds IR_WORKER_REPLICAS=${IR_WORKER_REPLICAS:-1} — removing it"
+                detach_then_remove "ir-enclave_worker-${extra_n}-sidecar_1" "ir-enclave_worker-${extra_n}_1"
+                ${RUNTIME} exec ir-enclave_consul_1 sh -c \
+                    "CONSUL_HTTP_ADDR=https://127.0.0.1:8501 CONSUL_CACERT=/consul/tls/consul-ca.pem \
+                     consul services deregister -id=ir-worker-${extra_n}" >/dev/null 2>&1 || true
+            fi
+        done
     fi
     # Sidecars IMMEDIATELY, before the health gate: with Postgres on loopback the backend cannot reach
     # it until its proxy exists, and the gap is only bounded by the app's start-up retries.
@@ -1270,21 +1426,25 @@ re-run deploy, or provision manually with hashicorp/keycloak/provision-demo-user
     # --no-deps on every sidecar start, or compose walks depends_on and recreates the service AFTER
     # its old address was registered.
     if [[ "${IR_MESH:-1}" == "1" ]]; then
-        # CONCEPT (Track W, awaiting testing): worker replicas join mesh_attach, verify_image
-        # and mesh_orphan_check below as worker-2, worker-3....
-        mesh_attach backend worker frontend
+        mesh_attach backend worker frontend "${wreps[@]}"
         ok "application sidecars up — every data-tier connection now passes an intention check"
     fi
-    verify_image enclave backend frontend worker keycloak
+    verify_image enclave backend frontend worker keycloak "${wreps[@]}"
     # AFTER verify_image, which recreates a service left on a stale image — and a recreated
     # service has a new network namespace, stranding the proxy attached a moment ago. Sweeping
     # here makes namespace reconciliation the LAST thing the stage does, so nothing that runs
     # after it can undo the attach.
     if [[ "${IR_MESH:-1}" == "1" ]]; then
-        mesh_orphan_check db minio redis vault backend worker frontend puller oauth2-proxy log-shipper keycloak
+        mesh_orphan_check db minio redis vault backend worker frontend puller oauth2-proxy log-shipper keycloak "${wreps[@]}"
     fi
     wait_for ir-enclave_backend_1 180 pyprobe ir-enclave_backend_1 http://127.0.0.1:8000/api/health/ \
         || die "API never became healthy"
+
+    # After the API is up, because it writes through it. Runs whether or not a container was
+    # just removed: a health row outlives its container, so a fleet that shrank in an earlier
+    # deploy still shows replicas that no longer exist as live components gone silent.
+    ${RUNTIME} exec -i ir-enclave_backend_1 python manage.py retire_workers \
+        "${IR_WORKER_REPLICAS:-1}" 2>/dev/null || true
 
     say "Enclave · stage 4/4 — SSO gate + ingress + puller"
     # The gate holds its sessions in Redis, which is loopback-bound behind a sidecar, so its
@@ -1346,9 +1506,68 @@ re-run deploy, or provision manually with hashicorp/keycloak/provision-demo-user
     ok "enclave up"
 }
 
+# Every deployment gets its OWN secrets, generated on first bring-up and persisted to .env.
+#
+# A credential shipped as a literal in the tree is the same credential in every deployment
+# that ever clones it, and it publishes wherever the tree publishes. Generating removes the
+# operator step that gets skipped and the default that never gets changed at once.
+#
+# An EXISTING value is never overwritten. Several of these encrypt data at rest — Boundary's
+# root key encrypts its database — so replacing one silently would strand what it protects.
+# Rotating a live key is a deliberate operation, not a side effect of running the deploy.
+ensure_secret() {  # <VAR_NAME> <hex|base64|pass> <description>
+    local var="$1" kind="${2:-hex}" what="${3:-$1}"
+    local env_file="${HERE}/.env" current="${!var:-}"
+    case "${current}" in
+        ""|CHANGE_ME|CHANGE-ME|changeme|admin) ;;
+        *) export "${var}=${current}"; return 0 ;;
+    esac
+    local value
+    case "${kind}" in
+        base64) value="$(openssl rand -base64 32 2>/dev/null)" ;;
+        pass)   value="$(openssl rand -base64 24 2>/dev/null | tr -d '/+=' | cut -c1-24)" ;;
+        *)      value="$(openssl rand -hex 32 2>/dev/null)" ;;
+    esac
+    [[ -n "${value}" ]] || die "cannot generate ${what}: openssl is unavailable"
+    if grep -q "^${var}=" "${env_file}" 2>/dev/null; then
+        # `|` is not in base64's alphabet, so it cannot appear in the value being written.
+        sed -i "s|^${var}=.*|${var}=${value}|" "${env_file}"
+    else
+        printf '\n# %s — generated on first deploy.\n%s=%s\n' "${what}" "${var}" "${value}" >> "${env_file}"
+    fi
+    export "${var}=${value}"
+    ok "generated ${what}"
+}
+
+# The credential the receiver demands before it will serve or delete a held bundle, shared
+# with the enclave's puller. Generated rather than asked of the operator: a receiver with no
+# token refuses every read, which is the safe direction but reads as a broken deployment, and
+# an evidence path that only works once somebody remembers a variable ships turned off.
+ensure_puller_token() {
+    ensure_secret RECEIVER_PULLER_TOKEN hex "the receiver's holding-area credential"
+}
+
+# The secrets a deployment must not share with any other, provisioned before the tier that
+# needs them. Boundary's three KEKs are base64 AES-GCM material; the rest are passwords.
+ensure_enclave_secrets() {
+    ensure_secret BOUNDARY_ROOT_KEY base64 "Boundary's root key"
+    ensure_secret BOUNDARY_WORKER_AUTH_KEY base64 "Boundary's worker-auth key"
+    ensure_secret BOUNDARY_RECOVERY_KEY base64 "Boundary's recovery key"
+    # One generator for the one Keycloak admin account. A second variable for the same account
+    # left the app tier holding a password Keycloak had never been told about, and user
+    # administration failed with credentials that looked provisioned.
+    ensure_secret KC_BOOTSTRAP_ADMIN_PASSWORD pass "the Keycloak bootstrap admin password"
+    ensure_secret IR_OIDC_CLIENT_SECRET hex "the platform's OIDC client secret"
+    # The human who administers the INFRASTRUCTURE. Distinct from default-admin,
+    # which is a web-application account: this one reaches Vault and the management
+    # surfaces, and until it existed the only human path into Vault was the root token.
+    ensure_secret IR_PLATFORM_ADMIN_PASSWORD pass "the platform-admin infrastructure credential"
+}
+
 up_dmz() {
     say "DMZ · receiver + broker + resolver"
     reap_orphans dmz
+    ensure_puller_token
     # The receiver refuses to start without a certificate, on purpose: evidence in the clear is
     # the host's memory in the clear. Generating it here means a fresh deployment is encrypted
     # out of the box rather than once somebody remembers.
@@ -1553,8 +1772,19 @@ up_workstation() {
     else
         warn "DMZ resolver not answering — the browser will not resolve the platform"
     fi
-    command -v xhost >/dev/null && xhost +local: >/dev/null 2>&1 || \
-        warn "xhost unavailable — the kiosk needs 'xhost +local:' to use the X display"
+    # The kiosk authenticates to the display with the operator's cookie rather than the
+    # deployment running `xhost +local:`, which disabled access control for EVERY local
+    # process for the life of the login session and was never revoked. The RE session — a
+    # container holding live malware — shares this display.
+    IR_XAUTHORITY="${XAUTHORITY:-${HOME}/.Xauthority}"
+    if [[ -r "${IR_XAUTHORITY}" ]]; then
+        export IR_XAUTHORITY
+        ok "kiosk authenticates to the display with the operator's X cookie"
+    else
+        export IR_XAUTHORITY=/dev/null
+        warn "no readable X cookie at ${IR_XAUTHORITY} — the kiosk window may not open."
+        warn "  Export XAUTHORITY, or run from a desktop session that has one."
+    fi
 
     # The tailnet node comes up first and alone: the browser shares its namespace and must not start
     # into one with no route. A node left from a failed join retries on a backoff that outlives the
@@ -1582,11 +1812,42 @@ up_workstation() {
     # tier does: compose will not recreate a container that is already running, and
     # `up --build` then builds the new image and leaves the old one serving. A kiosk change
     # that never reaches the workstation reads as a deploy that worked.
+    #
+    # Built BEFORE staleness is judged. Checking first compares the container against the image
+    # it was started from, so the first workstation of a run never looks stale and keeps the old
+    # script, while later ones — built by then — are replaced correctly.
+    dc workstation build browser >/dev/null 2>&1 \
+        || warn "could not build the kiosk image — the workstation may run the previous script"
     recreate_if_stale workstation browser
-    dc workstation up -d --build >/dev/null 2>&1
+    dc workstation up -d >/dev/null 2>&1
     wait_for "${br}" 90 true || warn "browser did not start (is DISPLAY set?)"
+    # The diagnostics probe shares the tailnet node's namespace, and this function may have
+    # just replaced that node. A probe left attached to the dead namespace still LOOKS running
+    # and reaches nothing — it is the same hazard mesh_orphan_check repairs for the sidecars,
+    # on the container a UAT starts rather than one the deploy owns. Removed rather than
+    # recreated: it belongs to the diagnostics profile and its caller creates it on demand.
+    local probe="${wsproj}_probe_1" ns_tn ns_pr
+    if ${RUNTIME} inspect "${probe}" >/dev/null 2>&1; then
+        ns_tn="$(netns_of "${tn}")"; ns_pr="$(netns_of "${probe}")"
+        if [[ -n "${ns_tn}" && "${ns_pr}" != "${ns_tn}" ]]; then
+            ${RUNTIME} rm -f "${probe}" >/dev/null 2>&1 \
+                && ok "removed the ${wsid} diagnostics probe stranded by the tailnet recreate"
+        fi
+    fi
     render_ws_map
     ok "workstation ${wsid} up"
+}
+
+# Every workstation this deployment DECLARES, not just the default one. `IR_WS_IDS` is the
+# statement of how many there are: the distributor renders a pin for each and the enclave derives
+# its session pairing from the same variable, so bringing up one of two leaves the platform
+# pinning traffic for a workstation that does not exist.
+up_workstations_declared() {
+    local id
+    for id in ${IR_WS_IDS:-analyst}; do
+        IR_WS_ID="${id}"; export IR_WS_ID
+        up_workstation
+    done
 }
 
 # The distributor's workstation-pinning map, `<ws-id> <tailnet-addr>` in IR_WS_IDS order — the
@@ -1740,7 +2001,10 @@ case "${TIER}" in
         # already exhausted by previous recreates fails every one of them.
         prune_anonymous_volumes
         compose_drift_check "${TIER}"
-        ensure_build_images; ensure_networks; "up_${TIER}"
+        ensure_build_images; ensure_networks
+        # Named id brings up that one; without one, every workstation IR_WS_IDS declares.
+        if [[ "${TIER}" == "workstation" && -z "${2:-}" ]]; then up_workstations_declared
+        else "up_${TIER}"; fi
         compose_record_applied "${TIER}" ;;
     all)
         bash "${HERE}/../traefik/gen-cert.sh" >/dev/null 2>&1 || true
@@ -1758,7 +2022,7 @@ case "${TIER}" in
         up_agent
         verify_sso || warn "continuing, but the browser may show an SSO error"
         seed_evidence
-        up_workstation
+        up_workstations_declared
         for t in enclave dmz agent workstation; do compose_record_applied "$t"; done ;;
     mesh)
         # Reattach any sidecar that lost its service's namespace without a full bring-up — the repair
@@ -1766,6 +2030,7 @@ case "${TIER}" in
         mesh_orphan_check db minio redis vault backend worker frontend puller \
                           oauth2-proxy log-shipper keycloak
         ok "mesh proxies reconciled with their services" ;;
+    rotate) shift; rotate_secrets "$@" ;;
     status) status ;;
     down)
         # Teardown reports compose's actual result — success over a parse failure leaves every container

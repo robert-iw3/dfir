@@ -148,8 +148,9 @@ class UsersView(APIView):
         password = data.get("password") or ""
         if not (username and email and role and password):
             return Response({"error": "username, email, role, password required"}, status=400)
-        if role not in ("admin", "analyst", "auditor"):
-            return Response({"error": "role must be admin|analyst|auditor"}, status=400)
+        if role not in ("admin", "analyst", "auditor", "reverse_engineer"):
+            return Response({"error": "role must be admin|analyst|auditor|reverse_engineer"},
+                            status=400)
 
         try:
             kc_id = keycloak_admin.create_user(
@@ -172,6 +173,35 @@ class UsersView(APIView):
                         detail={"email": email, "role": role, "keycloak_id": kc_id})
         return Response({"username": username, "email": email, "role": role,
                          "keycloak_id": kc_id, "provisioned": True}, status=201)
+
+    def delete(self, request):
+        from django.contrib.auth.models import User
+        from . import keycloak_admin
+
+        username = (request.query_params.get("username") or "").strip()
+        if not username:
+            return Response({"error": "username required"}, status=400)
+        # Deleting yourself would leave the session that issued the deletion belonging to
+        # nobody, and locking every admin out is one distracted click away.
+        if username == request.user.username:
+            return Response({"error": "you cannot delete your own account"}, status=400)
+
+        # Keycloak first: it is the identity authority, and a failure there must not leave
+        # an account that can still sign in while the platform believes it is gone.
+        try:
+            kc_id = keycloak_admin.delete_user(username)
+        except Exception as exc:  # noqa: BLE001
+            return Response({"error": f"Keycloak deletion failed: {exc}"}, status=502)
+
+        # The local mirror goes too; presence, locks and notifications cascade with it.
+        # Everything that NAMES the user — audit rows, adjudications, notes — carries the
+        # username as text and stays: the account is removed, the record is not.
+        User.objects.filter(username=username).delete()
+
+        audit_mod.audit(request.user.username, "user.delete", role="admin",
+                        method="DELETE", path=request.path, object_type="User",
+                        object_id=username, detail={"keycloak_id": kc_id})
+        return Response({"username": username, "deleted": True})
 
 
 class InvestigationViewSet(viewsets.ReadOnlyModelViewSet):
@@ -900,7 +930,9 @@ class BrokeredSessionsView(APIView):
     permission_classes = [IsAuditorOrAdmin]
 
     def get(self, request):
-        return Response(brokeredsessions.overview())
+        return Response(brokeredsessions.overview(
+            limit=request.query_params.get("limit"),
+            offset=request.query_params.get("offset") or 0))
 
 
 class RemediationView(APIView):

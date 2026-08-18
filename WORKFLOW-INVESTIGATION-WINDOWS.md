@@ -53,7 +53,7 @@ one row:
 |---|---|---|
 | **YARA memory scan** (`memory_forensic.py`) | per-process malware-pattern hits, each with its region + matched string | **Step 1** - confirm real vs coincidence |
 | **Pivot + ranking** (`generate_reports`) | `YARA_Pivot_Report.md` - hits ranked true-positive-first | start with the ranked leads |
-| **Config-DNA sweep** (`memory_enrich.py`) | beacon templates, User-Agent, worm/mutex/miner config | **Step 2** - read the implant's behaviour |
+| **Config-DNA sweep** (`memory_enrich.py`) | beacon templates, User-Agent, worm/mutex/miner config | **Step 2** - read the implant's behavior |
 | **IOC sweep + structural validation** (`memory_enrich.py`) | web addresses sorted into confirmed / recovered / unverified, + URLs | **Step 3** - triage real leads, OSINT the rest |
 | **Offline geo** (`memory_enrich.py` + `tools/geoip`) | each IP tagged with its country (no network) | **Step 4** - first-pass infrastructure attribution |
 | **Region carve** (`-Carve` -> `tools/binja/data/`) | injected code as raw `.bin` + sidecar | hand to a reverse-engineer if needed |
@@ -134,7 +134,7 @@ confirm hosting/ownership in **Shodan** / **X-Force** before drawing attribution
 ## Step 3 - read the implant (config DNA recovered from memory)
 
 IOC reconstruction is not just hosts. The sweep pulls the implant's own configuration strings, which
-tell you its **behaviour** and give you the strongest hunt pivots:
+tell you its **behavior** and give you the strongest hunt pivots:
 
 - **HTTP-bot beacon templates** - `/bad.php?w=%u&i=%s`, `/task2.php?w=%u&i=%S&n=%u%` (printf-style URI
   templates the bot fills on each check-in -> it's an HTTP bot).

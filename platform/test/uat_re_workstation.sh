@@ -244,6 +244,346 @@ else
     fi
 fi
 
+say "Worksets — which regions a session is for"
+# The unit a session is granted. A host's whole carved bucket is the wrong one: parallel
+# analysis carves faster than anyone examines, and a disassembler opened on hundreds of
+# regions is a crash rather than a workflow.
+
+api() {  # api <METHOD> <path> [json]
+    ${RUNTIME} exec -i -w /app "${BE}" python - "$1" "$2" "${3:-}" <<'API' 2>/dev/null
+import json, os, sys, urllib.error, urllib.request
+import django
+os.environ.setdefault("DJANGO_SETTINGS_MODULE", "ir_platform.settings")
+django.setup()
+from django.contrib.auth.models import User
+from rest_framework.authtoken.models import Token
+
+method, path, body = sys.argv[1], sys.argv[2], sys.argv[3]
+tok = Token.objects.get_or_create(user=User.objects.filter(is_superuser=True).first())[0].key
+req = urllib.request.Request("http://127.0.0.1:8000/api" + path, method=method,
+                             data=body.encode() if body else None,
+                             headers={"Authorization": "Token " + tok,
+                                      "Content-Type": "application/json"})
+try:
+    resp = urllib.request.urlopen(req, timeout=60)
+    print(resp.getcode(), resp.read().decode().replace(chr(10), " "))
+except urllib.error.HTTPError as e:
+    print(e.code, e.read().decode().replace(chr(10), " ")[:2000])
+except Exception as e:                                        # noqa: BLE001
+    print(0, e)
+API
+}
+rj() { python3 -c "import json,sys;d=json.loads(sys.argv[1].split(' ',1)[1]);print($2)" "$1" 2>/dev/null; }
+
+PROP="$(api GET "/worksets/propose/?host=${HOSTNAME_ARG}&limit=4")"
+PROP_CODE="${PROP%% *}"
+PROP_INV="$(rj "${PROP}" "d['investigation']")"
+PROP_N="$(rj "${PROP}" "len(d['proposed'])")"
+PROP_WHY="$(rj "${PROP}" "sum(1 for p in d['proposed'] if p['why'])")"
+if [[ "${PROP_CODE}" == "200" && "${PROP_N:-0}" -gt 0 ]]; then
+    ok "the platform proposes a ranked shortlist for ${HOSTNAME_ARG} (${PROP_N} of $(rj "${PROP}" "d['considered']") considered, case ${PROP_INV})"
+else
+    bad "no proposal for ${HOSTNAME_ARG} — ${PROP:0:160}"
+fi
+# Ranking that cannot say why is a number nobody can question.
+[[ "${PROP_WHY:-0}" == "${PROP_N:-0}" && "${PROP_N:-0}" -gt 0 ]] \
+    && ok "every proposed region carries the reasons it ranked (${PROP_WHY}/${PROP_N})" \
+    || bad "${PROP_WHY:-0} of ${PROP_N:-0} proposed regions explain their rank"
+
+# A hostname outlives an incident. A proposal spanning two cases is one a workset can never
+# accept, so it names one and lists the rest instead of folding them together.
+PROP_ONE="$(rj "${PROP}" "len({p['region']['investigation_id'] for p in d['proposed']})")"
+[[ "${PROP_ONE:-0}" == "1" ]] \
+    && ok "the proposal is ONE case ($(rj "${PROP}" "d['investigation']")), with $(rj "${PROP}" "len(d['other_investigations'])") other(s) named rather than mixed in" \
+    || bad "the proposal spans ${PROP_ONE:-?} investigations — a workset would refuse it"
+
+IDS="$(rj "${PROP}" "json.dumps([p['region']['id'] for p in d['proposed']])")"
+WS_CREATE="$(api POST "/worksets/" "{\"region_ids\": ${IDS}, \"note\": \"uat\"}")"
+WS_SLUG="$(rj "${WS_CREATE}" "d.get('slug','')")"
+WS_N="$(rj "${WS_CREATE}" "d.get('region_count',0)")"
+if [[ "${WS_CREATE%% *}" == "201" && -n "${WS_SLUG}" ]]; then
+    ok "workset ${WS_SLUG} assembled — ${WS_N} region(s), named and bounded"
+else
+    bad "the workset was refused: ${WS_CREATE:0:200}"
+fi
+
+OVER="$(api POST "/worksets/" "{\"region_ids\": $(python3 -c 'import json;print(json.dumps(list(range(1,60))))')}")"
+[[ "${OVER%% *}" == "400" ]] \
+    && ok "a workset beyond the cap is refused — the bound is the feature, not a limit to raise" \
+    || bad "a 59-region workset was accepted (${OVER%% *}) — nothing stops a session being flooded"
+
+# The wall: one investigation per session. Assembled from two, it must refuse.
+MIXED="$(${RUNTIME} exec -i "${BE}" python manage.py shell -c "
+import json
+from cases.models import CarvedRegion
+seen, out = {}, []
+for r in CarvedRegion.objects.select_related('analysis__capture__run').all()[:400]:
+    inv = r.analysis.capture.run.investigation_id
+    if inv not in seen:
+        seen[inv] = r.id
+print(json.dumps(sorted(seen.values())[:2]))" 2>/dev/null | tail -1)"
+if [[ "$(python3 -c "import json,sys;print(len(json.loads(sys.argv[1])))" "${MIXED}" 2>/dev/null)" == "2" ]]; then
+    CROSS="$(api POST "/worksets/" "{\"region_ids\": ${MIXED}}")"
+    [[ "${CROSS%% *}" == "400" ]] \
+        && ok "regions from two investigations are refused — a session sees one case's malware, ever" \
+        || bad "a workset spanning two investigations was accepted (${CROSS%% *})"
+else
+    info "only one investigation holds carved regions here — the cross-case refusal is unmeasured"
+fi
+
+MINT="$(api POST "/worksets/${WS_SLUG}/stage-command/" '{"tool": "binja"}')"
+MINT_STEPS="$(rj "${MINT}" "len(d.get('steps',[]))")"
+MINT_KIT="$(rj "${MINT}" "d.get('kit','')")"
+[[ "${MINT%% *}" == "200" && "${MINT_STEPS:-0}" -ge 2 && -n "${MINT_KIT}" ]] \
+    && ok "the platform mints a procedure (${MINT_STEPS} steps) and a kit to run it — it never reaches into the workstation itself" \
+    || bad "no runnable session was minted: ${MINT:0:200}"
+
+AUDITED="$(${RUNTIME} exec -i "${BE}" python manage.py shell -c "
+from cases.models import AuditLog
+print(AuditLog.objects.filter(action='workset.stage-command', object_id='${WS_SLUG}').count())" 2>/dev/null | tail -1)"
+[[ "${AUDITED:-0}" -ge 1 ]] \
+    && ok "minting is audited — the platform records that a session was intended, though it runs beyond its sight" \
+    || bad "minting a stage command left no audit record"
+
+# Staging: exactly this workset's regions, and one file per region. A short count is the
+# collision that flattening object keys used to cause, silently.
+WS_DIR="/tmp/uat-ws-${WS_SLUG}"
+rm -rf "${WS_DIR}"
+"${PLATFORM}/re-workstation/stage_regions.sh" --workset "${WS_SLUG}" --out "${WS_DIR}" >/dev/null 2>&1
+STAGED="$(find "${WS_DIR}" -maxdepth 1 -name '*.bin' 2>/dev/null | wc -l)"
+[[ "${STAGED}" == "${WS_N}" && "${STAGED}" -gt 0 ]] \
+    && ok "staging pulled exactly the workset's ${STAGED} region(s) — one file each, none collapsed onto another" \
+    || bad "staged ${STAGED} file(s) for a ${WS_N}-region workset"
+
+# Staging is the session starting, and the platform has to learn that. Left unreported, a
+# workset stays "assembled" forever and nothing can say which sessions are open.
+WS_STATE="$(${RUNTIME} exec -i "${BE}" python manage.py shell -c "
+from cases.models import ReWorkset
+w = ReWorkset.objects.filter(slug='${WS_SLUG}').first()
+print((w.state if w else 'gone'), ('at' if w and w.staged_at else 'no-time'))" 2>/dev/null | tail -1)"
+read -r WS_STATE_V WS_STATE_T <<<"${WS_STATE}"
+[[ "${WS_STATE_V}" == "staged" && "${WS_STATE_T}" == "at" ]] \
+    && ok "the workset reports itself STAGED once the mediator pulled it — an open session is visible to the platform" \
+    || bad "after staging the workset reads '${WS_STATE_V:-no answer}' (${WS_STATE_T:-}) — the platform cannot see that a session started"
+
+BUCKET_TOTAL="$(${RUNTIME} exec -i "${BE}" python manage.py shell -c "
+from cases import storage
+print(len(storage.list_carved_regions('${HOSTNAME_ARG}')))" 2>/dev/null | tail -1)"
+if [[ "${BUCKET_TOTAL:-0}" -gt "${STAGED:-0}" ]]; then
+    ok "the session holds ${STAGED} of the host's ${BUCKET_TOTAL} carved regions — the curated set, not the bucket"
+else
+    info "this host's bucket holds ${BUCKET_TOTAL:-?} region(s); the curation is not visible at that size"
+fi
+MANIFEST_WS="$(python3 -c "import json;print(json.load(open('${WS_DIR}/_regions.json')).get('workset',''))" 2>/dev/null)"
+[[ "${MANIFEST_WS}" == "${WS_SLUG}" ]] \
+    && ok "the staged manifest names the workset it came from — provenance without a path back to the store" \
+    || bad "the manifest does not name its workset (${MANIFEST_WS:-none})"
+
+# A determination made during a session belongs to that session, and has to reach the
+# record — RE work that stays in the RE tool never becomes part of the investigation.
+# Recorded through the API the reverse engineer actually uses, so the PLATFORM decides which
+# session it belongs to. Computing that here would only prove the test agrees with itself.
+DET_REGION="$(${RUNTIME} exec -i "${BE}" python manage.py shell -c "
+from django.utils import timezone
+from cases.models import ReWorkset
+ws = ReWorkset.objects.get(slug='${WS_SLUG}')
+ws.state, ws.staged_at = ReWorkset.STAGED, timezone.now()
+ws.save(update_fields=['state', 'staged_at', 'updated_at'])
+print(ws.members.select_related('region').first().region_id)" 2>/dev/null | tail -1)"
+DET_POST="$(api POST "/regions/${DET_REGION}/analyze/" '{"verdict": "inconclusive", "confidence": "low", "statement": "uat: recorded during a staged session to prove the determination reaches the case record", "notes": "uat"}')"
+# The response is asserted too: the row is written before it is serialized, so a broken
+# response leaves a determination in the database and a 500 in the analyst's face.
+[[ "${DET_POST%% *}" == "201" ]] \
+    && ok "recording a determination answers 201 — the write and the reply both succeed" \
+    || bad "recording a determination answered ${DET_POST%% *} — the row may exist but the analyst saw an error: ${DET_POST:0:160}"
+DET="$(${RUNTIME} exec -i "${BE}" python manage.py shell -c "
+import json
+from cases import record
+from cases.models import RegionAnalysis, ReWorkset
+det = RegionAnalysis.objects.filter(region_id=${DET_REGION}).order_by('-id').first()
+ws = ReWorkset.objects.get(slug='${WS_SLUG}')
+entries = record.case_record(ws.investigation)
+reached = sum(1 for e in entries if e.get('type') == 'region_analysis'
+              and str(e.get('id')) == str(det.id))
+print(json.dumps({'workset': det.workset.slug if det and det.workset else '',
+                  'in_record': reached}))
+RegionAnalysis.objects.filter(id=det.id).delete()" 2>/dev/null | tail -1)"
+DET_WS="$(rj "0 ${DET}" "d.get('workset','')")"
+DET_REC="$(rj "0 ${DET}" "d.get('in_record',0)")"
+[[ "${DET_WS}" == "${WS_SLUG}" ]] \
+    && ok "a determination recorded during the session names it (${DET_WS}) — the platform can say what came out of a session, not only what is known about a region" \
+    || bad "the determination did not name its session (${DET_WS:-none}) — results are not attributable to a workset"
+[[ "${DET_REC:-0}" -ge 1 ]] \
+    && ok "that determination is in the investigation record — reverse-engineering work reaches the case, not a silo" \
+    || bad "the determination never reached the investigation record"
+
+# Two sessions at once: separate directories, neither touching the other.
+WS2="$(api POST "/worksets/" "{\"region_ids\": ${IDS}}")"
+WS2_SLUG="$(rj "${WS2}" "d.get('slug','')")"
+WS2_DIR="/tmp/uat-ws2-${WS2_SLUG}"
+rm -rf "${WS2_DIR}"
+"${PLATFORM}/re-workstation/stage_regions.sh" --workset "${WS2_SLUG}" --out "${WS2_DIR}" >/dev/null 2>&1
+STAGED2="$(find "${WS2_DIR}" -maxdepth 1 -name '*.bin' 2>/dev/null | wc -l)"
+STILL="$(find "${WS_DIR}" -maxdepth 1 -name '*.bin' 2>/dev/null | wc -l)"
+[[ -n "${WS2_SLUG}" && "${STAGED2}" == "${STAGED}" && "${STILL}" == "${STAGED}" ]] \
+    && ok "a second workset of the same host stages concurrently (${WS2_SLUG}) without disturbing the first" \
+    || bad "concurrent worksets interfered: second staged ${STAGED2}, first now holds ${STILL}"
+
+# The same region in two worksets is a reference, never a copy.
+SHARED="$(${RUNTIME} exec -i "${BE}" python manage.py shell -c "
+from cases.models import ReWorksetRegion
+a = set(ReWorksetRegion.objects.filter(workset__slug='${WS_SLUG}').values_list('region_id', flat=True))
+b = set(ReWorksetRegion.objects.filter(workset__slug='${WS2_SLUG}').values_list('region_id', flat=True))
+print(len(a & b), len(a), len(b))" 2>/dev/null | tail -1)"
+read -r SH_BOTH SH_A SH_B <<<"${SHARED}"
+[[ "${SH_BOTH:-0}" -gt 0 && "${SH_A:-0}" == "${SH_B:-0}" ]] \
+    && ok "a region belongs to both worksets by reference (${SH_BOTH} shared) — the platform can say which sessions examined it" \
+    || bad "the two worksets share no region (${SHARED:-no answer}) — membership was copied, not referenced"
+
+# The compartment reaches the bytes, not only the findings. Memory findings from a capture
+# were scoped while the regions carved out of that same capture were not, so a restricted
+# case's malware was listable by anyone holding the RE role. Asserted both ways in one run:
+# a count of zero proves nothing unless the same query returns rows for someone entitled.
+LEAK="$(${RUNTIME} exec -i "${BE}" python manage.py shell -c "
+import json
+from django.contrib.auth.models import Group, User
+from rest_framework.authtoken.models import Token
+from cases.models import CarvedRegion, Investigation
+from cases.rbac import scope_by_investigation
+
+PATH = 'analysis__capture__run__investigation_id'
+inv_id = ${PROP_INV:-0}
+inv = Investigation.objects.filter(id=inv_id).first()
+if not inv:
+    print(json.dumps({'error': 'no investigation'}))
+else:
+    was = inv.compartment
+    inv.compartment = Investigation.RESTRICTED
+    inv.save(update_fields=['compartment'])
+    outsider, _ = User.objects.get_or_create(username='uat-re-outsider')
+    grp, _ = Group.objects.get_or_create(name='reverse_engineer')
+    outsider.groups.add(grp)
+    admin = User.objects.filter(is_superuser=True).first()
+    base = CarvedRegion.objects.filter(**{PATH: inv_id})
+    out = {
+        'total': base.count(),
+        'outsider': scope_by_investigation(base, outsider, PATH).count(),
+        'admin': scope_by_investigation(base, admin, PATH).count(),
+    }
+    inv.compartment = was
+    inv.save(update_fields=['compartment'])
+    User.objects.filter(username='uat-re-outsider').delete()
+    print(json.dumps(out))" 2>/dev/null | tail -1)"
+LEAK_TOTAL="$(rj "0 ${LEAK}" "d.get('total',-1)")"
+LEAK_OUT="$(rj "0 ${LEAK}" "d.get('outsider',-1)")"
+LEAK_ADMIN="$(rj "0 ${LEAK}" "d.get('admin',-1)")"
+if [[ "${LEAK_TOTAL:-0}" -gt 0 && "${LEAK_OUT}" == "0" && "${LEAK_ADMIN}" == "${LEAK_TOTAL}" ]]; then
+    ok "a restricted case's carved regions are invisible to a non-member (0 of ${LEAK_TOTAL}) and whole to someone entitled (${LEAK_ADMIN}) — the compartment reaches the bytes"
+elif [[ "${LEAK_TOTAL:-0}" -le 0 ]]; then
+    bad "the compartment check is unmeasured — that case holds no carved regions to hide"
+else
+    bad "carved regions leak past the compartment: non-member sees ${LEAK_OUT} of ${LEAK_TOTAL} (entitled sees ${LEAK_ADMIN})"
+fi
+
+say "The session kit, end to end — download it, run it, and the malware is gone afterwards"
+# The whole path an analyst takes, exercised as they would: fetch the archive the UI hands
+# over, unpack it, run its script. Asserted on the ARTIFACT rather than on the API that
+# produced it — a kit that cannot be run is not a handover.
+KIT_DIR="$(mktemp -d)"
+KIT_HTTP="$(${RUNTIME} exec -i "${BE}" sh -c "
+python - <<'KIT' > /tmp/uat-kit.tar.gz 2>/tmp/uat-kit.err; echo \$?
+import os, sys, urllib.request
+import django
+os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'ir_platform.settings')
+django.setup()
+from django.contrib.auth.models import User
+from rest_framework.authtoken.models import Token
+tok = Token.objects.get_or_create(user=User.objects.filter(is_superuser=True).first())[0].key
+req = urllib.request.Request('http://127.0.0.1:8000/api/worksets/${WS_SLUG}/kit/?tool=binja',
+                             headers={'Authorization': 'Token ' + tok})
+sys.stdout.buffer.write(urllib.request.urlopen(req, timeout=60).read())
+KIT
+" 2>/dev/null | tail -1)"
+${RUNTIME} cp "${BE}:/tmp/uat-kit.tar.gz" "${KIT_DIR}/kit.tar.gz" 2>/dev/null
+KIT_BYTES="$(stat -c %s "${KIT_DIR}/kit.tar.gz" 2>/dev/null || echo 0)"
+[[ "${KIT_HTTP}" == "0" && "${KIT_BYTES}" -gt 500 ]] \
+    && ok "the UI hands over a session kit (${KIT_BYTES} bytes)" \
+    || { bad "no session kit could be downloaded (rc=${KIT_HTTP}, ${KIT_BYTES} bytes)"; }
+
+tar -xzf "${KIT_DIR}/kit.tar.gz" -C "${KIT_DIR}" 2>/dev/null
+KIT_ROOT="${KIT_DIR}/re-session-${WS_SLUG}"
+MISSING=""
+for f in run.sh stage_regions.sh launch.sh README.txt; do
+    [[ -f "${KIT_ROOT}/${f}" ]] || MISSING="${MISSING} ${f}"
+done
+[[ -z "${MISSING}" && -x "${KIT_ROOT}/run.sh" ]] \
+    && ok "the kit is self-contained and runnable — run.sh, the mediator, the launcher and a README" \
+    || bad "the kit is incomplete:${MISSING:-（run.sh not executable）}"
+
+# The reason it can cross a browser at all: it carries no evidence.
+CARRIED="$(find "${KIT_ROOT}" -name '*.bin' 2>/dev/null | wc -l)"
+[[ "${CARRIED}" -eq 0 ]] \
+    && ok "no carved region travels in the kit — malware reaches the workstation through the mediator, never through a browser" \
+    || bad "${CARRIED} carved region(s) are inside the kit — evidence crossed the browser"
+
+KIT_WHO="$(grep -c "For     : " "${KIT_ROOT}/README.txt" 2>/dev/null)"
+[[ "${KIT_WHO}" -ge 1 ]] \
+    && ok "the kit names who it was issued to — found later, it says whose session it was for" \
+    || bad "the kit does not name its requester"
+
+# Run it as the analyst would, then cut the session short. run.sh ends by opening the
+# disassembler and waiting, so a bounded run is the session being interrupted — which is the
+# case the wipe has to survive, not the tidy one.
+# --stage-only, because run.sh otherwise ends in `podman run` and waits for a person to
+# close the disassembler. Run in full here it blocked the suite for hours with no failure
+# and no report. Kept once to prove staging, then run again to prove the wipe.
+( cd "${KIT_ROOT}" && IR_KEEP_SESSION=1 timeout 300 ./run.sh --stage-only \
+    </dev/null >"${KIT_DIR}/run.out" 2>&1 ) || true
+RUN_RC=$?
+STAGED_IN_RUN="$(grep -c "region(s) staged" "${KIT_DIR}/run.out" 2>/dev/null)"
+[[ "${STAGED_IN_RUN}" -ge 1 ]] \
+    && ok "run.sh staged this workset's regions on its own — one command, no lookups" \
+    || bad "run.sh did not stage anything (rc=${RUN_RC}): $(tail -3 "${KIT_DIR}/run.out" 2>/dev/null | tr '\n' ' ')"
+
+STAGED_KEPT="$(find "${KIT_ROOT}" -maxdepth 2 -name '*.bin' 2>/dev/null | wc -l)"
+[[ "${STAGED_KEPT}" -gt 0 ]] \
+    && ok "IR_KEEP_SESSION=1 keeps the staged regions (${STAGED_KEPT}) — deliberate, and the only way they persist" \
+    || bad "the kit staged nothing to keep"
+( cd "${KIT_ROOT}" && timeout 300 ./run.sh --stage-only </dev/null >>"${KIT_DIR}/run.out" 2>&1 ) || true
+WIPED="$(find "${KIT_ROOT}" -maxdepth 2 -name '*.bin' 2>/dev/null | wc -l)"
+[[ "${WIPED}" -eq 0 ]] \
+    && ok "the staged malware is gone when the session ends — nothing accumulates on the host" \
+    || bad "${WIPED} staged region(s) survived the session — unencrypted malware left on disk"
+
+# Integrity: bytes that do not match what was carved must stop the session, not reach a tool.
+TAMPER="$(${RUNTIME} exec -i "${BE}" python manage.py shell -c "
+from cases.models import ReWorkset
+ws = ReWorkset.objects.get(slug='${WS_SLUG}')
+m = ws.members.select_related('region').first()
+was = m.region.sha256
+m.region.sha256 = '0' * 64
+m.region.save(update_fields=['sha256'])
+print(was)" 2>/dev/null | tail -1)"
+( cd "${KIT_ROOT}" && timeout 300 ./stage_regions.sh --workset "${WS_SLUG}" \
+    --out "./verify-${WS_SLUG}" >"${KIT_DIR}/tamper.out" 2>&1 )
+REFUSED="$(grep -c "REFUSED" "${KIT_DIR}/tamper.out" 2>/dev/null)"
+${RUNTIME} exec -i "${BE}" python manage.py shell -c "
+from cases.models import ReWorkset
+ws = ReWorkset.objects.get(slug='${WS_SLUG}')
+m = ws.members.select_related('region').first()
+m.region.sha256 = '${TAMPER}'
+m.region.save(update_fields=['sha256'])" >/dev/null 2>&1
+[[ "${REFUSED}" -ge 1 ]] \
+    && ok "staging REFUSES bytes that do not match the hash recorded at carve time — a hash never checked is not integrity" \
+    || bad "staging accepted bytes whose hash did not match what was carved"
+
+rm -rf "${KIT_DIR}"
+
+rm -rf "${WS_DIR}" "${WS2_DIR}"
+${RUNTIME} exec -i "${BE}" python manage.py shell -c "
+from cases.models import ReWorkset
+ReWorkset.objects.filter(slug__in=['${WS_SLUG}', '${WS2_SLUG}']).delete()" >/dev/null 2>&1
+
 rm -rf "${SESSION}"
 
 echo

@@ -59,7 +59,7 @@ is already gathered.
 |---|---|---|
 | **Live host hunt** (`edr_hunt.py`) | persistence / rootkit / cred-access findings, behaviorally adjudicated | **Step 4** - confirm the host-resident foothold |
 | **Memory analysis** (`analyze_memory_linux.py`) | injection, kernel hooks, hidden procs, spoofing, recovered history | **Step 1/4** - find what hid from the live OS |
-| **Config-DNA + IOC sweep** (`memory_enrich.py`) | miner pool/wallet, beacon templates, rootkit markers, sorted hosts/URLs | **Step 2/3** - read the implant's behaviour |
+| **Config-DNA + IOC sweep** (`memory_enrich.py`) | miner pool/wallet, beacon templates, rootkit markers, sorted hosts/URLs | **Step 2/3** - read the implant's behavior |
 | **Offline geo** (`memory_enrich.py` + `tools/geoip`) | each IP tagged with its country (no network) | **Step 2** - first-pass infrastructure attribution |
 | **Correlation/adjudication** (`adjudicate.py`) | the verdict ladder, signals converged per PID | **Step 4** - separate true positives from noise |
 | **Region carve** (`--carve` → `tools/binja/data/`) | injected/`memfd` code as raw `.bin` + sidecar | hand to a reverse-engineer if needed |
@@ -122,7 +122,7 @@ IP on a mining port (3333/5555/7777/443) in Shodan is strong corroboration of th
 ## Step 3 - read the implant (config DNA recovered from memory)
 
 IOC reconstruction is not just hosts. The sweep pulls the implant's own configuration strings, which
-tell you its **behaviour** and give you the strongest hunt pivots:
+tell you its **behavior** and give you the strongest hunt pivots:
 
 - **Cryptominer config (T1496)** - `stratum+tcp://pool[.]hashvault[.]pro:443 -u <Monero-wallet>.<host>
   -p x`, algo `rx/0` (RandomX), wallet `48xMrV...` and the miner binary name `kdevtmpfsi` - the single
@@ -145,7 +145,7 @@ tell you its **behaviour** and give you the strongest hunt pivots:
 
 `adjudicate.py` places every finding on a ladder - **True Positive** (confirmed), **Indeterminate**
 (real, needs an analyst), **Likely False Positive** - and raises a **Correlated Threat** when signals
-**converge on one PID/lineage**. The discriminator is **behaviour and provenance, not a keyword**.
+**converge on one PID/lineage**. The discriminator is **behavior and provenance, not a keyword**.
 
 **The true positives - they converge on the masqueraded miner process:**
 

@@ -269,10 +269,16 @@ def shared_indicators(request):
     # same deployment population it uses — served so the rarity scatter renders a figure the
     # platform computed, never one the client re-derived. An indicator on most of the fleet
     # scores near zero however suspicious it looks; that is the chart's whole point.
+    # The population the RUNS recorded, not a fresh count of their host nodes. Re-deriving it
+    # here produced a third answer — the engine's declared estate, the live host table, and
+    # the nodes in one run are all different numbers — so the scatter drew weights that did
+    # not match the link weights beside them.
     from .linkage import TYPE_WEIGHT, rarity
-    from .models import BehaviorNode
-    population = max(1, BehaviorNode.objects.filter(
-        run_id__in=list(current), kind="host").values("value").distinct().count())
+    populations = [
+        (r.input_summary or {}).get("population")
+        for r in CorrelationRun.objects.filter(id__in=list(current))
+    ]
+    population = max([p for p in populations if isinstance(p, int) and p > 0] or [1])
 
     def link_weight(kind, hosts):
         return round(TYPE_WEIGHT.get(kind, min(TYPE_WEIGHT.values())) * rarity(hosts, population), 4)

@@ -17,10 +17,16 @@ RUN apt-get update \
 # dwarf2json converts the DWARF in a debug vmlinux into Volatility's ISF format. It is a
 # static Go binary, so the same build works regardless of the target distro.
 ARG DWARF2JSON_VERSION=0.9.0
+# No `|| true` on this chain: it would cover the download, the digest check and the smoke
+# test alike, so a missing tool would ship as a successful build. The digest is required
+# because this binary decides how every memory capture is interpreted.
+ARG DWARF2JSON_SHA256
 RUN curl -fsSL -o /usr/local/bin/dwarf2json \
       "https://github.com/volatilityfoundation/dwarf2json/releases/download/v${DWARF2JSON_VERSION}/dwarf2json-linux-amd64" \
+    && test -n "${DWARF2JSON_SHA256}" \
+    && echo "${DWARF2JSON_SHA256}  /usr/local/bin/dwarf2json" | sha256sum -c - \
     && chmod +x /usr/local/bin/dwarf2json \
-    && dwarf2json --help >/dev/null 2>&1 || true
+    && dwarf2json --help >/dev/null 2>&1
 
 # The ddebs archive is not configured by default; it carries the kernel debug symbols.
 RUN . /etc/os-release \

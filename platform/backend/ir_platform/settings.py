@@ -179,8 +179,11 @@ SSO_PROXY_SECRET = _env("IR_SSO_PROXY_SECRET", "")
 KEYCLOAK = {
     "URL": _env("KEYCLOAK_URL", "http://keycloak:8080"),
     "REALM": _env("KEYCLOAK_REALM", "irplatform"),
-    "ADMIN_USER": _env("KEYCLOAK_ADMIN", "admin"),
-    "ADMIN_PASSWORD": _env("KEYCLOAK_ADMIN_PASSWORD", "admin"),
+    "ADMIN_USER": _env("KC_BOOTSTRAP_ADMIN_USERNAME", _env("KEYCLOAK_ADMIN", "admin")),
+    # KC_BOOTSTRAP_ADMIN_PASSWORD is the variable Keycloak itself honours, so it is the only
+    # one guaranteed to match the account. Reading a second variable let the two diverge, and
+    # user administration then failed with credentials that looked provisioned.
+    "ADMIN_PASSWORD": _env("KC_BOOTSTRAP_ADMIN_PASSWORD", _env("KEYCLOAK_ADMIN_PASSWORD", "admin")),
 }
 
 # Demo role bootstrap (dev/UAT only): seed_roles creates one user per role with these

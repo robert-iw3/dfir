@@ -2,7 +2,7 @@
 
 *What passing proves:* An analyst workstation reaches the platform only over an authenticated WireGuard tunnel to the bastion, with no route to any internal host.
 
-- Run: `uat_tailnet.sh` — 2026-08-13 20:14:03Z
+- Run: `uat_tailnet.sh` — 2026-08-17 13:03:53Z
 
 **Control plane**
 
@@ -86,9 +86,19 @@
 | ✅ PASS | 2 separate tailnet state volumes — no workstation writes another's node identity |
 | · | ws-002: no diagnostics probe deployed — start it with the diagnostics profile to assert its path |
 
+**Kiosk — a dropped probe does not end the analyst's session**
+
+| Result | Assertion — with evidence |
+|---|---|
+| ✅ PASS | the kiosk's liveness probe gets an HTTP answer from the platform origin |
+| ✅ PASS | liveness is judged on the origin's first status line, not on the redirect chain completing |
+| ✅ PASS | an outage is declared only after 3 consecutive failed probes — one dropped probe cannot restart the browser |
+| ✅ PASS | all 0 kiosk restart(s) followed a sustained outage or a stranded page — none was a dropped probe |
+| · | browser up 0m: 0 restart(s), 0 sustained outage(s), 0 stranded page(s) |
+
 **Tailnet**
 
 | Result | Assertion — with evidence |
 |---|---|
 
-**Verdict: PROVEN** — 30 assertions passed, 0 failed.
+**Verdict: PROVEN** — 34 assertions passed, 0 failed.

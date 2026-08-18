@@ -45,9 +45,23 @@ ${RUNTIME} image exists "${IMAGE}" 2>/dev/null || {
     echo "[re] building ${IMAGE} (needs network — build only, never at session time)"
     ${RUNTIME} build -t "${IMAGE}" -f "${HERE}/${DOCKERFILE}" "${HERE}"; }
 
-command -v xhost >/dev/null 2>&1 && xhost +local: >/dev/null 2>&1 || true
+# No `xhost +local:`. It disabled access control on the ANALYST'S OWN display for the life of
+# the login session, was never revoked, and made the weakening load-bearing for the Binary
+# Ninja path. A bind-mounted X socket with access control off is a bidirectional channel out
+# of a container holding live malware — keystrokes, screen contents and synthesised input
+# against the real desktop — and `--network none` does nothing about it. The session now
+# authenticates with a cookie like any other client. See re-workstation/README.md.
 ZSUF=""
 if command -v selinuxenabled >/dev/null 2>&1 && selinuxenabled 2>/dev/null; then ZSUF=":Z"; fi
+
+# The cookie both tool paths authenticate with. Without it the only way in was disabling
+# access control for everyone, which is what this replaces.
+XAUTH_ARGS=()
+if [[ -n "${XAUTHORITY:-}" && -r "${XAUTHORITY}" ]]; then
+    XAUTH_ARGS=(-v "${XAUTHORITY}:/tmp/.Xauthority:ro${ZSUF}" -e "XAUTHORITY=/tmp/.Xauthority")
+elif [[ -r "${HOME}/.Xauthority" ]]; then
+    XAUTH_ARGS=(-v "${HOME}/.Xauthority:/tmp/.Xauthority:ro${ZSUF}" -e "XAUTHORITY=/tmp/.Xauthority")
+fi
 
 ${RUNTIME} rm -f "${NAME}" >/dev/null 2>&1 || true
 
@@ -128,6 +142,7 @@ exec ${RUNTIME} run --rm -it --name "${NAME}" \
     --userns=keep-id:uid=1001,gid=1001 \
     --cap-drop ALL --security-opt no-new-privileges \
     -v /tmp/.X11-unix:/tmp/.X11-unix \
+    "${XAUTH_ARGS[@]}" \
     -v "${REGIONS}:/regions:ro${ZSUF}" \
     -v "${SETTINGS}:/home/binja/.binaryninja/settings.json:ro${ZSUF}" \
     -e "DISPLAY=${DISPLAY:-:0}" \

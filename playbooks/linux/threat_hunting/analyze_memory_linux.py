@@ -760,7 +760,7 @@ def correlate_ebpf_c2(ebpf_rows, netfilter_rows):
         names = ", ".join(sorted({str(_get(r, "Name") or "?") for r in net_ebpf}))
         return [_finding("High", "eBPF Network C2 Correlated (memory)", names,
                          f"A network-hook eBPF program ({names}) co-occurs with a hooked netfilter "
-                         f"hook - magic-packet C2 / traffic-signalling backdoor pattern (bpfdoor-class).",
+                         f"hook - magic-packet C2 / traffic-signaling backdoor pattern (bpfdoor-class).",
                          "T1205.002 (Socket Filters), T1071 (Application Layer Protocol)")]
     return []
 

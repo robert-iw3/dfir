@@ -4,7 +4,7 @@ ir-ingest PULLER — runs inside the enclave.
 
 This is the ONLY component that bridges the DMZ and the internal enclave, and it does so by
 *initiating outbound* to the DMZ receiver — nothing is ever initiated into the enclave. It
-polls the receiver for verified bundles, fetches each one, re-verifies the custody seal, then
+polls the receiver for held bundles, fetches each one, re-verifies the custody seal, then
 hands it to the existing ingest logic (upload capture to object storage + POST metadata to the
 API), and finally tells the receiver to drop it. Every fetch is a short-lived connection that
 closes on completion.
@@ -53,8 +53,19 @@ REPORT_INTERVAL = int(os.environ.get("IR_HEALTH_REPORT_INTERVAL", "900"))
 _LOGS = sysstats.LogCounter()
 
 
+# The receiver serves the holding area to this process only. Reading or deleting a held
+# bundle without it is refused, so the credential travels on every such call rather than
+# being an option some paths remember.
+PULLER_TOKEN = os.environ.get("RECEIVER_PULLER_TOKEN", "")
+
+
+def _auth_headers():
+    return {"Authorization": f"Bearer {PULLER_TOKEN}"} if PULLER_TOKEN else {}
+
+
 def _get(path):
-    with urllib.request.urlopen(f"{RECEIVER}{path}", timeout=30, context=_tls()) as r:
+    req = urllib.request.Request(f"{RECEIVER}{path}", headers=_auth_headers())
+    with urllib.request.urlopen(req, timeout=30, context=_tls()) as r:
         return r.read()
 
 
@@ -65,13 +76,15 @@ def _download(path, dest, timeout=7200):
     reason to hold in memory on its way to disk. The timeout is generous because the transfer
     is bounded by the size of the capture, not by how quickly the receiver answers.
     """
-    with urllib.request.urlopen(f"{RECEIVER}{path}", timeout=timeout, context=_tls()) as r, \
+    req = urllib.request.Request(f"{RECEIVER}{path}", headers=_auth_headers())
+    with urllib.request.urlopen(req, timeout=timeout, context=_tls()) as r, \
             open(dest, "wb") as fh:
         shutil.copyfileobj(r, fh, 8 * 1024 * 1024)
 
 
 def _delete(path):
-    req = urllib.request.Request(f"{RECEIVER}{path}", method="DELETE")
+    req = urllib.request.Request(f"{RECEIVER}{path}", method="DELETE",
+                                 headers=_auth_headers())
     with urllib.request.urlopen(req, timeout=30, context=_tls()) as r:
         return r.read()
 
@@ -120,7 +133,7 @@ def process_one(bid):
     extract = os.path.join(tmp, "x")
     os.makedirs(extract)
     with tarfile.open(tar_path, "r:gz") as tf:
-        tf.extractall(extract)
+        tf.extractall(extract, filter="data")
     folder = _bundle_root(extract)
 
     # Reuse the proven ingest path — it re-verifies custody, then uploads + POSTs.
@@ -158,7 +171,7 @@ def process_isf(sid):
                     print(f"[puller] rejecting symbol bundle {sid}: unsafe entry "
                           f"{member.name!r}", file=sys.stderr)
                     return False
-            tf.extractall(extract)
+            tf.extractall(extract, filter="data")
 
         mpath = os.path.join(extract, "_isf_manifest.json")
         if not os.path.isfile(mpath):

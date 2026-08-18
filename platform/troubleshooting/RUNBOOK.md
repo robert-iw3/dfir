@@ -430,6 +430,105 @@ order that works when the thread's own errors are invisible:
 
 ---
 
+## 6a. Worker replicas (parallel analysis)
+
+Every entry here was hit bringing up the first 5-worker fleet (Track A, 2026-08-14).
+
+### Replica sidecars exit immediately: "No sidecar proxy registered for ir-worker-N"
+**Cause.** The replica's Envoy starts before its Consul service instance exists. Instances
+register in `register-mesh.sh`; if that pass failed or ran before `IR_WORKER_REPLICAS` was
+set, the sidecar has no service to front and exits on a restart loop.
+**Fix.** `bash hashicorp/consul/register-mesh.sh` (with `deploy/.env` sourced), then the
+sidecars settle on their next restart. `deploy.sh enclave` runs this inside `mesh_attach`.
+**Verify.** `curl` the catalog for `ir-worker` (management token): one entry per worker,
+ids `ir-worker`, `ir-worker-2`, …
+
+### Registration pass dies with "<name>: unrecognized service"
+**Cause.** That is **/usr/sbin/service** answering, not the script. `register-mesh.sh`
+defines a `service()` helper; any call that executes before the definition — a mis-ordered
+edit, a sourced fragment — resolves to the system binary and aborts the whole pass under
+`set -e`. A heredoc is the trap: text inserted "after the function" can land inside the
+JSON body and break nothing visibly until run time.
+**Fix.** Helpers in `register-mesh.sh` stay defined above the first invocation; validate
+with `bash -n` *and* one real run, because `bash -n` cannot see this.
+
+### A replica is Created but never started
+**Cause.** `podman-compose up -d` on a batch sometimes leaves the last container in
+`Created` without starting it — the Boundary egress workers hit the same thing on cold
+start. The health wait then times out against a container that was never told to run.
+**Fix.** `deploy.sh` detects `State.Status == created` after each batch and starts the
+container directly. If hit by hand: `podman start <name>` — the container itself is fine.
+
+### All replicas report Component Health as "backend (api)", their own rows missing
+**Cause.** `cases/apps.py` branched on `IR_HEALTH_REPORT_ROLE == "worker"`, and replicas
+carry `worker-2`, `worker-3`… — an exact match sent every replica into the web branch,
+where four workers took turns overwriting the API's row.
+**Fix.** The branch is a prefix match (`role.startswith("worker")`) and each worker reports
+as `<role> (<container>)`. An unknown role reports as itself, never as the API.
+**Verify.** Component Health shows `worker`, `worker-2`… as separate rows, each fresh.
+
+### A fleet check fails the instant a deploy returns, against healthy containers
+**Cause.** One `podman ps` snapshot taken while the runtime is still reconciling can
+transiently miss a running container. A single-shot assertion converts that hiccup into a
+false failure.
+**Fix.** Fleet presence checks use a settling window (retry ~60s), the same shape as every
+bring-up gate. `uat_workers.sh` phase 1 is the reference.
+
+### Analyses complete but never overlap (peak concurrency 1)
+**Cause.** Not a defect — arrival shape. The puller ingests bundles on an interval, and an
+analysis that finishes faster than the inter-arrival gap can never overlap the next one.
+The workers were idle, not broken.
+**Fix.** To observe real parallelism, dispatch a burst: re-queue captures through
+`/api/captures/<id>/reanalyze/` in one pass and measure overlap on that round —
+`uat_workers.sh` phase 3 does exactly this and asserts peak ≥ 3.
+
+## 6c. Aging — what only breaks after the platform has been running
+
+These do not appear on a fresh deployment. They appear once the operational tables have
+been written to for a while, which is when nobody is watching for them.
+
+### The audit page says a session in active use belongs to nobody
+**Cause.** Attribution joined sign-on windows against session windows, and an un-ended
+sign-on was treated as ending at `last_seen_at` — the analyst's last request. The broker
+re-establishes brokered sessions routinely and invisibly; the replacement opens AFTER that
+instant, so nothing overlapped and the page reported `none`.
+**Fix.** An un-ended sign-on is an open interval, bounded by `IR_SIGNON_IDLE_GRACE`
+(default 1h) rather than by the last request. `backend/cases/brokeredsessions.py`.
+**Verify.** `uat_audit.sh` A-3b: a session created after the analyst's last request still
+names them.
+
+### Attribution is right for recent sessions and empty for older ones
+**Cause.** The join read only the most recent N sign-ons (a fixed count). Once the
+deployment writes more sign-ons than that, older sessions have nothing to match — at 50
+analysts a 500-row cap is about a week.
+**Fix.** The query is bounded by the TIME the sessions on the page span, not by a row count.
+Never size an operational window in rows.
+
+### A page loads slower every month, then stops parsing
+**Cause.** A list endpoint with no pagination. The task board returned every task the caller
+could see; the brokered-sessions read returned every session ever opened.
+**Fix.** `StandardPagination` on the board (plus an `investigation` filter so a scoping
+question stays exact), and a bounded window on sessions — `IR_BOUNDARY_SESSION_PAGE`,
+default 200 — that never pages out a LIVE session and still reports `total` for the whole
+record. **Test consequence:** any assertion that scanned a whole list must be re-asked as a
+filtered question, or it becomes vacuous once the list is paged.
+
+### Component Health shows workers that no longer exist
+**Cause.** Rows are keyed `role (container)`, so every recreate stranded its predecessor,
+which then read as a live component gone silent.
+**Fix.** A role has one live reporter: earlier instances are retired on report, and
+`manage.py retire_workers` drops replicas a deploy removed. Decommissioning is an act of the
+deploy that removed it, never a timeout — a worker that stops reporting is still an alarm.
+
+### A UAT that passed for months starts failing, and the platform looks fine
+**Cause.** Usually the suite outgrew its own instrument, not a regression: a `req()` body cap
+(4000 chars) truncating a response that now starts with `{` but is cut mid-object, a single
+`podman ps` sample against a self-healing set, a count comparison that cannot tell a lost
+write from an unacknowledged one.
+**Fix.** Raise the cap AND fix what made the response grow; settle before sampling; join by
+identity (row id) rather than comparing totals. A test that cannot answer must say so — a
+probe that could not read is not a verdict.
+
 ## 6b. The test harness itself
 
 **Symptom — a password / authentication dialog appears during a UAT.**

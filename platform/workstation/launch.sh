@@ -69,14 +69,36 @@ kiosk_stranded() {
     echo "${_t}" | grep -qE "${STUCK_TITLES}"
 }
 
+PROBE_SECONDS="${IR_KIOSK_PROBE_SECONDS:-20}"
+
+# Alive means the origin ANSWERED, judged on the first status line rather than on wget's exit
+# status. Every path here is SSO-gated, so a 302 towards Keycloak is what a healthy ingress
+# returns; requiring the whole redirect chain to succeed made the verdict depend on the login
+# flow, and busybox wget has no option to stop following it.
+#
+# This is also what the remedy can fix: reopening the kiosk reaches a login page, so "the origin
+# is answering" is the only condition under which restarting the browser helps at all.
+platform_answers() {
+    wget -S --spider --no-check-certificate --timeout=8 --tries=2 "$URL" 2>&1 \
+        | grep -qE 'HTTP/[0-9.]+ [0-9][0-9][0-9]'
+}
+
+# Reopening the kiosk discards the analyst's authenticated session, so it takes a sustained
+# outage rather than one dropped probe. Two samples is the floor below which a single blip
+# still restarts the browser.
+DOWN_SECONDS="${IR_KIOSK_DOWN_SECONDS:-60}"
+DOWN_SAMPLES=$(( DOWN_SECONDS / PROBE_SECONDS ))
+[ "${DOWN_SAMPLES}" -ge 2 ] || DOWN_SAMPLES=2
+
 # A kiosk stranded on an error page recovers itself. The supervision loop below only restarts
 # Firefox when Firefox EXITS, so the two checks here are what cover the rest: the platform
 # going away, and the browser being left somewhere else.
 watchdog() {
     was_up=1
     stuck=0
+    down=0
     while :; do
-        sleep "${IR_KIOSK_PROBE_SECONDS:-20}"
+        sleep "${PROBE_SECONDS}"
         if kiosk_stranded; then
             stuck=$((stuck + 1))
             if [ "${stuck}" -ge 2 ]; then
@@ -88,20 +110,22 @@ watchdog() {
         else
             stuck=0
         fi
-        if wget -q --spider --no-check-certificate --timeout=8 --tries=1 "$URL" 2>/dev/null; then
+        if platform_answers; then
             if [ "$was_up" = "0" ]; then
                 echo "[watchdog] platform answering again — reopening the kiosk on it" >&2
                 pkill -f firefox-esr 2>/dev/null || true
             fi
             was_up=1
+            down=0
         else
+            down=$((down + 1))
             # `if`, not `[ ... ] && echo`: under `set -e` a trailing test that evaluates
             # false ends the watchdog, and a supervisor that exits silently is worse than
             # the wedge it exists to clear.
-            if [ "$was_up" = "1" ]; then
-                echo "[watchdog] platform stopped answering — waiting for it" >&2
+            if [ "${down}" -ge "${DOWN_SAMPLES}" ] && [ "$was_up" = "1" ]; then
+                echo "[watchdog] platform stopped answering for ${DOWN_SECONDS}s — waiting for it" >&2
+                was_up=0
             fi
-            was_up=0
         fi
     done
 }

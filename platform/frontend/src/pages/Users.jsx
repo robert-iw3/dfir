@@ -24,6 +24,18 @@ export default function Users() {
     } finally { setBusy(false); }
   };
 
+  const remove = async (username) => {
+    if (!confirm(`Delete ${username}? The account is removed from Keycloak and can no longer sign in. Everything they did stays on the record under their name.`)) return;
+    setMsg(null);
+    try {
+      await api.deleteUser(username);
+      setMsg({ ok: true, text: `Deleted ${username}.` });
+      reload();
+    } catch (err) {
+      setMsg({ ok: false, text: err.message });
+    }
+  };
+
   const users = data?.users ?? [];
 
   return (
@@ -40,6 +52,7 @@ export default function Users() {
             <option value="admin">admin</option>
             <option value="analyst">analyst</option>
             <option value="auditor">auditor</option>
+            <option value="reverse_engineer">reverse_engineer</option>
           </select>
           <input placeholder="temp password" type="text" value={form.password} onChange={set("password")} className="table-search" />
           <button className="btn" disabled={busy}>{busy ? "Provisioning…" : "Create"}</button>
@@ -57,6 +70,10 @@ export default function Users() {
             { key: "email", label: "Email", mono: true },
             { key: "role", label: "Role(s)", filter: true },
             { key: "enabled", label: "Enabled", render: (v) => v ? <span className="status-completed">yes</span> : <span className="muted">no</span> },
+            { key: "actions", label: "", render: (_v, row) => (
+                <button className="btn-sm" onClick={() => remove(row.username)}
+                        title="Remove the account from Keycloak and the platform">delete</button>
+              ) },
           ]}
         />
       )}

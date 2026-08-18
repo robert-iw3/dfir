@@ -29,11 +29,21 @@ class CasesConfig(AppConfig):
         # series has one clock, and the component already guaranteed to be running.
         from . import sidecarstats
 
-        if role == "worker":
-            healthreporter.start(tier="application",
+        if role.startswith("worker"):
+            # PREFIX match, because the role names WHICH worker this is — replicas set
+            # worker-2, worker-3... and each must be its own Component Health row. An exact
+            # comparison sent every replica into the web branch below, where four workers
+            # took turns overwriting the API's row while their own were missing.
+            import socket
+            healthreporter.start(component=f"{role} ({socket.gethostname()})",
+                                 tier="application",
                                  extra=lambda: {"mesh_upstreams": sidecarstats.upstream_observations()})
-        else:
+        elif role == "web":
             from . import aggregates
             healthreporter.start(component="backend (api)", tier="application", paths=("/tmp",),
                                  extra=lambda: {"mesh_upstreams": sidecarstats.upstream_observations()},
                                  beat=aggregates.record_queue_sample)
+        # Any other value reports as itself, nothing more: a role this code does not know
+        # must not silently claim to be the API.
+        else:
+            healthreporter.start(component=role, tier="application")

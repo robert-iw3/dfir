@@ -327,6 +327,63 @@ except Exception:
     done
 fi
 
+# ------------------------------------------------------ 10. the kiosk stays on the session
+say "Kiosk — a dropped probe does not end the analyst's session"
+# Reopening the kiosk discards the profile, so a false outage logs the analyst out. The three
+# checks below are the conditions under which that cannot happen from a single lost packet.
+if ${RUNTIME} inspect "${BROWSER}" >/dev/null 2>&1; then
+    # ONLY the probe function is extracted and evaluated. Sourcing the script would run the
+    # entrypoint — wiping the analyst's profile and starting a second supervision loop inside the
+    # container this is supposed to be observing.
+    if ${RUNTIME} exec -i "${BROWSER}" sh -c \
+        'URL="${IR_PLATFORM_URL:-https://ir-platform.local:8443/}"
+         eval "$(sed -n "/^platform_answers()/,/^}/p" /usr/local/bin/launch.sh)"
+         command -v platform_answers >/dev/null 2>&1 || exit 3
+         platform_answers' >/dev/null 2>&1; then
+        ok "the kiosk's liveness probe gets an HTTP answer from the platform origin"
+    else
+        bad "the kiosk cannot get any HTTP answer from ${IR_PLATFORM_URL:-the platform} — the watchdog will declare an outage"
+    fi
+
+    # Every path on this origin is SSO-gated, so the probe must not require the redirect chain to
+    # complete. Judging on the first status line is what makes the verdict independent of the
+    # login flow; wget's exit status is not, because it covers the whole chain.
+    FIRSTLINE="$(${RUNTIME} exec -i "${BROWSER}" \
+        grep -c 'grep -qE .HTTP/\[0-9\.\]+ \[0-9\]\[0-9\]\[0-9\]' /usr/local/bin/launch.sh 2>/dev/null | tr -dc '0-9')"
+    [[ "${FIRSTLINE:-0}" -ge 1 ]] \
+        && ok "liveness is judged on the origin's first status line, not on the redirect chain completing" \
+        || bad "the watchdog judges liveness by the full request succeeding — an SSO redirect makes every login-flow hiccup an outage"
+
+    SAMPLES="$(${RUNTIME} exec -i "${BROWSER}" sh -c \
+        'eval "$(grep -m1 "^PROBE_SECONDS=" /usr/local/bin/launch.sh)"
+         eval "$(grep -m1 "^DOWN_SECONDS=" /usr/local/bin/launch.sh)"
+         s=$(( DOWN_SECONDS / PROBE_SECONDS )); [ "$s" -ge 2 ] || s=2; printf %s "$s"' 2>/dev/null \
+        | tr -dc '0-9')"
+    [[ "${SAMPLES:-0}" -ge 2 ]] \
+        && ok "an outage is declared only after ${SAMPLES} consecutive failed probes — one dropped probe cannot restart the browser" \
+        || bad "the watchdog declares an outage on ${SAMPLES:-0} sample(s) — a single lost packet ends the analyst's session"
+
+    # A restart is a defect only when the platform never went away. Counting restarts alone
+    # conflates the false positive with a correct recovery: a deploy takes the ingress down for
+    # minutes, and reopening the kiosk afterwards is the remedy working as intended.
+    STARTED="$(${RUNTIME} inspect "${BROWSER}" --format '{{.State.StartedAt}}' 2>/dev/null)"
+    UPSEC="$(( $(date +%s) - $(date -d "${STARTED}" +%s 2>/dev/null || date +%s) ))"
+    kiosk_count() { ${RUNTIME} logs "${BROWSER}" 2>&1 | grep -c "$1" || true; }
+    LAUNCHES="$(kiosk_count 'clean profile — opening')";      LAUNCHES="${LAUNCHES//[!0-9]/}"
+    OUTAGES="$(kiosk_count 'stopped answering')";              OUTAGES="${OUTAGES//[!0-9]/}"
+    STRANDED="$(kiosk_count 'stranded off the platform')";     STRANDED="${STRANDED//[!0-9]/}"
+    # The first launch is the container starting, not a respawn.
+    RESPAWNS=$(( ${LAUNCHES:-1} > 0 ? ${LAUNCHES:-1} - 1 : 0 ))
+    ACCOUNTED=$(( ${OUTAGES:-0} + ${STRANDED:-0} ))
+    UNEXPLAINED=$(( RESPAWNS > ACCOUNTED ? RESPAWNS - ACCOUNTED : 0 ))
+    [[ "${UNEXPLAINED}" -eq 0 ]] \
+        && ok "all ${RESPAWNS} kiosk restart(s) followed a sustained outage or a stranded page — none was a dropped probe" \
+        || bad "${UNEXPLAINED} of ${RESPAWNS} kiosk restart(s) had no sustained outage behind them — an analyst was logged out over a blip"
+    info "browser up $(( UPSEC / 60 ))m: ${RESPAWNS} restart(s), ${OUTAGES:-0} sustained outage(s), ${STRANDED:-0} stranded page(s)"
+else
+    info "browser not running — start the workstation tier to assert kiosk stability"
+fi
+
 say "Tailnet"
 if (( FAILED )); then
     printf '  \033[1;31mTAILNET UAT FAILED\033[0m\n\n'

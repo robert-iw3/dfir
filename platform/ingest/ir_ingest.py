@@ -135,7 +135,10 @@ def build_payload(folder, args, capture_meta, object_ref, custody_ok, custody_re
             "collected_at": custody_record.get("sealed_at"),
         },
         "custody": {
-            "verified": custody_ok,
+            # Cryptographically attributable, not merely ingested. An unsigned bundle passes
+            # verify (there is nothing to check) and must still not claim it came from anyone:
+            # the run is recorded custody_verified=False with the reason beside it.
+            "verified": custody.attributable(custody_reason),
             "actor": "ir-broker",
             "summary": {"reason": custody_reason,
                         "manifest_sha256": custody_record.get("manifest_sha256", ""),

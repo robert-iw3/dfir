@@ -77,16 +77,61 @@ unseal_if_sealed || { echo "FAIL: could not unseal"; exit 1; }
 DB_CONN="postgresql://{{username}}:{{password}}@${IR_VAULT_DB_HOST:-${POSTGRES_HOST:-db}}:${POSTGRES_PORT:-5432}/${POSTGRES_DB:-ir_platform}?sslmode=disable"
 KC_CONN="postgresql://{{username}}:{{password}}@${IR_VAULT_DB_HOST:-${POSTGRES_HOST:-db}}:${POSTGRES_PORT:-5432}/${KEYCLOAK_POSTGRES_DB:-keycloak}?sslmode=disable"
 
+# The admin's policy and the auth method their account lives in. Both are needed wherever a
+# privileged token is in hand — at bootstrap, and again on a version bump — so they are defined
+# once here rather than copied into each path, where the two would drift.
+#
+# Broad by intent, because troubleshooting means reading the secret about to be used, the lease
+# that expired, the policy that refused and the seal's own state. What it withholds is the
+# ability to BECOME a service: the AppRole secret-ids stay unreadable.
+write_ir_admin_policy() {
+  vault policy write ir-admin - <<'ADMEOF'
+path "ir/data/*"          { capabilities = ["read", "list"] }
+path "ir/metadata/*"      { capabilities = ["read", "list"] }
+path "database/creds/*"   { capabilities = ["read"] }
+path "sys/policy"         { capabilities = ["read", "list"] }
+path "sys/policies/acl"   { capabilities = ["read", "list"] }
+path "sys/policies/acl/*" { capabilities = ["read"] }
+path "sys/leases/lookup/*" { capabilities = ["read", "list", "sudo"] }
+path "sys/mounts"         { capabilities = ["read", "list"] }
+path "sys/health"         { capabilities = ["read"] }
+path "sys/seal-status"    { capabilities = ["read"] }
+path "sys/audit"          { capabilities = ["read", "list", "sudo"] }
+path "auth/token/lookup-self" { capabilities = ["read"] }
+path "auth/token/renew-self"  { capabilities = ["update"] }
+ADMEOF
+}
+
+# userpass rather than OIDC: the case an admin most needs Vault for is the one where the identity
+# provider is what is broken, so this login must not depend on Keycloak.
+enable_userpass() { vault auth enable userpass 2>/dev/null || true; }
+
+# Bump when the ir-provisioner policy or the admin provisioning below changes. Written only at
+# bootstrap, they diverge from this file for the life of the store, and the resulting 403 or 404
+# reads as a transient Vault problem rather than as something that was never applied.
+PROV_POLICY_VERSION=5
+PROV_VERSION_FILE="$STATE/provisioner_policy_version"
+
 # Reconciled on EVERY run, before the early exit: a stale connection URL leaves the platform on
 # already-issued leases, healthy-looking until the next rotation fails.
-if [ -f "$PROVISIONED" ] && [ ! -f "$STATE/provisioner_role_id" ]; then
-  echo "==> creating the reconciliation AppRole (break-glass, one time)"
+#
+# Break-glass runs when the role is missing OR its policy is out of date — bounded to those two
+# cases, so a routine deploy still mints no root token.
+if [ -f "$PROVISIONED" ] && { [ ! -f "$STATE/provisioner_role_id" ] \
+     || [ "$(cat "$PROV_VERSION_FILE" 2>/dev/null || echo 0)" != "$PROV_POLICY_VERSION" ]; }; then
+  if [ -f "$STATE/provisioner_role_id" ]; then
+    echo "==> updating the reconciliation policy to v${PROV_POLICY_VERSION} (break-glass)"
+  else
+    echo "==> creating the reconciliation AppRole (break-glass, one time)"
+  fi
   BGT=$(python3 /opt/vault/breakglass-root.py 2>/dev/null || true)
   if [ -z "$BGT" ]; then
     echo "    WARNING: break-glass failed — the database connection cannot be reconciled" >&2
   else
     export VAULT_TOKEN="$BGT"
-    vault policy write ir-provisioner - <<'EOF'
+    # Unquoted heredoc: the admin's username is configurable, and naming it keeps this grant off
+    # a wildcard over every userpass account. Nothing in the body uses a literal `$`.
+    vault policy write ir-provisioner - <<EOF
 path "database/config/ir-platform" { capabilities = ["create", "update", "read"] }
 path "database/roles/ir-platform"  { capabilities = ["create", "update", "read"] }
 path "database/config/keycloak"    { capabilities = ["create", "update", "read"] }
@@ -96,17 +141,37 @@ path "database/roles/keycloak"     { capabilities = ["create", "update", "read"]
 # the whole app tier down, with no path back short of break-glass.
 path "auth/approle/role/ir-platform/secret-id" { capabilities = ["update"] }
 path "auth/approle/role/ir-keycloak/secret-id" { capabilities = ["update"] }
+# The deployment's own generated credentials. Write-only: this path is for recording what the
+# deploy produced, and reading it back is the admin's right under ir-admin, not the deploy's.
+path "ir/data/setup" { capabilities = ["create", "update"] }
+# The human admin's own account. Provisioned only at bootstrap, it never learned the password
+# a later deploy generated, so the one human path into Vault was refused on an existing store.
+path "auth/userpass/users/${IR_PLATFORM_ADMIN_USER:-platform-admin}" { capabilities = ["create", "update"] }
+# `vault kv put` asks which KV version the mount is before writing, so without this the write
+# fails on a lookup rather than on the write it was refused for.
+path "sys/internal/ui/mounts/ir/setup" { capabilities = ["read"] }
 EOF
     vault auth enable approle 2>/dev/null || true
+    # The admin's policy and auth method, applied with the privileged token already in hand. A
+    # store provisioned before either existed has no userpass mount at all, so writing the admin
+    # account failed with a 404 that read as a bad password.
+    write_ir_admin_policy >/dev/null 2>&1 \
+      && echo "    ir-admin policy applied" \
+      || echo "    WARNING: could not apply the ir-admin policy" >&2
+    enable_userpass
     vault write auth/approle/role/ir-provisioner \
       token_policies=ir-provisioner token_ttl=10m token_max_ttl=30m \
       bind_secret_id=true secret_id_ttl=0 secret_id_num_uses=0 >/dev/null
-    vault read -field=role_id auth/approle/role/ir-provisioner/role-id > "$STATE/provisioner_role_id"
-    vault write -f -field=secret_id auth/approle/role/ir-provisioner/secret-id > "$STATE/provisioner_secret_id"
-    chmod 600 "$STATE/provisioner_role_id" "$STATE/provisioner_secret_id"
+    # Only when absent: a policy bump must not rotate a credential the deploy is about to use.
+    if [ ! -f "$STATE/provisioner_role_id" ]; then
+      vault read -field=role_id auth/approle/role/ir-provisioner/role-id > "$STATE/provisioner_role_id"
+      vault write -f -field=secret_id auth/approle/role/ir-provisioner/secret-id > "$STATE/provisioner_secret_id"
+      chmod 600 "$STATE/provisioner_role_id" "$STATE/provisioner_secret_id"
+    fi
+    printf '%s' "$PROV_POLICY_VERSION" > "$PROV_VERSION_FILE"
     vault token revoke -self >/dev/null 2>&1 || true
     unset VAULT_TOKEN
-    echo "    created; temporary root revoked"
+    echo "    policy v${PROV_POLICY_VERSION} applied; temporary root revoked"
   fi
 fi
 
@@ -298,6 +363,64 @@ EOF
   fi
 fi
 
+# The credentials THIS deployment generated, recorded where an admin can retrieve them. Before
+# the early exit, because it has to converge: the only other copy is deploy/.env on the host that
+# ran the deploy, so an admin working anywhere else cannot read the credential a service refuses.
+#
+# kv-v2 keeps prior versions, so a rotated credential stays retrievable — which is what verifying
+# evidence sealed under a retired key depends on.
+if [ -f "$PROVISIONED" ] && [ -f "$STATE/provisioner_role_id" ]; then
+  # Absent values are omitted rather than written blank: a blank field reads as provisioned.
+  SETUP_KV=""
+  for pair in "boundary_root_key=${BOUNDARY_ROOT_KEY:-}" \
+              "boundary_worker_auth_key=${BOUNDARY_WORKER_AUTH_KEY:-}" \
+              "boundary_recovery_key=${BOUNDARY_RECOVERY_KEY:-}" \
+              "keycloak_admin_password=${KC_BOOTSTRAP_ADMIN_PASSWORD:-}" \
+              "oidc_client_secret=${IR_OIDC_CLIENT_SECRET:-}" \
+              "platform_admin_password=${IR_PLATFORM_ADMIN_PASSWORD:-}" \
+              "receiver_puller_token=${RECEIVER_PULLER_TOKEN:-}" \
+              "sso_proxy_secret=${IR_SSO_PROXY_SECRET:-}"; do
+    [ -n "${pair#*=}" ] && SETUP_KV="${SETUP_KV} ${pair}"
+  done
+  if [ -n "${SETUP_KV}" ]; then
+    SETUP_KV="${SETUP_KV} keycloak_admin_user=${KC_BOOTSTRAP_ADMIN_USERNAME:-admin}"
+    SETUP_KV="${SETUP_KV} platform_admin_user=${IR_PLATFORM_ADMIN_USER:-platform-admin}"
+    STOK=$(vault write -field=token auth/approle/login \
+        role_id="$(cat "$STATE/provisioner_role_id")" \
+        secret_id="$(cat "$STATE/provisioner_secret_id")" 2>/dev/null) || STOK=""
+    if [ -z "$STOK" ]; then
+      echo "    WARNING: could not authenticate to record ir/setup" >&2
+    else
+      # Unquoted on purpose: each element is one key=value argument. Generated credentials are
+      # base64/hex/alphanumeric, so none of them contains whitespace to split on.
+      # shellcheck disable=SC2086
+      if VAULT_TOKEN="$STOK" vault kv put ir/setup ${SETUP_KV} >/dev/null 2>&1; then
+        echo "==> setup credentials recorded at ir/setup (ir-admin can read them)"
+      else
+        echo "    WARNING: could not write ir/setup — an admin cannot retrieve this deployment's credentials" >&2
+      fi
+      # The admin's own account, converged to the password THIS deployment generated. Set only at
+      # bootstrap it stays on whatever the first deploy used, and the one human way into Vault is
+      # refused — which is indistinguishable from a wrong password in deploy/.env.
+      if [ -n "${IR_PLATFORM_ADMIN_PASSWORD:-}" ]; then
+        # Vault's own error is reported rather than discarded: "cannot sign in" has several
+        # causes — an unmounted auth method, a refused path, a rejected policy — and they are
+        # not distinguishable from the failure alone.
+        if ADM_ERR=$(VAULT_TOKEN="$STOK" vault write \
+             "auth/userpass/users/${IR_PLATFORM_ADMIN_USER:-platform-admin}" \
+             password="${IR_PLATFORM_ADMIN_PASSWORD}" \
+             token_policies=ir-admin token_ttl=1h token_max_ttl=8h 2>&1); then
+          echo "    ${IR_PLATFORM_ADMIN_USER:-platform-admin} converged to this deployment's password"
+        else
+          echo "    WARNING: could not converge ${IR_PLATFORM_ADMIN_USER:-platform-admin} — an admin cannot sign in to Vault" >&2
+          printf '%s\n' "$ADM_ERR" | tail -4 | sed 's/^/        /' >&2
+        fi
+      fi
+      VAULT_TOKEN="$STOK" vault token revoke -self >/dev/null 2>&1 || true
+    fi
+  fi
+fi
+
 # A completed provision needs no root token, so there is none to hold. This is what makes
 # revoking it at the end safe rather than a one-way door into manual recovery.
 if [ -f "$PROVISIONED" ]; then
@@ -414,6 +537,31 @@ path "ir/data/config"             { capabilities = ["read"] }
 path "sys/leases/renew"           { capabilities = ["update"] }
 path "auth/token/renew-self"      { capabilities = ["update"] }
 EOF
+
+echo "==> policy + login for the INFRASTRUCTURE administrator"
+# Until this existed the only human path into Vault was the root token off the unseal state,
+# which makes the break-glass credential the everyday one. `platform-admin` is that human, and
+# it is NOT `default-admin`: that account is the web application's, and this one reaches the
+# infrastructure the application runs on.
+#
+# Broad by intent, because troubleshooting means reading the secret about to be used, the lease
+# that expired, the policy that refused and the seal's own state. What it withholds is the
+# ability to BECOME a service: the AppRole secret-ids stay unreadable, so an admin cannot
+# silently act as the app tier or the identity store and leave no trace in the platform's own
+# audit chain.
+write_ir_admin_policy
+
+# Tokens are bounded — an admin session expires like every other credential here.
+enable_userpass
+if [ -n "${IR_PLATFORM_ADMIN_PASSWORD:-}" ]; then
+    vault write "auth/userpass/users/${IR_PLATFORM_ADMIN_USER:-platform-admin}" \
+        password="${IR_PLATFORM_ADMIN_PASSWORD}" \
+        token_policies=ir-admin token_ttl=1h token_max_ttl=8h >/dev/null \
+        && echo "    ${IR_PLATFORM_ADMIN_USER:-platform-admin} can sign in to Vault (ir-admin, 1h tokens)" \
+        || echo "    FAILED to provision ${IR_PLATFORM_ADMIN_USER:-platform-admin}" >&2
+else
+    echo "    IR_PLATFORM_ADMIN_PASSWORD unset — no human can log in to Vault" >&2
+fi
 
 vault auth enable approle 2>/dev/null || echo "    approle already enabled"
 # Bounded rather than unlimited: a secret_id with no TTL is a permanent credential on a volume.

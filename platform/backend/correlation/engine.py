@@ -17,6 +17,7 @@ ones the engine declined — so a merge can be defended and a refusal explained.
 Hosts that merely appear in the same investigation, or were collected at a similar time, are
 not linked; an engagement that uncovers two unrelated compromises yields two campaigns.
 """
+import os
 from collections import defaultdict
 
 from django.db import transaction
@@ -78,6 +79,36 @@ def _movement_edges(runs_by_host):
             "verdict": f.verdict,
         })
     return edges
+
+
+def _deployment_population(investigation_id):
+    """How many machines the ESTATE has, which is not how many have been collected from.
+
+    Rarity asks what fraction of the fleet carries something, and `Host.objects.count()`
+    answers a different question: how many hosts this platform has ingested. Early in an
+    engagement those are wildly apart — with two hosts collected, the C2 domain they share
+    sits on 100% of what the platform can see and scores as environment, so the two hosts an
+    analyst most needs joined do not link. It is the exact failure scoping to the
+    investigation was rejected for, reached by another route.
+
+    So the estate size is DECLARED (`IR_DEPLOYMENT_HOSTS`) and the observed count is only the
+    fallback. Failing that, an investigation already correlated keeps the population its last
+    run used, because a case must not reach a different verdict because unrelated collections
+    landed in the meantime — the report was written from the first answer.
+    """
+    declared = os.environ.get("IR_DEPLOYMENT_HOSTS", "").strip()
+    if declared.isdigit() and int(declared) > 0:
+        return int(declared)
+
+    previous = (CorrelationRun.objects
+                .filter(investigation_id=investigation_id)
+                .order_by("-created_at").first())
+    if previous:
+        held = (previous.input_summary or {}).get("population")
+        if isinstance(held, int) and held > 0:
+            return held
+
+    return max(1, Host.objects.count())
 
 
 def correlate_investigation(investigation_id, investigation_name=""):
@@ -168,6 +199,8 @@ def correlate_investigation(investigation_id, investigation_name=""):
             investigation_id=investigation_id, is_current=True
         ).update(is_current=False)
 
+        population = _deployment_population(investigation_id)
+
         crun = CorrelationRun.objects.create(
             investigation_id=investigation_id,
             investigation_name=investigation_name,
@@ -176,6 +209,9 @@ def correlate_investigation(investigation_id, investigation_name=""):
                 "runs": len(runs), "compromised_hosts": len(compromised),
                 "findings": Finding.objects.filter(run_id__in=run_ids).count(),
                 "indicators": len(carriers),
+                # The denominator every rarity in this run was measured against. Recorded so
+                # the run can be reproduced, and so a reader can see what "rare" meant here.
+                "population": population,
             },
             is_current=True,
         )
@@ -195,11 +231,8 @@ def correlate_investigation(investigation_id, investigation_name=""):
         standalone_dt = {h: as_dt(v) for h, v in host_first_standalone.items()}
         for e in edges:
             e["observed_dt"] = as_dt(e.get("observed_at"))
-        # Rarity is measured against every host the deployment knows, not against this case.
-        # Scoping it to the investigation made a two-host intrusion's shared C2 "common" and
-        # refused the link, while the identical evidence inside a larger case linked fine.
         links = build_links(crun, compromised, first_dt, edges,
-                            population=Host.objects.count(),
+                            population=population,
                             first_standalone=standalone_dt)
 
         crun.input_summary.update({
@@ -213,7 +246,17 @@ def correlate_investigation(investigation_id, investigation_name=""):
         # single-host indicator says nothing about linkage and is already in `cases`.
         shared = {k: v for k, v in carriers.items() if len(v) > 1}
 
-        for cluster in weighted_cluster(compromised, links):
+        # Which hosts carry each piece of evidence, keyed exactly as `corroboration` records
+        # it. Clustering uses this to tell an actor's own material from the estate's: a hash
+        # nothing outside a component carries is a signature, one the wider fleet also holds
+        # is furniture. Every host counts here, clean included — a clean endpoint holding the
+        # same tool is the strongest argument that it is environmental.
+        node_carriers = {
+            (n.kind, n.subkind, (n.value or "")[:200]): set(n.hostnames or [])
+            for n in BehaviorNode.objects.filter(run=crun)
+        }
+
+        for cluster in weighted_cluster(compromised, links, carriers=node_carriers):
             cluster = {h for h in cluster if h in compromised}
             if not cluster:
                 continue

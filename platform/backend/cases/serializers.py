@@ -4,6 +4,8 @@ from rest_framework import serializers
 from .models import (
     CarvedRegion,
     RegionAnalysis,
+    ReWorkset,
+    ReWorksetRegion,
     AuditLog,
     CollectionRun,
     CustodyEvent,
@@ -284,6 +286,41 @@ class InvestigationDetailSerializer(InvestigationSerializer):
         fields = InvestigationSerializer.Meta.fields + ["runs", "case_notes"]
 
 
+class ReWorksetRegionSerializer(serializers.ModelSerializer):
+    """A region's membership of a workset, with enough of the region to be readable."""
+
+    region_detail = serializers.SerializerMethodField()
+
+    class Meta:
+        model = ReWorksetRegion
+        fields = ["id", "region", "rank", "added_by", "region_detail"]
+
+    def get_region_detail(self, obj):
+        r = obj.region
+        return {"id": r.id, "object_key": r.object_key, "size_bytes": r.size_bytes,
+                "sha256": r.sha256, "carved_by": r.carved_by,
+                "source_process": r.source_process, "source_pid": r.source_pid,
+                "triage_status": r.triage_status}
+
+
+class ReWorksetSerializer(serializers.ModelSerializer):
+    """A workset and what it holds."""
+
+    hostname = serializers.CharField(source="host.hostname", read_only=True)
+    investigation_name = serializers.CharField(source="investigation.name", read_only=True)
+    region_count = serializers.SerializerMethodField()
+    members = ReWorksetRegionSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = ReWorkset
+        fields = ["id", "slug", "investigation", "investigation_name", "host", "hostname",
+                  "created_by", "state", "note", "staged_at", "closed_at", "created_at",
+                  "region_count", "members"]
+
+    def get_region_count(self, obj):
+        return obj.members.count()
+
+
 class CarvedRegionSerializer(serializers.ModelSerializer):
     """A region plus the context a reverse engineer needs to work on it."""
 
@@ -321,4 +358,4 @@ class RegionAnalysisSerializer(serializers.ModelSerializer):
                   "capabilities", "strings_of_interest", "yara_matches",
                   "file_characteristics", "network_indicators", "crypto_material",
                   "config_extracted", "related_hashes", "indicators", "mitre", "notes",
-                  "finding", "created_at"]
+                  "finding", "created_at", "workset"]

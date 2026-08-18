@@ -2,7 +2,7 @@
 
 *What passing proves:* 25 real collector runs — 16 compromised across two investigations, 9 clean, fleet-wide benign noise on all — ship, ingest, analyze and correlate through the production path; clean hosts classify clean and join no campaign.
 
-- Run: `uat_corpus.sh` — 2026-08-13 20:43:03Z
+- Run: `uat_corpus.sh` — 2026-08-17 22:40:26Z
 
 **Preconditions**
 
@@ -69,13 +69,14 @@
 | ✅ PASS | the Ember/miner pair was CONSIDERED — the shared fleet-wide account makes it a candidate (20 pairs) |
 | ✅ PASS | every Ember/miner candidate was DECLINED — G2 closed by weighting, not by absence |
 | ✅ PASS | the ubiquitous helpdesk account is in the behavior graph |
-| ✅ PASS | the fleet-wide account reads as ENVIRONMENT (rarity 0.094 across 20 carriers) |
-| ✅ PASS | declined weights sit below the threshold (heaviest 0.0750 < 0.35) |
+| ✅ PASS | the fleet-wide account cannot link a pair BY ITSELF (contributes 0.176 at best, under 0.35; rarity 0.391 across 20 carriers of 141 deployment hosts) |
+| ✅ PASS | declined weights sit below the threshold (heaviest 0.2148 < 0.35) |
 | ✅ PASS | Ember's own pairs LINK on their real evidence (37 at or above threshold) |
 | ✅ PASS | every link decomposes into all four named factors plus their product |
-| ✅ PASS | campaign pz=WS-007: cohesion_min equals its weakest internal link (0.4248) |
-| ✅ PASS | campaign pz=VPN-GW-01: cohesion_min equals its weakest internal link (0.3988) |
-| ✅ PASS | the miner campaign scores visibly weaker than Ember (mean 0.3988 vs 0.5648; min 0.3988 vs 0.4248) |
+| ✅ PASS | campaign pz=WS-007: cohesion_min equals its weakest internal link (0.4637) |
+| ✅ PASS | campaign pz=DC-01: cohesion_min equals its weakest internal link (0.9998) |
+| ✅ PASS | campaign pz=WS-012: cohesion_min equals its weakest internal link (0.4483) |
+| ✅ PASS | the miner campaign scores visibly weaker than Ember (mean 0.4483 vs 0.5829; min 0.4483 vs 0.4637) |
 | ✅ PASS | the miner rests on shared indicators alone (['indicator']) |
 | ✅ PASS | Ember rests on observed movement as well (['artifact', 'movement']) |
 | ✅ PASS | Quiet Fox links are carried by tradecraft and movement, never a shared indicator (['artifact', 'movement']) |
@@ -94,13 +95,13 @@
 
 | Result | Assertion — with evidence |
 |---|---|
-| ✅ PASS | every campaign host carries a band from the declared vocabulary (16 hosts) |
+| ✅ PASS | every campaign host carries a band from the declared vocabulary (17 hosts) |
 | ✅ PASS | every band decomposes into its named factors, not just a label |
-| ✅ PASS | each band names the host and the weight it rests on (16 linked hosts) |
+| ✅ PASS | each band names the host and the weight it rests on (17 linked hosts) |
 | ✅ PASS | the Ember intrusion reaches the top band (['confirmed', 'probable']) |
 | ✅ PASS | the contradiction host bands BELOW its peers (probable vs confirmed on WS-101) |
 | ✅ PASS | and the stated reason names the contradiction rather than only scoring it lower |
-| ✅ PASS | no host outranks one with a stronger link (12 compared, 0 inversions) |
+| ✅ PASS | no host outranks one with a stronger link (13 compared, 0 inversions) |
 | ✅ PASS | a host with no cross-host link reads INDETERMINATE, not weak (0 such) |
 
 **Indicator completeness — nothing recovered is stranded before correlation**
@@ -145,7 +146,7 @@
 
 | Result | Assertion — with evidence |
 |---|---|
-| ✅ PASS | every campaign got a fingerprint (3) |
+| ✅ PASS | every campaign got a fingerprint (4) |
 | ✅ PASS | Quiet Fox has a fingerprint despite per-host rotated indicators |
 | ✅ PASS | artifact conventions are name SHAPES, not literal names (['c2_address:<name>.<name>-<name>.net', 'c2_campaign_id:EF-<number>-Q<number>', 'c2_sleep:<number>s/<number>%']) |
 | ✅ PASS | each fingerprint carries all five named components plus its basis |
@@ -169,11 +170,11 @@
 | ✅ PASS | and the shape beside it is an abstraction, so rotation is what it survives |
 | ✅ PASS | every example states how many hosts carried it (5 conventions) |
 | ✅ PASS | an archive extension survives abstraction intact (.7z is not read as digits) |
-| ✅ PASS | the attack graph endpoint is populated (10 nodes, 9 edges) |
+| ✅ PASS | the attack graph endpoint is populated (9 nodes, 8 edges) |
 | ✅ PASS | the tradecraft-only campaign renders behavioral edges (4) |
 | ✅ PASS | and one is carried by tradecraft the collector planted (['EF-2026-Q3', 'WinDefendHelper']) |
 | ✅ PASS | movement edges name the collected account, not a placeholder (['CORP\\da_admin', 'CORP\\j.okafor']) |
-| ✅ PASS | every banded host on the graph carries its stated reason (10) |
+| ✅ PASS | every banded host on the graph carries its stated reason (9) |
 
 **Result**
 
@@ -181,4 +182,4 @@
 |---|---|
 | ✅ PASS | the corpus rode the production path end to end, and benign stayed benign |
 
-**Verdict: PROVEN** — 101 assertions passed, 0 failed.
+**Verdict: PROVEN** — 102 assertions passed, 0 failed.

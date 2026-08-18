@@ -578,11 +578,6 @@
    "to": "enclave/worker"
   },
   {
-   "from": "hashicorp/consul/register-mesh.sh",
-   "kind": "drives",
-   "to": "enclave/worker-2"
-  },
-  {
    "from": "hashicorp/keycloak/provision-demo-users.sh",
    "kind": "drives",
    "to": "enclave/keycloak"
@@ -716,6 +711,11 @@
    "from": "test/lib/corpus_pipeline.sh",
    "kind": "drives",
    "to": "enclave/worker"
+  },
+  {
+   "from": "test/lib/report.sh",
+   "kind": "runs",
+   "to": "test/run_uats.sh"
   },
   {
    "from": "test/run_uats.sh",
@@ -1024,6 +1024,16 @@
   },
   {
    "from": "test/uat_corpus_slow.sh",
+   "kind": "runs",
+   "to": "test/lib/report.sh"
+  },
+  {
+   "from": "test/uat_corpus_twin.sh",
+   "kind": "runs",
+   "to": "test/lib/corpus_pipeline.sh"
+  },
+  {
+   "from": "test/uat_corpus_twin.sh",
    "kind": "runs",
    "to": "test/lib/report.sh"
   },
@@ -1365,6 +1375,11 @@
   {
    "from": "test/uat_re_workstation.sh",
    "kind": "runs",
+   "to": "re-workstation/stage_regions.sh"
+  },
+  {
+   "from": "test/uat_re_workstation.sh",
+   "kind": "runs",
    "to": "test/lib/report.sh"
   },
   {
@@ -1421,6 +1436,26 @@
    "from": "test/uat_scoping.sh",
    "kind": "drives",
    "to": "enclave/backend"
+  },
+  {
+   "from": "test/uat_security.sh",
+   "kind": "runs",
+   "to": "test/lib/report.sh"
+  },
+  {
+   "from": "test/uat_security.sh",
+   "kind": "drives",
+   "to": "enclave/backend"
+  },
+  {
+   "from": "test/uat_security.sh",
+   "kind": "drives",
+   "to": "enclave/keycloak"
+  },
+  {
+   "from": "test/uat_security.sh",
+   "kind": "drives",
+   "to": "enclave/puller"
   },
   {
    "from": "test/uat_srg_webtier.sh",
@@ -1534,8 +1569,18 @@
   },
   {
    "from": "test/uat_ui.sh",
+   "kind": "runs",
+   "to": "test/lib/report.sh"
+  },
+  {
+   "from": "test/uat_ui.sh",
    "kind": "drives",
    "to": "enclave/backend"
+  },
+  {
+   "from": "test/uat_ui.sh",
+   "kind": "drives",
+   "to": "enclave/frontend"
   },
   {
    "from": "test/uat_vault.sh",
@@ -1565,6 +1610,11 @@
   {
    "from": "test/uat_vault.sh",
    "kind": "drives",
+   "to": "enclave/keycloak"
+  },
+  {
+   "from": "test/uat_vault.sh",
+   "kind": "drives",
    "to": "enclave/vault"
   },
   {
@@ -1586,6 +1636,26 @@
    "from": "test/uat_vault.sh",
    "kind": "drives",
    "to": "enclave/worker"
+  },
+  {
+   "from": "test/uat_workers.sh",
+   "kind": "runs",
+   "to": "test/lib/corpus_pipeline.sh"
+  },
+  {
+   "from": "test/uat_workers.sh",
+   "kind": "runs",
+   "to": "test/lib/report.sh"
+  },
+  {
+   "from": "test/uat_workers.sh",
+   "kind": "drives",
+   "to": "enclave/backend"
+  },
+  {
+   "from": "test/uat_workers.sh",
+   "kind": "drives",
+   "to": "enclave/consul"
   },
   {
    "from": "ci/clock-sync-check.sh",
@@ -2018,6 +2088,21 @@
    "to": "enclave/backend"
   },
   {
+   "from": "test/uat_security.sh",
+   "kind": "proves",
+   "to": "enclave/backend"
+  },
+  {
+   "from": "test/uat_security.sh",
+   "kind": "proves",
+   "to": "enclave/keycloak"
+  },
+  {
+   "from": "test/uat_security.sh",
+   "kind": "proves",
+   "to": "enclave/puller"
+  },
+  {
    "from": "test/uat_srg_webtier.sh",
    "kind": "proves",
    "to": "dmz/bastion"
@@ -2098,6 +2183,11 @@
    "to": "enclave/backend"
   },
   {
+   "from": "test/uat_ui.sh",
+   "kind": "proves",
+   "to": "enclave/frontend"
+  },
+  {
    "from": "test/uat_vault.sh",
    "kind": "proves",
    "to": "enclave/backend"
@@ -2106,6 +2196,11 @@
    "from": "test/uat_vault.sh",
    "kind": "proves",
    "to": "enclave/db"
+  },
+  {
+   "from": "test/uat_vault.sh",
+   "kind": "proves",
+   "to": "enclave/keycloak"
   },
   {
    "from": "test/uat_vault.sh",
@@ -2131,6 +2226,16 @@
    "from": "test/uat_vault.sh",
    "kind": "proves",
    "to": "enclave/worker"
+  },
+  {
+   "from": "test/uat_workers.sh",
+   "kind": "proves",
+   "to": "enclave/backend"
+  },
+  {
+   "from": "test/uat_workers.sh",
+   "kind": "proves",
+   "to": "enclave/consul"
   }
  ],
  "frontend_pages": {
@@ -2220,7 +2325,11 @@
   },
   "Reversing": {
    "analyzeRegion": "/regions/",
-   "regionQueue": "/regions/queue/"
+   "closeWorkset": "/worksets/",
+   "createWorkset": "/worksets/",
+   "regionQueue": "/regions/queue/",
+   "worksetStageCommand": "/worksets/",
+   "worksets": "/worksets/"
   },
   "RunDetail": {
    "purgeCapture": "/captures/",
@@ -2233,6 +2342,7 @@
   },
   "Users": {
    "createUser": "/users/",
+   "deleteUser": "/users/",
    "listUsers": "/users/"
   }
  },
@@ -2319,8 +2429,7 @@
     "enclave/puller",
     "enclave/redis",
     "enclave/vault",
-    "enclave/worker",
-    "enclave/worker-2"
+    "enclave/worker"
    ],
    "runs": []
   },
@@ -2361,6 +2470,12 @@
    ],
    "runs": [
     "collector/build.sh"
+   ]
+  },
+  "test/lib/report.sh": {
+   "drives": [],
+   "runs": [
+    "test/run_uats.sh"
    ]
   },
   "test/run_uats.sh": {
@@ -2486,6 +2601,13 @@
    ]
   },
   "test/uat_corpus_slow.sh": {
+   "drives": [],
+   "runs": [
+    "test/lib/corpus_pipeline.sh",
+    "test/lib/report.sh"
+   ]
+  },
+  "test/uat_corpus_twin.sh": {
    "drives": [],
    "runs": [
     "test/lib/corpus_pipeline.sh",
@@ -2624,6 +2746,7 @@
     "enclave/minio"
    ],
    "runs": [
+    "re-workstation/stage_regions.sh",
     "test/lib/report.sh"
    ]
   },
@@ -2648,6 +2771,16 @@
   "test/uat_scoping.sh": {
    "drives": [
     "enclave/backend"
+   ],
+   "runs": [
+    "test/lib/report.sh"
+   ]
+  },
+  "test/uat_security.sh": {
+   "drives": [
+    "enclave/backend",
+    "enclave/keycloak",
+    "enclave/puller"
    ],
    "runs": [
     "test/lib/report.sh"
@@ -2695,14 +2828,18 @@
   },
   "test/uat_ui.sh": {
    "drives": [
-    "enclave/backend"
+    "enclave/backend",
+    "enclave/frontend"
    ],
-   "runs": []
+   "runs": [
+    "test/lib/report.sh"
+   ]
   },
   "test/uat_vault.sh": {
    "drives": [
     "enclave/backend",
     "enclave/db",
+    "enclave/keycloak",
     "enclave/vault",
     "enclave/vault-agent",
     "enclave/vault-setup",
@@ -2712,6 +2849,16 @@
    "runs": [
     "deploy/deploy.sh",
     "hashicorp/vault/rotate-app-creds.sh",
+    "test/lib/report.sh"
+   ]
+  },
+  "test/uat_workers.sh": {
+   "drives": [
+    "enclave/backend",
+    "enclave/consul"
+   ],
+   "runs": [
+    "test/lib/corpus_pipeline.sh",
     "test/lib/report.sh"
    ]
   },
@@ -3207,6 +3354,7 @@
   "uat_corpus_linux.sh": [],
   "uat_corpus_ransomware.sh": [],
   "uat_corpus_slow.sh": [],
+  "uat_corpus_twin.sh": [],
   "uat_dns.sh": [
    "dmz/bastion",
    "dmz/coredns",
@@ -3289,6 +3437,11 @@
   "uat_scoping.sh": [
    "enclave/backend"
   ],
+  "uat_security.sh": [
+   "enclave/backend",
+   "enclave/keycloak",
+   "enclave/puller"
+  ],
   "uat_srg_webtier.sh": [
    "dmz/bastion",
    "enclave/backend",
@@ -3311,16 +3464,22 @@
    "enclave/backend"
   ],
   "uat_ui.sh": [
-   "enclave/backend"
+   "enclave/backend",
+   "enclave/frontend"
   ],
   "uat_vault.sh": [
    "enclave/backend",
    "enclave/db",
+   "enclave/keycloak",
    "enclave/vault",
    "enclave/vault-agent",
    "enclave/vault-setup",
    "enclave/vault-sidecar",
    "enclave/worker"
+  ],
+  "uat_workers.sh": [
+   "enclave/backend",
+   "enclave/consul"
   ]
  }
 }

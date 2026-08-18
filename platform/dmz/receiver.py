@@ -122,6 +122,37 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):  # quieter logs
         print("[receiver]", self.address_string(), fmt % args)
 
+    def _puller_authorized(self):
+        """Whether this caller may READ or DELETE what is held.
+
+        Ingest is open by necessity — an endpoint under investigation has no credential to
+        offer and the custody seal is what makes its upload trustworthy. Reading the holding
+        area is the opposite: the bundles are every collected host's memory, and the only
+        legitimate reader is the enclave's puller. Without this the endpoint fleet, which is
+        permitted to reach this port, could list every bundle, fetch any of them, and delete
+        the evidence before the puller's next poll — leaving no custody row and no audit of
+        the loss.
+
+        Unset means REFUSE. A credential that is optional is not one, and a receiver
+        deployed without the variable would serve the holding area to anyone who asked.
+        """
+        expected = os.environ.get("RECEIVER_PULLER_TOKEN", "")
+        if not expected:
+            return False
+        offered = self.headers.get("Authorization", "")
+        prefix = "Bearer "
+        if not offered.startswith(prefix):
+            return False
+        # Constant time: the token is a bearer credential and this endpoint is reachable by
+        # the least trusted tier the platform has.
+        return hmac.compare_digest(offered[len(prefix):], expected)
+
+    def _refuse_unauthorized(self):
+        _LOGS.warn("refused an unauthenticated read/delete")
+        print("[receiver] refused an unauthenticated read/delete from",
+              self.address_string(), flush=True)
+        return self._send(401, {"error": "the holding area is readable by the puller only"})
+
     def do_GET(self):
         if self.path == "/healthz":
             return self._send(200, {"status": "ok", "held": len(self._pending()),
@@ -140,6 +171,10 @@ class Handler(BaseHTTPRequestHandler):
                            for b in held
                            if os.path.exists(os.path.join(HOLDING, f"{b}.tar.gz"))),
                        "max_bytes": MAX_BYTES, "disk_headroom_bytes": DISK_HEADROOM}))
+        # Everything below reads or removes held evidence, so the puller credential decides
+        # it. /healthz and /stats above stay open: they carry counts, not bundles.
+        if not self._puller_authorized():
+            return self._refuse_unauthorized()
         if self.path == "/isf/pending":
             return self._send(200, {"pending": self._pending_isf()})
         if self.path.startswith("/isf/fetch/"):
@@ -182,6 +217,10 @@ class Handler(BaseHTTPRequestHandler):
         return self._send(404, {"error": "unknown path"})
 
     def do_DELETE(self):
+        # Deleting a held bundle destroys evidence that has no second copy yet, so it is the
+        # sharpest of these paths, not the least.
+        if not self._puller_authorized():
+            return self._refuse_unauthorized()
         if self.path.startswith("/isf/fetch/"):
             sid = self.path.rsplit("/", 1)[-1]
             for suffix in (".tar.gz", ".meta.json"):
@@ -235,6 +274,10 @@ class Handler(BaseHTTPRequestHandler):
             print(f"[receiver] QUARANTINE — custody verify failed: {reason}")
             return self._send(400, {"error": "custody verification failed", "reason": reason})
 
+        # Collection without a signing key is supported, so an unsigned bundle is held rather
+        # than refused. It is never reported as verified: nothing about its origin was checked.
+        attributed = custody.attributable(reason)
+
         bid = uuid.uuid4().hex
         # The spool lives on the holding volume, so this is a rename rather than a second
         # copy of a capture-sized file.
@@ -242,12 +285,14 @@ class Handler(BaseHTTPRequestHandler):
         meta = {"id": bid, "host": os.path.basename(root),
                 "operator": record.get("operator", ""),
                 "manifest_sha256": record.get("manifest_sha256", ""),
+                "custody": reason, "verified": attributed,
                 "size": length}
         with open(os.path.join(HOLDING, f"{bid}.meta.json"), "w") as fh:
             json.dump(meta, fh)
         shutil.rmtree(tmp, ignore_errors=True)
-        print(f"[receiver] accepted + verified bundle {bid} ({meta['host']}) — held for pull")
-        return self._send(202, {"id": bid, "verified": True})
+        state = "verified" if attributed else reason
+        print(f"[receiver] accepted bundle {bid} ({meta['host']}) — {state}; held for pull")
+        return self._send(202, {"id": bid, "verified": attributed, "custody": reason})
 
     def _post_isf(self):
         """Accept a sealed Volatility symbol table from the acquisition machine.
@@ -376,7 +421,7 @@ def _safe_extract(tf, dest):
         target = os.path.abspath(os.path.join(dest, m.name))
         if not target.startswith(dest_abs + os.sep):
             raise ValueError(f"unsafe path in archive: {m.name}")
-    tf.extractall(dest)
+    tf.extractall(dest, filter="data")
 
 
 def _tls_context():

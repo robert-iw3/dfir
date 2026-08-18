@@ -332,7 +332,7 @@ done
 
 | Result | What it means | Where to go next |
 |--------|--------------|-----------------|
-| `eBPF Network C2 Correlated` — a network-hook eBPF prog co-occurring with a hooked netfilter hook | bpfdoor-class magic-packet C2 / traffic-signalling backdoor | True Positive; identify the prog (`bpftool prog dump`), the pinning process, and the socket filter |
+| `eBPF Network C2 Correlated` — a network-hook eBPF prog co-occurring with a hooked netfilter hook | bpfdoor-class magic-packet C2 / traffic-signaling backdoor | True Positive; identify the prog (`bpftool prog dump`), the pinning process, and the socket filter |
 | eBPF prog `type=kprobe/tracepoint` loaded by a non-observability process | Possible syscall-hiding / EDR-blinding eBPF | Check the loader's legitimacy; observability agents (falco, cilium, datadog) are expected → FP |
 | BPF-LSM program present | Can neuter access control / hide activity at the policy layer | High-severity; confirm it is an expected security agent, else TP |
 | `io_uring Anti-EDR I/O` — ring held by a process from a writable dir / deleted binary | I/O performed via io_uring to dodge syscall-based EDR | True Positive; correlate with Section 2/4; capture the process |
@@ -496,7 +496,7 @@ strings -n 8 /tmp/recovered_1234.bin | grep -Ei 'http|/tmp/|/dev/tcp|nc |bash -i
 | Result | What it means | Where to go next |
 |--------|--------------|-----------------|
 | YARA hit with a named family rule | Known malware family | TP; use the family to guide eradication + IOC extraction (Section 13) |
-| Generic rule (packer/LOLBin) hit only | Suspicious but not conclusive | Corroborate with strings/behaviour; do not escalate on a generic rule alone |
+| Generic rule (packer/LOLBin) hit only | Suspicious but not conclusive | Corroborate with strings/behavior; do not escalate on a generic rule alone |
 | No YARA hit but high-entropy + network strings | Packed/custom implant | Run enrichment (Section 13); capa/FLOSS may reveal capability |
 | Hash matches a known-good package file | Legitimate binary | FP |
 | Hash known-bad in threat intel | Confirmed malware | Escalate; sweep the fleet for the same hash |

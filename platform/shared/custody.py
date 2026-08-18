@@ -52,11 +52,46 @@ def _manifest_sha(manifest):
     ).hexdigest()
 
 
-def _hmac(manifest_sha):
-    key = os.environ.get("IR_CUSTODY_HMAC_KEY")
+# What `verify` returns as its reason. A caller deciding whether evidence is cryptographically
+# attributable must check for these rather than for `ok` alone: `ok` means "safe to ingest",
+# and only VERIFIED and SUPERSEDED mean "this came from who it says".
+VERIFIED = "ok"
+SUPERSEDED = "superseded key"
+UNSIGNED = "unsigned — no signature to verify"
+
+
+def attributable(reason):
+    """Whether a verify() reason means the seal was cryptographically checked."""
+    return reason in (VERIFIED, SUPERSEDED)
+
+
+def _hmac(manifest_sha, key=None):
+    key = key if key is not None else os.environ.get("IR_CUSTODY_HMAC_KEY")
     if not key:
         return ""
     return hmac.new(key.encode(), manifest_sha.encode(), hashlib.sha256).hexdigest()
+
+
+def _key_id(key):
+    """Which key sealed this, so a ROTATION can be told from a FORGERY.
+
+    Without it the two collapse into one message, and an archive sealed before a rotation
+    reads as tampered — which teaches an operator to dismiss the alarm a real forgery also
+    raises. `cases/audit.py` solved this for the audit chain; this is the same idea on the
+    seal that leaves the platform.
+    """
+    return hashlib.sha256(key.encode()).hexdigest()[:16] if key else ""
+
+
+def _retired_keys():
+    """Keys this deployment has rotated away from, newest first.
+
+    A seal written under a retired key is SUPERSEDED, not failed: the evidence is intact and
+    the key moved on. Restore has to keep working across a rotation or one rotation makes
+    every archived case permanently unrestorable.
+    """
+    raw = os.environ.get("IR_CUSTODY_HMAC_KEYS_RETIRED", "")
+    return [k for k in (s.strip() for s in raw.split(",")) if k]
 
 
 def seal(folder, incident_id="", operator=None):
@@ -73,6 +108,7 @@ def seal(folder, incident_id="", operator=None):
         "manifest_sha256": m_sha,
         "hmac_sha256": _hmac(m_sha),
         "signed": bool(os.environ.get("IR_CUSTODY_HMAC_KEY")),
+        "key_id": _key_id(os.environ.get("IR_CUSTODY_HMAC_KEY", "")),
     }
     with open(os.path.join(folder, CUSTODY_NAME), "w") as fh:
         json.dump(record, fh, indent=2)
@@ -101,10 +137,39 @@ def verify(folder):
         changed = {k for k in set(current) & set(sealed_manifest)
                    if current[k]["sha256"] != sealed_manifest[k]["sha256"]}
         return False, f"content tamper (added={sorted(added)} removed={sorted(removed)} changed={sorted(changed)})", record
-    # 3. HMAC, when the seal claims to be signed
-    if record.get("signed"):
-        if _hmac(record["manifest_sha256"]) != record.get("hmac_sha256"):
-            return False, "HMAC verification failed (unsigned or wrong key)", record
+    # 3. The HMAC, decided by THIS verifier's configuration rather than by the bundle.
+    #
+    # `record["signed"]` is read off the untrusted bundle: an author who sets it false skipped
+    # the only unforgeable check here, and steps 1 and 2 are self-consistency over files that
+    # same author controls. Where a key is configured, a seal without a valid HMAC is refused
+    # no matter what the record claims about itself.
+    key = os.environ.get("IR_CUSTODY_HMAC_KEY", "")
+    if key:
+        offered = record.get("hmac_sha256") or ""
+        if not offered:
+            # No signature at all, which is a supported collection: an endpoint under
+            # investigation may never have been issued a key, and `respond.sh` says so when
+            # one is not passed. That is NOT the same as a signature that fails, and refusing
+            # it would reject evidence the platform is meant to accept.
+            #
+            # The defect this file was fixed for is the false STAMP, not the ingest: the seal
+            # used to skip its only unforgeable check when the bundle set its own
+            # `signed: false`, and the run was then recorded custody_verified=True. An
+            # unsigned bundle is now accepted and reported as unverified — a third value, the
+            # way every other checker here reports one it could not answer.
+            return True, UNSIGNED, record
+        if hmac.compare_digest(_hmac(record["manifest_sha256"], key), offered):
+            return True, "ok", record
+        for retired in _retired_keys():
+            if hmac.compare_digest(_hmac(record["manifest_sha256"], retired), offered):
+                # A third state, not a pass and not a forgery: the evidence verifies under a
+                # key this deployment has rotated away from.
+                return True, SUPERSEDED, record
+        return False, "HMAC verification failed (forged seal or unknown key)", record
+    elif record.get("signed"):
+        # The bundle was sealed with a key and this verifier has none — it cannot answer,
+        # which is a third value rather than a pass.
+        return False, "sealed bundle but no custody key is configured here", record
     return True, "ok", record
 
 

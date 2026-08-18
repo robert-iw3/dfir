@@ -80,7 +80,7 @@ own compose project, no network, `pid: host`, the runtime socket its only author
 the request, matches the action name against the allow-list in its own script, executes, and
 reports back under a service credential. Claims are atomic, outcomes final, requests audited.
 
-**Verification.** `test/uat_repairs.sh` — 18 assertions: catalogue/allow-list agreement,
+**Verification.** `test/uat_repairs.sh` — 18 assertions: catalog/allow-list agreement,
 executor posture from the running container, refusal of unknown actions and non-admin
 principals, the deployed agent closing the loop, the repair verifiably restoring policy, and
 outcome rewrite refused. All six repairs also executed from the UI, each recorded succeeded

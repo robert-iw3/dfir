@@ -36,6 +36,7 @@ mapfile -t DOCS < <(
         -not -path '*/node_modules/*' -not -path '*/test/results/*' -not -path '*/archive/*' \
         -not -path '*/change_logs/*' 2>/dev/null
     find "${ROOT}" -maxdepth 1 -name '*.md' 2>/dev/null
+    find "${ROOT}/planning" -name '*.md' -not -path '*/archive/*' 2>/dev/null
 )
 
 echo

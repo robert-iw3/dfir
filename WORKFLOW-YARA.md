@@ -93,7 +93,7 @@ For every match the toolkit records:
 | **Region**          | VMA `anon` vs `file`                           | VAD `Private` vs `Image`/`Mapped` | unbacked/injected vs mapped-from-disk  |
 | **Perms**           | `vma.get_protection()` → `rwx`/`r-x`/`r--`     | VAD protection → `RWX`/`RX`/`R`   | **W+X / exec = injection territory**   |
 | **Backing path**    | `LinuxUtilities.path_for_file`                 | mapped image path                 | _which_ on-disk file (verify it)       |
-| **Matched strings** | `match.strings[*].identifier`                  | same                              | generic anchor vs specific behaviour   |
+| **Matched strings** | `match.strings[*].identifier`                  | same                              | generic anchor vs specific behavior   |
 | **Breadth**         | distinct PIDs per rule                         | distinct PIDs per rule            | shared-lib bytes vs injection campaign |
 
 On Linux this is a **two-phase** flow: the fast triage says _what_ is present, then a per-process worker (Volatility driven as a library - init the image once, loop tasks in-process) **follows up automatically on the hits** to attribute + enrich them. Windows is already per-process so it enriches in the single pass. Both stream a rolling `_yara_results_<stamp>.jsonl` and write a `_yara_results_<stamp>.json` summary, surfaced in the report's **Memory forensics & YARA** section.
@@ -237,7 +237,7 @@ TH_Generic_MassHunt_Linux_Malware  - PID 1825 networkd-dispat, 2039 firewalld, 2
 Linux_Trojan_Gafgyt - PID 1337 (sh)
    region = anon / rwx          ← unbacked, writable+executable
    path   = (none)
-   strings= $c2_host $cmd_handler   ← specific behaviour strings
+   strings= $c2_host $cmd_handler   ← specific behavior strings
    + linux.malfind flags the same RWX region · + sockstat shows 1337 → 185.x.x.x:443
 ```
 

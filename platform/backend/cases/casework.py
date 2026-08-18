@@ -20,6 +20,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from . import audit, collab, storage
+from .pagination import StandardPagination
 from .models import (CarvedRegion, CaseTag, CaseTagAssignment, CaseTask,
                      CaseTaskAttachment, CaseTaskNote, CollectionRun, Finding,
                      Investigation, MemoryCapture, Note)
@@ -254,12 +255,26 @@ class TaskBoardView(APIView):
         visible = scope_investigations(Investigation.objects.all(), request.user)
         qs = (CaseTask.objects.filter(investigation__in=visible)
               .exclude(state=CaseTask.PRESENTATION)
-              .select_related("investigation"))
+              .select_related("investigation")
+              .order_by("-updated_at", "-id"))
         if request.query_params.get("assignee"):
             qs = qs.filter(assignee=request.query_params["assignee"])
+        # Whether one case reaches this board has to be answerable without reading the whole
+        # board: a scoping question must stay exact however full the deployment gets.
+        want = request.query_params.get("investigation") or ""
+        if want.isdigit():
+            qs = qs.filter(investigation_id=int(want))
+        # Paged like every other list. Unpaged, this grew with the deployment until the
+        # response outgrew what its readers could parse.
+        paginator = StandardPagination()
+        page = paginator.paginate_queryset(qs, request, view=self)
         return Response({"tasks": [
             dict(_task_row(t), investigation=t.investigation_id,
-                 investigation_name=t.investigation.name) for t in qs]})
+                 investigation_name=t.investigation.name) for t in page],
+            "count": paginator.page.paginator.count,
+            "page": paginator.page.number,
+            "total_pages": paginator.page.paginator.num_pages,
+            "page_size": paginator.get_page_size(request)})
 
 
 # --- Task detail: notes and attachments ---------------------------------------------

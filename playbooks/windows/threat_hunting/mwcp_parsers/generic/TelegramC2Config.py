@@ -94,7 +94,7 @@ class TelegramC2Config(mwcp.Parser):
             ctx = data[lo:hi]
 
             chat_id = None
-            # Prefer labelled chat_id first
+            # Prefer labeled chat_id first
             for cm in _CHAT_ID_RE.finditer(ctx):
                 cid = _clean(cm.group(1))
                 if cid:

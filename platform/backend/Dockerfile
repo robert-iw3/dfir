@@ -18,6 +18,13 @@ COPY backend/ .
 # custody seal the archive writer and the collector must compute identically.
 COPY shared/sysstats.py ./sysstats.py
 COPY shared/custody.py ./custody.py
+# The mediator and launcher travel inside a reverse-engineering session kit, so the image
+# carries the versions that shipped with this backend rather than whatever sits on a host.
+# Named one file at a time: the same directory holds staged sessions, and carved regions
+# must never enter an image.
+COPY re-workstation/stage_regions.sh re-workstation/launch.sh \
+     re-workstation/ghidra-session.sh /opt/re-workstation/
+COPY re-workstation/binja-settings.json /opt/re-workstation/
 RUN chmod +x entrypoint.sh
 
 # Build-time smoke test: every runtime import resolves in the venv before the image ships.

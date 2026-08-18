@@ -49,7 +49,7 @@ contains:
 |---|---|
 | `logging_status.json` | Pre-flight: **was each control-plane log even enabled** (CloudTrail/GuardDuty/flow logs · Azure diagnostic settings/Activity · GCP sinks). A disabled source is both an evidence ceiling and a finding (T1562.008) |
 | `cloud_forensics/` | Raw telemetry pulled over the window: `cloudtrail_events.json` (full management events) · `gcp_audit_log.json` · `azure_activity_log.json` · GuardDuty/SCC · flow logs · NSG/SG/firewall · Entra OAuth/inbox/directory-audit |
-| `Combined_Findings_*.json` / `Adjudication_*.json` | `adjudicate_cloud.py`: every signal normalized and placed on the verdict ladder, ATT&CK-mapped - **detectors *and* raw-log behaviour** |
+| `Combined_Findings_*.json` / `Adjudication_*.json` | `adjudicate_cloud.py`: every signal normalized and placed on the verdict ladder, ATT&CK-mapped - **detectors *and* raw-log behavior** |
 | `IOCs.json` | Machine-readable indicators (C2 endpoints, with `sanctioned` flag) for egress blocking + eradication |
 | `Principals.json` | Implicated identities (IAM users/roles · service accounts · service principals) flagged for revocation |
 | `Incident_Report.md` / `Attack_Graph.md` / `Retrospective.md` | Draft report, control-plane chain, lessons |
@@ -131,7 +131,7 @@ log. Treat Step 1 as the thread to pull, not the answer.
 
 ## Step 2 - find the foothold identity and trace privilege escalation
 
-Now read the **control-plane behaviour** findings (`Type == "Cloud Control-Plane Activity"`). These
+Now read the **control-plane behavior** findings (`Type == "Cloud Control-Plane Activity"`). These
 come straight from the raw API log, so they show the attacker's hands on the keyboard. Order them by
 time and look for the escalation:
 

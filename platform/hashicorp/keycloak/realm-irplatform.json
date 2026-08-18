@@ -33,15 +33,15 @@
       "enabled": true,
       "protocol": "openid-connect",
       "publicClient": false,
-      "secret": "ir-platform-oidc-secret-dev",
+      "secret": "__IR_OIDC_CLIENT_SECRET__",
       "standardFlowEnabled": true,
       "directAccessGrantsEnabled": true,
       "serviceAccountsEnabled": false,
       "redirectUris": [
-        "*"
+        "__PLATFORM_PUBLIC_URL__/*"
       ],
       "webOrigins": [
-        "*"
+        "__PLATFORM_PUBLIC_URL__"
       ],
       "protocolMappers": [
         {

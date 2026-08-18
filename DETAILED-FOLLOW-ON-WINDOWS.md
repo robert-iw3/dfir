@@ -44,7 +44,7 @@ Step 1 — Read the toolkit reports
     reports\<host>\Memory_Findings_*.json        <- per-PID YARA + memory signals
     reports\<host>\Combined_Findings_*.json      <- cross-source adjudication
     reports\<host>\YARA_Pivot_Report.md          <- ranked TP-class PID list
-    reports\<host>\Investigation_Plan_*.md       <- prioritised action list (if generated)
+    reports\<host>\Investigation_Plan_*.md       <- prioritized action list (if generated)
 
 Step 2 — Pivot here
     For each Open/Suspicious item in the plan, find the matching section below.
@@ -414,7 +414,7 @@ Get-NetTCPConnection -State Listen |
 | Listening port on unexpected process | Backdoor or lateral movement listener | `netstat -ano` as admin for full picture; correlate PID; check if port was open before infection window |
 | DNS cache has unusual or non-ASCII domain recently resolved | Possible DGA (Domain Generation Algorithm) C2 or exfil DNS | Inspect domain; submit to VT or passive DNS; correlate with first-seen timeline (Section 11) |
 | RPCSS listening on port 135 | Standard RPC endpoint mapper — always present | Close as FP |
-| RDP port 3389 or WinRM 5985/5986 listening | Remote access surface is open | Cross-check Section 19; confirm authorised and expected |
+| RDP port 3389 or WinRM 5985/5986 listening | Remote access surface is open | Cross-check Section 19; confirm authorized and expected |
 | Connections from AdobeCollabSync to local subnet IPs | Local collaboration discovery (mDNS/Bonjour-style, normal for Adobe collab) | Check if any connections go to non-local (public) IPs; if only LAN = FP |
 
 ---
@@ -449,11 +449,11 @@ Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Lsa' |
 |--------|--------------|-----------------|
 | Run key entry with a signed binary at expected path | Legitimate installed software | No action; note for baseline |
 | Run key entry pointing to `%TEMP%`, `%APPDATA%\Roaming`, `C:\Users\Public` | High suspicion — legitimate software does not auto-start from temp/public dirs | Extract binary; Section 19 signature check; Section 10/11 memory analysis if PID is running |
-| Run key entry for a binary you don't recognise | Potentially malicious; could be legitimate installer residue | `sigcheck64.exe` against the binary path; check Amcache for first-seen date (Section 15) |
+| Run key entry for a binary you don't recognize | Potentially malicious; could be legitimate installer residue | `sigcheck64.exe` against the binary path; check Amcache for first-seen date (Section 15) |
 | AdobeCollabSync in HKCU Run | Legitimate — Adobe Acrobat installs this so the collab service starts at login | Close as FP; confirms AdobeCollabSync is an installed component |
 | Non-standard service binary path (not under `C:\Windows\`) | Could be a rogue service install | Check signature and file hash; correlate with Event 7045 (new service installed) in System log |
 | LSA Authentication Packages contains anything beyond `msv1_0` | Non-standard authentication provider — may be credential capture DLL | Identify the DLL; compare to Microsoft baseline; Section 13 (credential access) |
-| LSA Security Packages contains an unfamiliar entry | Same pattern; LSA providers load in lsass space = credential capture surface | Treat as high-severity if unrecognised |
+| LSA Security Packages contains an unfamiliar entry | Same pattern; LSA providers load in lsass space = credential capture surface | Treat as high-severity if unrecognized |
 | WDigest `UseLogonCredential = 1` | Attacker forced plaintext credentials into memory | Immediate escalation; credential re-use likely; Section 13 |
 
 ---
@@ -499,7 +499,7 @@ Get-Content 'C:\Users\<user>\Desktop\admin_results.txt'
 
 ## 10 — Memory Carve (VAD address / in-memory hash)
 
-> **Canonical reference:** `WORKFLOW-WINDOWS.md` Phase 3 is the authoritative pipeline document for memory analysis. This section summarises the carve step; see that file for full `Analyze-Memory.ps1` parameter reference, engine routing (AFF4 -> MemProcFS, raw/dmp -> Volatility 3), and Binary Ninja carve workflow.
+> **Canonical reference:** `WORKFLOW-WINDOWS.md` Phase 3 is the authoritative pipeline document for memory analysis. This section summarizes the carve step; see that file for full `Analyze-Memory.ps1` parameter reference, engine routing (AFF4 -> MemProcFS, raw/dmp -> Volatility 3), and Binary Ninja carve workflow.
 
 When carve is needed to confirm a shellcode thread address or an in-memory DLL patch:
 
@@ -985,7 +985,7 @@ Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Services\bam\State\UserSettings
 |--------|--------------|-----------------|
 | Known attacker tool name in Prefetch (mimikatz, procdump, psexec, cobalt, beacon...) | Binary was executed on this host | Extract first-run timestamp; correlate with logon events (Section 16 4624/4648); escalate |
 | Suspicious binary in Prefetch from `AppData\Roaming` / `Temp` / `Public` path | User-written or downloaded dropper ran | Extract path from `.pf` contents (requires parser); correlate with browser history (Section 12 remote access playbook) |
-| Prefetch empty (0 .pf files, EnablePrefetcher=3) | Cleaning tool may have run, OR system is VM/NVMe with ReadyBoot disabled | Check Run keys for CCleaner, BleachBit; check Section 8 persistence; NVMe with SSD optimisation can legitimately have empty Prefetch |
+| Prefetch empty (0 .pf files, EnablePrefetcher=3) | Cleaning tool may have run, OR system is VM/NVMe with ReadyBoot disabled | Check Run keys for CCleaner, BleachBit; check Section 8 persistence; NVMe with SSD optimization can legitimately have empty Prefetch |
 | Amcache entry: SHA1 hash present but file no longer on disk | Binary was deleted after execution (anti-forensic) | SHA1 still searchable on VirusTotal; submit for reputation check |
 | BAM last-run time for a suspicious binary | Last time that binary ran, per-user | Correlate with logon events (Section 16); confirms interactive execution vs. service execution |
 | Shimcache entry for binary NOT also in Amcache | Binary existed on disk but may not have run | Lower confidence; treat as "was present" not "was executed"; still pivot on hash if available |

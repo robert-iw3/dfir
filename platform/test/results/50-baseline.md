@@ -2,7 +2,7 @@
 
 *What passing proves:* The deployed platform serves its API behind the SSO gate, with identity enforced rather than assumed.
 
-- Run: `uat_baseline.sh` — 2026-08-13 21:59:16Z
+- Run: `uat_baseline.sh` — 2026-08-17 21:42:10Z
 
 **Components — every tier answers**
 
@@ -21,6 +21,7 @@
 
 | Result | Assertion — with evidence |
 |---|---|
+| · | collection is signed with the key the receiver verifies against |
 | ✅ PASS | collection produced ubuntu-main/ |
 | ✅ PASS | hostname resolved from host-mount (ubuntu-main) |
 | ✅ PASS | machine-id recorded (32 chars, value withheld) |
@@ -62,7 +63,7 @@
 
 | Result | Assertion — with evidence |
 |---|---|
-| · | collection runs currently recorded: 117 |
+| · | collection runs currently recorded: 86 |
 | ✅ PASS | no machine-id maps to two host records |
 
 **Analysis — the parser gate holds on real evidence**
@@ -76,9 +77,9 @@
 
 | Result | Assertion — with evidence |
 |---|---|
-| ✅ PASS | 7 component(s) reporting resources |
-| · | stale reporters: worker (27e338e1f438),worker (7e7480b4bd16) (expected shortly after a restart) |
-| · | open capacity/resource alerts: 6 |
+| ✅ PASS | 5 component(s) reporting resources |
+| ✅ PASS | no reporter is stale |
+| · | open capacity/resource alerts: 2 |
 
 **Login branding — the custom theme is actually served**
 
@@ -95,11 +96,11 @@
 | ✅ PASS | the code graph matches the tree — services, scripts, routes and their UATs are current |
 | ✅ PASS | every documented link resolves, and every document is in the change-management inventory |
 | ✅ PASS | no narrative comments, and no file is majority prose |
-| ✅ PASS | runtime locks: 95 of 2048 in use (46 volumes, 49 containers) — room to create containers |
+| ✅ PASS | runtime locks: 109 of 2048 in use (62 volumes, 47 containers) — room to create containers |
 
 **Baseline**
 
 | Result | Assertion — with evidence |
 |---|---|
 
-**Verdict: PROVEN** — 34 assertions passed, 0 failed.
+**Verdict: PROVEN** — 35 assertions passed, 0 failed.

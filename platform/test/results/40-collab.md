@@ -2,13 +2,13 @@
 
 *What passing proves:* Three analysts share a case: one holds a task and the other is told without being stopped, a mention reaches only someone cleared for the case, the feed comes from the audit ledger itself, and search and handover refuse to show a compartmented case to a non-member.
 
-- Run: `uat_collab.sh` — 2026-08-13 20:16:53Z
+- Run: `uat_collab.sh` — 2026-08-17 13:09:27Z
 
 **1/7  Three analysts and two cases — one of them compartmented**
 
 | Result | Assertion — with evidence |
 |---|---|
-| ✅ PASS | alice and bob share case 8; only alice is in compartment case 9 |
+| ✅ PASS | alice and bob share case 176; only alice is in compartment case 177 |
 
 **2/7  Presence — who else is on this case, and who is not told**
 
@@ -68,7 +68,7 @@
 | Result | Assertion — with evidence |
 |---|---|
 | ✅ PASS | the handover renders and states the window it covers |
-| ✅ PASS | the open task on this case is on it (2 open) |
+| ✅ PASS | the open task on this case is on it (30 open) |
 | ✅ PASS | carol's handover carries nothing from the compartmented case — not the case, not the task title |
 | ✅ PASS | while still handing her the ordinary case's open work |
 | ✅ PASS | alice's carries both — her compartmented case AND the ordinary one |

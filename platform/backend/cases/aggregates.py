@@ -26,7 +26,8 @@ from .killchain import TACTIC_NAMES, TACTIC_ORDER, tactics_for
 from .models import (CollectionRun, CustodyEvent, Finding, FindingReclassification,
                      IndicatorSighting, Investigation, InvalidTransition, MemoryAnalysisRun,
                      MemoryCapture)
-from .rbac import IsAdmin, IsAnalystOrAdmin, role_of
+from .rbac import (IsAdmin, IsAnalystOrAdmin, may_see_investigation, role_of,
+                   scope_by_investigation, scope_investigations)
 
 # The verdicts that assert something happened. Everything else — Indeterminate, the false
 # positives, the unset — is counted separately and never merged in.
@@ -39,12 +40,21 @@ def _verdict_of(finding):
             or "")
 
 
+def _verdict_of_row(row):
+    """Same resolution as _verdict_of, over a values() dict rather than a model instance."""
+    raw = row.get("raw") or {}
+    return (row.get("verdict") or raw.get("Verdict")
+            or raw.get("adjudication", {}).get("Verdict") or "")
+
+
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def investigation_stats(request, investigation_id):
     """V1/V2/V4 — counts by tactic, verdict, source and day, over every finding."""
     inv = Investigation.objects.filter(id=investigation_id).first()
-    if not inv:
+    # False for a missing case as well as an unentitled one, and both answer 404 — which
+    # does not confirm to a non-member that a restricted case exists.
+    if not may_see_investigation(request.user, inv):
         return Response({"detail": "not found"}, status=404)
 
     findings = Finding.objects.filter(run__investigation=inv).select_related("run__host")
@@ -66,38 +76,43 @@ def investigation_stats(request, investigation_id):
     # Every field named here must exist on Finding: `.only()` resolves them against the model
     # and raises for one that does not, so a stray name takes the whole endpoint down rather
     # than being ignored. Severity is not a Finding field — it lives on the analysis rows.
-    for f in findings.only("verdict", "raw", "mitre", "created_at", "finding_type",
-                           "run__host__id", "run__host__hostname"):
-        verdict = _verdict_of(f) or "unset"
+    # `values()` rather than model instances: building 1300+ Finding objects was over half the
+    # cost of this endpoint, and none of the loop below needs a model. The columns are the same
+    # ones `.only()` named, so the aggregation sees exactly what it did before.
+    for f in findings.values("verdict", "raw", "mitre", "created_at", "finding_type",
+                             "run__host__id", "run__host__hostname"):
+        verdict = _verdict_of_row(f) or "unset"
         confirmed_one = verdict in CONFIRMING
         by_verdict[verdict] += 1
-        raw = f.raw or {}
+        raw = f["raw"] or {}
         # Techniques come from the STORED `mitre` list — the field the findings table
         # filters by — never from the raw payload's string, which disagrees with it on
         # promoted findings. A finding carrying several techniques counts under EACH:
         # that is what makes a bar's drill (`mitre__contains`) return exactly its rows,
         # and it means the per-technique counts cover the findings rather than
         # partitioning them.
-        f_techniques = [str(t) for t in (f.mitre or [])] or ["unmapped"]
+        f_techniques = [str(t) for t in (f["mitre"] or [])] or ["unmapped"]
         technique = f_techniques[0]
         for tq in f_techniques:
             by_tactic[tq] += 1
         by_source[str(raw.get("Source") or "collection")] += 1
-        when = raw.get("Timestamp") or (f.created_at.isoformat() if f.created_at else "")
+        created = f["created_at"]
+        when = raw.get("Timestamp") or (created.isoformat() if created else "")
         day = str(when)[:10] or "unknown"
         by_day[day] += 1
 
-        host = f.run.host
-        kc = killchain.setdefault((technique, day, host.id), {
+        host_id = f["run__host__id"]
+        host_name = f["run__host__hostname"]
+        kc = killchain.setdefault((technique, day, host_id), {
             "technique": technique, "day": day,
-            "host_id": host.id, "host": host.hostname,
+            "host_id": host_id, "host": host_name,
             "count": 0, "confirmed": 0,
         })
         kc["count"] += 1
         kc["confirmed"] += 1 if confirmed_one else 0
 
-        h = hosts.setdefault(host.id, {
-            "host_id": host.id, "host": host.hostname,
+        h = hosts.setdefault(host_id, {
+            "host_id": host_id, "host": host_name,
             "first_seen": day, "findings": 0, "confirmed": 0,
         })
         h["findings"] += 1
@@ -108,8 +123,8 @@ def investigation_stats(request, investigation_id):
             # machine exhibited which stage, and how much. Two hosts sharing a tactic set is
             # what the correlation engine links them on, so the picture and the engine are
             # looking at the same evidence.
-            pair = pairs.setdefault((host.hostname, tac), {
-                "host": host.hostname, "host_id": host.id, "tactic": tac,
+            pair = pairs.setdefault((host_name, tac), {
+                "host": host_name, "host_id": host_id, "tactic": tac,
                 "name": TACTIC_NAMES.get(tac, "No ATT&CK mapping"),
                 "count": 0, "confirmed": 0,
             })
@@ -123,7 +138,7 @@ def investigation_stats(request, investigation_id):
             })
             st["count"] += 1
             st["confirmed"] += 1 if confirmed_one else 0
-            st["hosts"].add(host.hostname)
+            st["hosts"].add(host_name)
             st["techniques"].update(t for t in f_techniques if t != "unmapped")
             if day != "unknown":
                 if st["first_day"] == "unknown" or day < st["first_day"]:
@@ -138,7 +153,7 @@ def investigation_stats(request, investigation_id):
             })
             t["count"] += 1
             t["confirmed"] += 1 if confirmed_one else 0
-            t["hosts"].add(host.hostname)
+            t["hosts"].add(host_name)
             if day != "unknown":
                 if t["first_day"] == "unknown" or day < t["first_day"]:
                     t["first_day"] = day
@@ -211,7 +226,9 @@ def investigation_coverage(request, investigation_id):
     collected is the next collection, and it is invisible in any per-host view.
     """
     inv = Investigation.objects.filter(id=investigation_id).first()
-    if not inv:
+    # False for a missing case as well as an unentitled one, and both answer 404 — which
+    # does not confirm to a non-member that a restricted case exists.
+    if not may_see_investigation(request.user, inv):
         return Response({"detail": "not found"}, status=404)
 
     runs = CollectionRun.objects.filter(investigation=inv).select_related("host")
@@ -247,7 +264,9 @@ def investigation_coverage(request, investigation_id):
 @permission_classes([IsAuthenticated])
 def run_timeline(request, run_id):
     """V3 — one run's findings in time order, each carrying the source that produced it."""
-    run = CollectionRun.objects.filter(id=run_id).select_related("host").first()
+    run = CollectionRun.objects.filter(id=run_id).select_related("host", "investigation").first()
+    if run is not None and not may_see_investigation(request.user, run.investigation):
+        run = None
     if not run:
         return Response({"detail": "not found"}, status=404)
 
@@ -281,7 +300,9 @@ def ioc_spread(request, ioc_type, value):
     Reads `IndicatorSighting`, not `IOC`: the rollup is what survives archival of the runs,
     and this is the question that has to keep answering afterwards.
     """
-    sightings = IndicatorSighting.objects.filter(ioc_type=ioc_type, value=value)
+    sightings = scope_by_investigation(
+        IndicatorSighting.objects.filter(ioc_type=ioc_type, value=value),
+        request.user, "investigation_id")
     by_inv = defaultdict(list)
     for s in sightings:
         by_inv[s.investigation_id].append(s)
@@ -419,7 +440,9 @@ def run_custody(request, run_id):
     an analyst cannot see is a control that protects the record without informing the person
     relying on it.
     """
-    run = CollectionRun.objects.filter(id=run_id).select_related("host").first()
+    run = CollectionRun.objects.filter(id=run_id).select_related("host", "investigation").first()
+    if run is not None and not may_see_investigation(request.user, run.investigation):
+        run = None
     if not run:
         return Response({"detail": "not found"}, status=404)
 
@@ -467,7 +490,10 @@ class InvestigationTransitionView(APIView):
 
     def post(self, request, investigation_id):
         inv = Investigation.objects.filter(id=investigation_id).first()
-        if not inv:
+        # A transition is a WRITE into a case, so membership decides it rather than the role
+        # alone. This is the not-found path too — `may_see_investigation` is False for a
+        # missing case — and both answer 404, which does not confirm a restricted case exists.
+        if not may_see_investigation(request.user, inv):
             return Response({"detail": "not found"}, status=404)
         target = str(request.data.get("status", "")).strip()
         if not target:
@@ -501,9 +527,9 @@ def stalled_investigations(request):
     """T1 — open cases past an age ceiling, and concluded ones never archived."""
     days = int(request.query_params.get("days", 30))
     cutoff = timezone.now() - timezone.timedelta(days=days)
-    active = Investigation.objects.filter(
+    active = scope_investigations(Investigation.objects, request.user).filter(
         status__in=(Investigation.OPEN, Investigation.CONTAINED), updated_at__lt=cutoff)
-    unarchived = Investigation.objects.filter(
+    unarchived = scope_investigations(Investigation.objects, request.user).filter(
         status=Investigation.CONCLUDED, concluded_at__lt=cutoff)
     return Response({
         "age_ceiling_days": days,
@@ -587,7 +613,11 @@ def findings_backlog(request):
         window = 30
     start = (timezone.now() - timedelta(days=window)).date()
 
-    qs = Finding.objects.all()
+    # Fleet-wide by design, but a fleet a reader is not on does not count toward
+    # their totals: an unscoped aggregate reports a restricted case's volume to
+    # everyone, and its drill-through hands over the rows.
+    qs = scope_by_investigation(Finding.objects.all(), request.user,
+                                "run__investigation_id")
     inv = request.query_params.get("investigation")
     if inv:
         qs = qs.filter(run__investigation_id=inv)
@@ -654,7 +684,11 @@ def findings_funnel(request):
     Each stage is a COUNT OVER THE SAME ROWS narrowed further, with the filter the findings
     table uses to reproduce it — a stage nobody can open is a number taken on trust.
     """
-    qs = Finding.objects.all()
+    # Fleet-wide by design, but a fleet a reader is not on does not count toward
+    # their totals: an unscoped aggregate reports a restricted case's volume to
+    # everyone, and its drill-through hands over the rows.
+    qs = scope_by_investigation(Finding.objects.all(), request.user,
+                                "run__investigation_id")
     inv = request.query_params.get("investigation")
     if inv:
         qs = qs.filter(run__investigation_id=inv)
@@ -691,7 +725,11 @@ def findings_matrix(request):
     identified only by byte offsets, so no (host, type) pair can ever carry both sources and
     the chart was a permanent 0/N. Each entry drills with the table's own filters.
     """
-    qs = Finding.objects.all()
+    # Fleet-wide by design, but a fleet a reader is not on does not count toward
+    # their totals: an unscoped aggregate reports a restricted case's volume to
+    # everyone, and its drill-through hands over the rows.
+    qs = scope_by_investigation(Finding.objects.all(), request.user,
+                                "run__investigation_id")
     inv = request.query_params.get("investigation")
     if inv:
         qs = qs.filter(run__investigation_id=inv)

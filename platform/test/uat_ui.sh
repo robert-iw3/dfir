@@ -8,14 +8,14 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PLATFORM="$(cd "${HERE}/.." && pwd)"
 RUNTIME="${IR_RUNTIME:-podman}"
 BE="${IR_BACKEND_CONTAINER:-ir-enclave_backend_1}"
-FAILED=0
 
-say()  { printf '\n\033[1;36m== %s\033[0m\n' "$*"; }
-ok()   { printf '  \033[1;32mPASS\033[0m %s\n' "$*"; }
-bad()  { printf '  \033[1;31mFAIL\033[0m %s\n' "$*"; FAILED=1; }
+. "${HERE}/lib/report.sh"
 
 [[ $(${RUNTIME} ps --format '{{.Names}}' | grep -cx "${BE}") -gt 0 ]] || {
     printf '\033[1;31mbackend container %s is not running\033[0m\n' "${BE}"; exit 1; }
+
+report_begin 65 ui "Analyst capabilities, asserted against a real intrusion" \
+    "Every analyst-facing view answers from seeded evidence with known ground truth — paging, correlation, visualization, case work, custody and export — rather than rendering without having been asked anything."
 
 # The whole suite runs inside the backend: it holds the API, both databases and an admin
 # identity, so no management port has to be opened to test.
@@ -38,6 +38,32 @@ if [[ -z "${UNDEF}" ]]; then
         --include='*.jsx' --include='*.js' --include='*.css' | sort -u | wc -l) distinct in use)"
 else
     bad "undefined CSS variables — these render black, not styled: $(echo ${UNDEF} | tr '\n' ' ')"
+fi
+
+say "0b/8  The reverse-engineering page can start a session, not only close one"
+# The disassembler runs on air-gapped hardware, so the platform's part is to name the regions
+# and mint the commands. Asserted against the SERVED bundle: a control that exists only in
+# the source reaches no analyst.
+FE_BUNDLE="$(${RUNTIME} exec "${FRONTEND:-ir-enclave_frontend_1}" sh -c \
+    'cat /usr/share/nginx/html/assets/*.js 2>/dev/null' | wc -c)"
+if [[ "${FE_BUNDLE:-0}" -gt 1000 ]]; then
+    ok "the built bundle is being served ($(( FE_BUNDLE / 1024 )) KB)"
+else
+    bad "no built bundle is being served — every assertion below would pass vacuously"
+fi
+for NEEDLE in "open in RE" "Record determination" "Reverse-engineering sessions" "download session kit"; do
+    N="$(${RUNTIME} exec "${FRONTEND:-ir-enclave_frontend_1}" sh -c \
+        "grep -c '${NEEDLE}' /usr/share/nginx/html/assets/*.js 2>/dev/null | paste -sd+ | bc" 2>/dev/null)"
+    [[ "$(printf '%s' "${N:-0}" | tr -cd '0-9')" -gt 0 ]] \
+        && ok "the served UI offers \"${NEEDLE}\"" \
+        || bad "\"${NEEDLE}\" is not in the served UI — the source has it, the bundle does not"
+done
+# The two ends of the work are named for which end they are: a button that says "analyze"
+# when it means "write up what you found" costs a wrong click in the middle of the night.
+if grep -rq '>\s*analyze\s*<' "${FE}/pages/Reversing.jsx"; then
+    bad "the region row still offers a bare \"analyze\" — ambiguous between starting and finishing"
+else
+    ok "the region actions distinguish opening a session from recording a determination"
 fi
 
 say "1/8  Seed the 20-host intrusion and correlate it"
@@ -905,4 +931,5 @@ if [[ "${FAILED}" -eq 0 ]]; then
 else
     printf '\033[1;31m  UI UAT FAILED\033[0m (see above)\n'
 fi
+report_finish
 exit "${FAILED}"

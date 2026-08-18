@@ -76,6 +76,10 @@ class Session:
         self.origin = f"{u.scheme}://{u.netloc}"
         self.cookies = {}
         self._lock = threading.Lock()
+        # Requests re-sent after reaching the server. A GET is safe to repeat at the transport
+        # layer but not always at the application's: an endpoint that RECORDS the attempt sees
+        # two, so anything reconciling a server-side ledger needs this count.
+        self.resent = 0
         # One connection PER THREAD, not per Session: http.client is not thread-safe, and two threads on
         # one socket interleave requests and corrupt the TLS stream.
         self._tl = threading.local()
@@ -125,9 +129,14 @@ class Session:
                 # database ends up ahead of the agent's own ledger — which the fidelity
                 # assertions correctly report as a lost or doubled write.
                 sent = False
+                # Bytes may reach the server from here on. `sent` is stricter — it means the
+                # write COMPLETED — and a write that failed part way may still have delivered
+                # a whole request, so retrying it can double a row the agent counts once.
+                wrote = False
                 try:
                     if self.conn is None:
                         self._connect()
+                    wrote = True
                     self.conn.request(method, target, body=body, headers=h)
                     sent = True
                     resp = self.conn.getresponse()
@@ -148,6 +157,9 @@ class Session:
                     # is not, so it surfaces as the failure it was.
                     if attempt == 4 or (sent and method not in ("GET", "HEAD")):
                         raise
+                    if wrote:
+                        with self._lock:
+                            self.resent += 1
                     # NO backoff on the first retry: the common case is a kept-alive connection the server closed mid-
                     # idle, where an immediate reconnect succeeds.
                     if attempt > 1:
@@ -309,12 +321,15 @@ class Run:
         # error is never reported as a permission failure.
         self.rbac_unserved = 0
         self.export_unserved = 0
+        # Export attempts the transport re-sent after they had already arrived: the platform
+        # ledgers each arrival, so these are decisions the agent cannot account for.
+        self.export_resent = 0
         self.expected_403 = 0              # RBAC refusals that are CORRECT under load
         self.marker = cfg["marker"]
 
-    def record(self, phase, cls, status, ms, error=""):
+    def record(self, phase, cls, status, ms, error="", resent=0):
         with self.lock:
-            self.ops.append((phase, cls, status, round(ms, 1), error))
+            self.ops.append((phase, cls, status, round(ms, 1), error, resent))
 
     # ---- one activity iteration per agent -----------------------------------------
     def step(self, agent, phase, i):
@@ -343,18 +358,20 @@ class Run:
             note = {"investigation": inv, "kind": "observation",
                     "summary": f"{self.marker} {agent.username} {phase} {i}",
                     "body": "load harness entry — removed by teardown"}
+            r0 = agent.s.resent
             code, ms, body, err = agent.req("POST", "/api/notes/", note)
-            self.record(phase, "write_note", code, ms, err)
+            self.record(phase, "write_note", code, ms, err, agent.s.resent - r0)
             if code == 201:
                 with self.lock:
                     self.ledger["notes"] += 1
             # Contention on purpose: everyone re-adjudicates the same few findings.
             fid = cfg["finding_ids"][i % len(cfg["finding_ids"])]
             verdict = CHURN_VERDICTS[i % 2]
+            r0 = agent.s.resent
             code, ms, body, err = agent.req(
                 "POST", f"/api/findings/{fid}/reclassify/",
                 {"verdict": verdict, "note": f"{self.marker} churn by {agent.username}"})
-            self.record(phase, "write_verdict", code, ms, err)
+            self.record(phase, "write_verdict", code, ms, err, agent.s.resent - r0)
             if code == 200 and body:
                 with self.lock:
                     self.ledger["reclassify"].append(
@@ -381,10 +398,14 @@ class Run:
         # The export right, exercised under load on a subset — completions and denials
         # both belong in the export ledger (B1.4), which the UAT reconciles.
         if i % 7 == 0:
+            resent_before = agent.s.resent
             code, ms, _, err = agent.req(
                 "GET", f"/api/findings/export/?fmt=csv&investigation={inv}", timeout=120)
-            self.record(phase, "export", code, ms, err)
+            self.record(phase, "export", code, ms, err, agent.s.resent - resent_before)
             with self.lock:
+                # An export the transport re-sent reached the platform twice and was ledgered
+                # twice, while the agent can only count the answer it got.
+                self.export_resent += agent.s.resent - resent_before
                 # Same rule as RBAC above: an export that was never served says nothing about
                 # the export boundary, in either direction.
                 if code >= 500 or code == 0 or code == 429:
@@ -417,6 +438,10 @@ class Run:
                 "n": len(sub), "ok": len(ok),
                 "errors_5xx": sum(1 for r in sub if r[2] >= 500),
                 "resets": sum(1 for r in sub if r[2] == 0),
+                # Requests the transport re-sent after bytes had already gone out. The
+                # platform may have applied each one twice while the agent counted the one
+                # answer it got, so this is what bounds a fidelity comparison.
+                "resent": sum(r[5] for r in sub if len(r) > 5),
                 # The ingress refusing on purpose. Not a server error and not a failure of
                 # the application — it is the fleet meeting the rate limit, which is a
                 # capacity finding and is reported as one.
@@ -558,7 +583,7 @@ def main():
             run.step(agent, "activity", i)
             i += 1
             if think > 0:
-                # Jittered, so fifty agents do not synchronise into a wave the ingress sees
+                # Jittered, so fifty agents do not synchronize into a wave the ingress sees
                 # as one burst — which is the herd shape again, inside the activity phase.
                 time.sleep(think * (0.5 + random.random()))
 
@@ -579,7 +604,7 @@ def main():
 
         def burst(agent):
             # The ramp measures how many CONCURRENT analysts the platform carries, not how it
-            # answers a synchronised thundering herd of them — that question is the arrival
+            # answers a synchronized thundering herd of them — that question is the arrival
             # rate, asked separately. The stagger spans at least the window the ingress needs
             # to ADMIT this many fresh dials at its configured accept rate: agents idle since
             # an earlier step all reconnect on first use, and a spread narrower than the
@@ -618,11 +643,21 @@ def main():
     out["ramp"] = {"knee": knee, "ceiling_ms": ceiling, "degraded_at": degraded,
                    "steps_run": steps}
 
+    # Attempts the platform may have applied without the agent counting an answer, per class,
+    # over EVERY phase. The database counts a fidelity check reads are not phase-scoped, so a
+    # bound taken from one phase misses the ramp's own dropped and re-sent writes.
+    out["uncounted"] = {}
+    for cls in sorted({o[1] for o in run.ops}):
+        rows = [o for o in run.ops if o[1] == cls]
+        out["uncounted"][cls] = (sum(1 for r in rows if r[2] == 0)
+                                 + sum(r[5] for r in rows if len(r) > 5))
+
     out["ledger"] = run.ledger
     out["confidentiality"] = {"violations": run.violations, "checks": run.conf_checks,
                               "expected_403": run.expected_403,
                               "rbac_unserved": run.rbac_unserved,
-                              "export_unserved": run.export_unserved}
+                              "export_unserved": run.export_unserved,
+                              "export_resent": run.export_resent}
     print(json.dumps(out))
     return 0
 

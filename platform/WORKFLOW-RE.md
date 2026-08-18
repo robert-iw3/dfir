@@ -27,20 +27,73 @@ it was attributed to where the analyzer could determine one.
 
 Claim a region before working it.
 
-## 3. Stage a session
+## 3. Pick the regions — a workset, not a bucket
 
-Regions do not stream to the workstation. The session has no network namespace at all, so
-it cannot reach the object store; regions are staged to it first by a mediator that does
-have store access.
+A host's carved bucket is the wrong unit to open. Parallel analysis carves faster than
+anyone examines, so a serious engagement leaves hundreds of regions on one host, and a
+disassembler pointed at all of them is a crash rather than a workflow.
+
+A **workset** names which regions a session is for: one investigation, one host, at most 50
+regions. In *Reverse engineering*, tick the regions you want and press **open in RE
+session**, or press **open in RE** on a single row.
+
+The platform proposes a shortlist if you would rather start from one. It ranks by what it
+already recorded when the region was carved — a hit promoted into the triage queue, the
+severity of that hit, RWX memory, a named rule rather than a generic one, how many distinct
+strings matched, whether the same bytes appear on one host or thirty, and whether the region
+has already been examined. Every proposal carries the reasons it ranked, so you can disagree
+with it. Ranking proposes; you dispose.
+
+A hostname outlives an incident, so a host collected again under a new case carries regions
+from both. A proposal covers **one** case — the newest unless you name another — and lists
+the others rather than folding them in. A workset spanning two cases is refused.
+
+## 3a. Download the session kit
+
+Pressing **open in RE session** mints a kit. Download it, and it carries everything the
+session needs:
+
+```
+re-session-<workset>.tar.gz
+  run.sh              stage this workset's regions, then open them
+  stage_regions.sh    the mediator — the only step with object-store credentials
+  launch.sh           the contained session
+  binja-settings.json  ghidra-session.sh  README.txt
+```
+
+**No evidence is in the kit.** Carved regions are malware, and they never cross a browser:
+the mediator pulls them from the object store when `run.sh` runs. The scripts inside are the
+ones that shipped with this backend — they are copied into the image at build time, so a kit
+and the platform that issued it are never out of step.
+
+```bash
+tar -xzf re-session-<workset>.tar.gz
+cd re-session-<workset>
+./run.sh
+```
+
+`run.sh` stages the regions, **verifies each one against the hash recorded when it was
+carved**, opens them in the tool, and **wipes the staged bytes when the session ends** —
+including when the session is interrupted. A mismatch stops the session: bytes that are not
+what was carved never reach a disassembler. Set `IR_KEEP_SESSION=1` to keep them
+deliberately.
+
+Staging runs on the machine with the platform runtime, because it reads the enclave's object
+store; the session itself has no route to the enclave at all.
+
+## 3b. Stage by hand
+
+The two commands `run.sh` runs, if the kit cannot be taken to the machine:
 
 ```bash
 cd platform/re-workstation
-./stage_regions.sh --host UAT-ENDPOINT
+./stage_regions.sh --workset <workset>          # exactly that workset's regions
+./stage_regions.sh --host UAT-ENDPOINT          # or a whole host's bucket
 ```
 
-This pulls that host's regions into `session-<HOST>/`, sets each file `0400`, and writes a
-manifest of object keys and sizes **without payloads** — the session has provenance for
-every region and no path back to the store.
+This writes each region `0400` with a manifest of object keys, sizes and hashes **without
+payloads** — provenance for every region and no path back to the store. Staged filenames
+carry the capture id, so two captures of one host cannot overwrite each other.
 
 One host per session. The stager refuses to mix two hosts in one directory.
 
@@ -100,6 +153,18 @@ Requirements:
 The `CarvedRegion` row and its analyses are kept. What a region was determined to be
 remains part of the investigation after the sample is gone. The purge appears in the
 investigation record and in the custody ledger.
+
+## 6a. What the platform can see
+
+*Reverse engineering* lists open sessions: the workset, its host, how many regions, who
+assembled it, and whether it has been staged. A workset in session is advisory, never a
+lock — two people may examine the same region, and the platform says so rather than
+preventing it.
+
+What happens inside the session is not observable, deliberately: the workstation is
+contained and has no way to report. The platform records the ends — the kit it issued, and
+the determination that came back — and a determination made during a staged session names
+that session, so what a session produced can be answered later.
 
 ## 7. Close the session
 

@@ -72,7 +72,7 @@ r = urllib.request.Request('http://127.0.0.1:8000/api' + path, method=method, da
                                     'Content-Type': 'application/json'})
 try:
     resp = urllib.request.urlopen(r, timeout=10)
-    print(resp.getcode(), resp.read().decode().replace(chr(10), ' ')[:4000])
+    print(resp.getcode(), resp.read().decode().replace(chr(10), ' ')[:400000])
 except urllib.error.HTTPError as e:
     print(e.code, e.read().decode().replace(chr(10), ' ')[:400])
 except Exception as e:
@@ -214,15 +214,31 @@ for path in "tree" "tags" "tasks"; do
         && ok "${path}: 404 for a non-member of the restricted case" \
         || bad "${path} answered ${C%% *} to a non-member — the compartment leaks"
 done
-BOARD="$(req "${TOK_OUT}" GET "/tasks/board/" None)"
+# Asked OF THE CASE, not of the whole board: the answer stays exact however many tasks the
+# deployment holds, and the count comes from the database rather than from how much of a
+# response happened to fit.
+BOARD="$(req "${TOK_OUT}" GET "/tasks/board/?investigation=${INV}" None)"
 BOARD_N="$(printf '%s' "${BOARD}" | python3 -c "
 import json, sys
 p = sys.stdin.read().split(' ', 1)
-d = json.loads(p[1]) if len(p) > 1 and p[1].strip().startswith('{') else {'tasks': []}
-print(len([t for t in d.get('tasks', []) if t.get('investigation') == ${INV}]))" 2>/dev/null)"
-[[ "${BOARD_N}" == "0" ]] \
-    && ok "the cross-case board shows a non-member none of this case's tasks" \
-    || bad "the board leaked ${BOARD_N} task(s) of a restricted case"
+try:
+    d = json.loads(p[1]) if len(p) > 1 else {}
+except ValueError:
+    print('unreadable')
+    raise SystemExit
+# count is the database's answer for the whole filtered set; the rows are checked too, so a
+# server that ignored the filter cannot pass on the count alone.
+rows = [t for t in d.get('tasks', []) if t.get('investigation') == ${INV}]
+print(max(int(d.get('count', 0)), len(rows)))" 2>/dev/null)"
+# Three values, not two: a board this probe could not read is UNMEASURED, and reporting that
+# as a leak sends the reader hunting a scoping bug that is not there.
+if [[ "${BOARD_N}" == "0" ]]; then
+    ok "the cross-case board shows a non-member none of this case's tasks"
+elif [[ "${BOARD_N}" =~ ^[0-9]+$ ]]; then
+    bad "the board leaked ${BOARD_N} task(s) of a restricted case"
+else
+    bad "the board could not be read (${BOARD_N:-no answer}) — the compartment is unmeasured, not proven"
+fi
 
 report_finish
 exit "${FAILED}"

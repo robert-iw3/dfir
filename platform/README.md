@@ -1,4 +1,4 @@
-# DFIR Framework
+# DFIR Framework — the platform
 
 The served half of the framework. The offline host toolkit ([`../toolkit/`](../toolkit/))
 covers the endpoint; everything after it happens here — evidence sealed at collection,
@@ -287,7 +287,7 @@ custody, retention, RBAC, audit, correlation — is complete and exercised.
 
 **Defects are tracked and fixed.** UAT exercised the Linux memory-analysis path in depth and
 surfaced gaps in existing detection logic; those are recorded as remediation items in
-[`planning/BACKLOG.md`](../planning/BACKLOG.md) §12a. Each fix is recorded in
+[`planning/BACKLOG.md`](../archive/planning/BACKLOG.md) §12a. Each fix is recorded in
 [`change_logs/`](change_logs/) with the evidence that found it, what changed, and what
 remains open.
 
@@ -305,39 +305,94 @@ Ordered and detailed in
 behind it, and their open questions, are in
 [`planning/DECISIONS.md`](../planning/DECISIONS.md).
 
+**What this repository is, and what it is not.** Everything published here is the **delivered
+v1**: a proven concept of operations and a minimum viable platform — evidence in through a
+segmented ingress, analysis, correlation, case work, custody and audit, each asserted against a
+running deployment by the UAT suite rather than described. It is complete enough to run an
+investigation end to end, and it is deliberately not an enterprise deployment.
+
+**The remaining roadmap is developed privately and does not sync here.** The open tracks below
+are what turn a working v1 into an enterprise, production-ready DFIR platform — fleet-scale
+ingest, multi-host analysis capacity, horizontal data scale, Windows coverage, reliability under
+years of accumulated data, orchestration with rolling updates, and the administrative and
+observability surfaces that go with operating it. They are listed so the direction is legible;
+their design documents, planning and implementation stay in the private tree until a track is
+delivered, at which point its design record publishes alongside the code that proves it.
+
+Delivered ones are listed too — a roadmap showing only what is left says nothing about what the
+platform is. **Delivered** means a UAT asserts it against the deployed stack, and the backlog
+names which one.
+
+**Open**
+
 | Track | Covers |
 |---|---|
-| Windows endpoint support | AFF4 collection (go-winpmem) and MemProcFS-based analysis |
-| High-performance evidence pipeline | Resumable chunked ingest of multi-GB memory images (AFF4 / raw / LiME), and the derivation chain over what is extracted from them |
-| Parallel analysis capacity | Scaling memory analysis across workers and hosts for fleet-scale intake |
-| Horizontal data scalability | Streaming/resumable evidence pipeline, distributed object storage, capacity sizing |
-| Sharded SQL metadata storage | Optional horizontal partitioning of the metadata stores |
-| Campaign correlation models | Beyond shared-indicator clustering — scoring, confidence modeling, actor attribution |
-| UI enhancements | Case management, visualization with drill-down, data management |
-| Web Server SRG | DISA Web Server SRG hardening of the web tier and its runtime |
-| Ansible automation | Multi-host deployment and host preparation, lint-gated |
+| **AG** — Reliability under accumulated data | Operational-table retention, abandoned-session sweep, and a harness that ages a stack before asserting on it |
+| **W** — Windows endpoint support | AFF4 collection (go-winpmem) and MemProcFS-based analysis |
+| **E** — High-performance evidence pipeline | Resumable chunked ingest of multi-GB memory images (AFF4 / raw / LiME), and the derivation chain over what is extracted from them |
+| **A** — Parallel analysis capacity | Worker replicas are delivered; multi-host analysis nodes and queue hygiene remain |
+| **D** — Database and storage scale | Distributed object storage, capacity sizing, optional sharded SQL metadata |
+| **R** — Remote collection | Reaching a suspected endpoint nobody can walk up to |
+| **SRG** — Web Server SRG | The remaining `implement` controls of the web tier and its runtime |
+| **O** — Observability | A log-forwarding endpoint to any SIEM (v1); an optional HyperDX dashboard, admin workstation only (v2) |
+| **DCO** — Connector Phase A/B | The sealed one-way projection out, and the advisory path back |
+| **H** — API exposure hardening | Per-principal quotas, bulk reads ledgered like exports, enumeration detection, step-up auth for acts — not an API firewall, which would break end-to-end TLS |
+| **C3** — Correlation engine v3 | Direction and spread, the rejected alternative with the evidence that would settle it, sufficiency, absence as evidence, containment advice, calibration |
+| **P** — API tier performance (v2) | Aggregate in the database instead of in Python — the profile puts 77% of the one endpoint that fails under load in materializing rows, not in SQL or logic — then materialized stats per correlation run. Rust is scoped to the collector and the DMZ receiver, where the constraint is deployment footprint and trust boundary, and deliberately not to the API |
+| **Ansible automation** | Multi-host deployment and host preparation, lint-gated |
+| **N** — Nomad orchestration (v2) | A scheduler for placement and rolling updates, and a sealed CI path that ships a fix to a running deployment without CI ever reaching into the enclave |
+| **AW** — Admin workstation (v2) | An administrator's console with full reach and no new way in |
 
-### Known limit: analysis throughput
+**Delivered**
 
-The platform analyzes **one capture at a time**. A 24 GB capture takes 75–100 minutes, so a
-20-host incident is roughly a day of wall-clock and a 100-host incident is closer to a week.
+| Track | Covers |
+|---|---|
+| **L** — Linux endpoint coverage | Collection depth and detection correctness, including the structural gate before a C2 label |
+| **C** — Campaign correlation | Behavior graph, weighted linkage, confidence bands, fingerprints, attribution; C1 and C2 both fixed |
+| **U/V** — UI and visualization | Case management, seven visualization tracks, drill-down, data management |
+| **B1** — Case work | Scoping and compartments, custody, case tree and task board, export ledger, collaboration, search, handover |
+| **S/T** — Schema and lifecycle | DB-enforced identity, adjudication history, lifecycle state machine, audit checkpoints, archive and restore |
+| **M** — Many workstations | 50 concurrent analysts, per-workstation identity, connection distribution, egress workers |
+| **SEC** — Assessment remediation | Identity assertable via client headers, unauthenticated read/delete on the DMZ receiver, evidence-derived strings reaching a shell, compartments bypassed on export and aggregates, and a credential the app tier held that the service rejected — each closed by a fix AND an assertion in `uat_security.sh`, which runs every regression |
+| **Credential management** | Per-deployment generation of every setup secret, recorded in Vault and readable by the administrator's own login — never only on the host that ran the deploy |
+| **A-1/A-2** — Audit trail | Sign-on, every write, and attribution to a person rather than a pool principal |
+| **RE-S** — RE workstations at scale | Worksets rather than buckets: ranked, capped, staged by a mediator that verifies hashes and wipes afterwards |
+| **KC** — Identity store | Keycloak on the platform database, leased credentials, enforced separation |
 
-The ceiling is staging I/O rather than CPU: each analysis copies the whole capture from the
-object store to local disk before Volatility can seek in it. Where the object store and the
-staging volume share a device, a single transfer at default concurrency is enough to make
-the object store report its own drive unhealthy and refuse reads — which is why transfer
-concurrency is deliberately low (`IR_S3_CONCURRENCY`) and why separating those devices is a
-prerequisite for any concurrency above one.
+### Parallel analysis — configuration and sizing
 
-Two related settings are load-bearing for anyone raising throughput:
+The platform analyzes **N captures at once**: one queue, N workers, each taking one capture.
+Proven by `test/uat_workers.sh` — five workers draining a 25-endpoint surge with six analyses
+in flight at one instant, every capture analyzed exactly once, every analysis attributed to
+the worker that ran it.
 
-- `IR_VOL3_TIMEOUT` bounds a single analysis. The broker's visibility timeout is derived
-  from it; raising one without the other causes a running analysis to be redelivered and
-  analyzed a second time in parallel.
-- `IR_YARA_PROC_TIMEOUT` bounds the per-process YARA scan. Too low and the scan abandons
-  processes part-way, which costs both the matches and the carved regions that come from
-  them; the analyzer reports this as *YARA Scan Coverage Incomplete*.
+**Configuration** (`deploy/.env`):
 
-Scaling this out — horizontal workers, per-capture distributed locking, admission control by
-staging capacity, and removing the staging copy — is the **Parallel analysis capacity**
-track above.
+| Setting | Default | Meaning |
+|---|---|---|
+| `IR_WORKER_REPLICAS` | `1` | Workers, primary included. `5` runs worker + worker-2..5. Raising it stamps replica pairs from a generator; lowering it removes and deregisters the excess on the next deploy. |
+| `IR_IP_WORKERn` | `.213+` | One static address per replica — configuration, not discovery. |
+| `IR_VOL3_TIMEOUT` | `10800` | Bounds one analysis; the broker's visibility timeout derives from it. Raising one without the other redelivers a running analysis mid-pass. |
+| `IR_YARA_PROC_TIMEOUT` | — | Bounds the per-process YARA scan; too low costs matches *and* the carved regions that come from them (reported as *YARA Scan Coverage Incomplete*). |
+| `IR_S3_CONCURRENCY` | low | Staging transfer concurrency. Where the object store and scratch share a device, one aggressive transfer makes the store report its own drive unhealthy. |
+
+**Sizing rules** — each concurrent analysis costs, independently:
+
+- **Scratch disk:** one full capture staged per slot. `N × largest supported capture`, plus
+  carve headroom, must fit the filesystem backing the scratch volumes. Every replica has its
+  own volume so no analysis can evict another's staging.
+- **CPU:** one Volatility pass saturates a core and bursts wider. Budget ≥ 1.5 cores per
+  slot; replicas run `CELERY_CONCURRENCY=1` so an OOM kills one analysis, not two.
+- **Memory:** analyzer working set scales with capture size; 4–8 GB per slot for real
+  captures.
+- **Postgres:** `max_connections ≥ 60 (base tier) + 3 × workers`. At the defaults (100),
+  the wall is ~13 workers; raise it before raising the fleet past that.
+- **I/O separation:** object store and scratch on separate devices is the prerequisite for
+  any real concurrency — the staging copy is the bottleneck, not CPU.
+
+**Phase caps.** 50 workers is the supported ceiling for this phase (the enterprise-surge
+target: a SIEM flags a fleet, memory arrives from every host at once). 43 replicas is the
+single-host address ceiling — past one host, capacity means analysis hosts on the multihost
+mesh, and automatic provisioning of those is the Nomad/Ansible track. Per-capture latency is
+unchanged (a 24 GB capture is still 75–100 minutes); parallelism buys fleet throughput, so a
+20-host incident at 5 workers is an afternoon rather than a day.

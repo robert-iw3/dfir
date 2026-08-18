@@ -282,7 +282,7 @@ Verified by: test/uat_srg_webtier.sh — connection and stream limits asserted a
 					<ATTRIBUTE_DATA>CCI-000054</ATTRIBUTE_DATA>
 				</STIG_DATA>
 				<STATUS>NotAFinding</STATUS>
-				<FINDING_DETAILS>MITIGATED. Sessions are held server-side in Redis, not in the client's cookie, so signing out or cancelling a session ends it for real. The gate is a mesh service in its own right: Redis binds loopback only, so the gate reaches it through its own Connect sidecar and its access is an intention rather than network reachability. Database 1 keeps analyst sessions out of the task broker's keyspace.
+				<FINDING_DETAILS>MITIGATED. Sessions are held server-side in Redis, not in the client's cookie, so signing out or canceling a session ends it for real. The gate is a mesh service in its own right: Redis binds loopback only, so the gate reaches it through its own Connect sidecar and its access is an intention rather than network reachability. Database 1 keeps analyst sessions out of the task broker's keyspace.
 
 Evidence: deploy/enclave/docker-compose.yml (oauth2-proxy --session-store-type=redis, oauth2-proxy- sidecar), hashicorp/consul/config-entries/ir-redis.hcl, hashicorp/consul/register-mesh.sh
 
@@ -8332,7 +8332,7 @@ Verified by: test/uat_boundary.sh — the bastion cannot reach the enclave ingre
 					<ATTRIBUTE_DATA>CCI-002322</ATTRIBUTE_DATA>
 				</STIG_DATA>
 				<STATUS>NotAFinding</STATUS>
-				<FINDING_DETAILS>MITIGATED. Cancelling a Boundary session immediately drops the analyst's connection, and the broker is supervised so it re-establishes only as a new authorized session.
+				<FINDING_DETAILS>MITIGATED. Canceling a Boundary session immediately drops the analyst's connection, and the broker is supervised so it re-establishes only as a new authorized session.
 
 Evidence: hashicorp/access/boundary_session.sh
 
