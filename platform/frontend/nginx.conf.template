@@ -101,15 +101,26 @@ server {
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_set_header X-Proxy-Auth "${IR_SSO_PROXY_SECRET}";
-        # Identity forwarded by the SSO gate; the backend trusts these only alongside
-        # the shared X-Proxy-Auth secret set above.
+        # Identity forwarded by the SSO gate; the backend trusts these only alongside the
+        # shared X-Proxy-Auth secret set above — so this hop is where the boundary has to
+        # hold, because everything past it is already trusted.
+        #
+        # oauth2-proxy runs IN PATH and replaces the X-Forwarded-* set on the request it makes
+        # upstream, so those carry its verdict. The X-Auth-Request-* set belongs to the
+        # RESPONSE side of an auth_request subrequest and is set by nothing on this path, so
+        # forwarding it passed through whatever the CLIENT sent. Cleared explicitly rather
+        # than left unused: an empty value replaces anything a caller supplied, and the
+        # boundary then holds for any later reader that trusts these names.
         proxy_set_header X-Forwarded-Email $http_x_forwarded_email;
         proxy_set_header X-Forwarded-Groups $http_x_forwarded_groups;
         proxy_set_header X-Forwarded-Preferred-Username $http_x_forwarded_preferred_username;
-        proxy_set_header X-Auth-Request-User $http_x_auth_request_user;
-        proxy_set_header X-Auth-Request-Email $http_x_auth_request_email;
-        proxy_set_header X-Auth-Request-Groups $http_x_auth_request_groups;
-        proxy_set_header X-Auth-Request-Preferred-Username $http_x_auth_request_preferred_username;
+        proxy_set_header X-Auth-Request-User "";
+        proxy_set_header X-Auth-Request-Email "";
+        proxy_set_header X-Auth-Request-Groups "";
+        proxy_set_header X-Auth-Request-Preferred-Username "";
+        proxy_set_header Remote-User "";
+        proxy_set_header Remote-Email "";
+        proxy_set_header Remote-Groups "";
         # Carries the OIDC session id the sign-on record is keyed by. Forwarded for
         # correlation only — authorization is decided by the identity headers above.
         #

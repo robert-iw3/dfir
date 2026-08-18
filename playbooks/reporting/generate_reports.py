@@ -640,7 +640,7 @@ TYPE_TACTIC = OrderedDict([
                 "coinhive", "xmrig")),
 ])
 
-# Per-tactic node colours (kill-chain palette).
+# Per-tactic node colors (kill-chain palette).
 TACTIC_STYLE = {
     "Initial Access": ("#1e40af", "#93c5fd"), "Execution": ("#5b21b6", "#c4b5fd"),
     "Persistence": ("#9a3412", "#fdba74"), "Privilege Escalation": ("#854d0e", "#fde047"),
@@ -688,7 +688,7 @@ def md_attack_graph(model, host, incident):
     a("")
     a("The full chain of events, reconstructed from the adjudicated findings. Each "
       "node is one finding/event, ordered along the kill chain (and by time where "
-      "known); colour = ATT&CK tactic. The chain is unique to this incident.")
+      "known); color = ATT&CK tactic. The chain is unique to this incident.")
     a("")
     # Order every true-positive-class finding into one event chain: primarily by
     # kill-chain tactic, then by event/detection time, then collection order.

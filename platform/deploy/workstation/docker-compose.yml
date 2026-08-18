@@ -57,6 +57,7 @@ services:
     image: localhost/ir-browser:latest
     environment:
       DISPLAY: ${DISPLAY:-:0}
+      XAUTHORITY: /tmp/.Xauthority
       XDG_RUNTIME_DIR: ${XDG_RUNTIME_DIR:-/run/user/1000}
       IR_PLATFORM_URL: ${IR_PLATFORM_URL}
       IR_BROWSER_KIOSK: "1"
@@ -71,6 +72,11 @@ services:
     depends_on: [tailnet]
     volumes:
       - /tmp/.X11-unix:/tmp/.X11-unix
+      # The X cookie, so the kiosk authenticates to the display as a client instead of the
+      # deployment disabling access control for every local process. A bind-mounted socket
+      # with authentication off is a channel INTO the analyst's desktop from a container the
+      # design otherwise works hard to confine.
+      - ${IR_XAUTHORITY:-/dev/null}:/tmp/.Xauthority:ro
       - ../../traefik/certs:/certs:ro,z   # platform CA, trusted at start-up
       # Where an export LANDS — the one writable host path the kiosk has, a dedicated directory
       # and never $HOME. The browser still has no route off the tailnet, and every export is

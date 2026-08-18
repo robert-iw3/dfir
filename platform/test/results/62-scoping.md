@@ -2,13 +2,13 @@
 
 *What passing proves:* Case membership scopes every route that can reach a case: list, detail, findings, runs, notes and export. A non-member is refused each one by attempt; an assigned member reads the same case normally.
 
-- Run: `uat_scoping.sh` — 2026-08-14 23:52:44Z
+- Run: `uat_scoping.sh` — 2026-08-17 13:07:27Z
 
 **0/5  A restricted case, one member and one outsider**
 
 | Result | Assertion — with evidence |
 |---|---|
-| ✅ PASS | restricted case 86 (1 finding, 1 note) + open case 87; member and outsider are both analysts |
+| ✅ PASS | restricted case 173 (1 finding, 1 note) + open case 174; member and outsider are both analysts |
 
 **1/5  The outsider is refused every route to the case**
 
@@ -44,7 +44,7 @@
 | ✅ PASS | access is gone with the membership — 404 again |
 | ✅ PASS | the admin moves the case to the open compartment |
 | ✅ PASS | an open case is readable by any analyst — the compartment is what gated it |
-| ✅ PASS | the trail gained an entry per action (15 -> 18: assign, unassign, compartment) |
+| ✅ PASS | the trail gained an entry per action (33 -> 36: assign, unassign, compartment) |
 
 **5/5  Account administration — every role provisions, and deletion is real**
 

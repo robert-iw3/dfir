@@ -43,7 +43,7 @@ under its own hostname, so scaling analysis out gives one row per worker with no
 with the collection time so a reporter that has gone quiet reads as stale rather than as
 healthy-but-idle.
 
-**`componenthealth.py`** — thresholds that produce an action, not just a colour. Absolute free
+**`componenthealth.py`** — thresholds that produce an action, not just a color. Absolute free
 space as well as percentage, because 5% of 20 TB is plenty and 5% of 100 GB is not; and a
 direct comparison against the largest capture this deployment has actually handled, which
 tracks the hardware it collects from better than any constant.

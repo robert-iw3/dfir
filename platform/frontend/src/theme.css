@@ -320,6 +320,21 @@ td.wrap { white-space: pre-wrap; max-width: 46ch; font-size: 12px; line-height: 
 }
 .table-clear:hover { color: var(--text); border-color: var(--accent); }
 
+/* A carved region's key is the widest cell on the page and pushed the table past its panel,
+   which clipped the columns at the other end. Bounded here; the full value stays in title. */
+.cell-key { max-width: 26ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Panels carry more than a table now — a procedure with its own headings — so they breathe. */
+.panel > h2:first-child { margin-bottom: 10px; }
+
+/* Row actions sit against the table's right edge, so they stay on one line and end there:
+   wrapped, they clip against the panel border. */
+.row-actions {
+  display: flex; gap: 6px; justify-content: flex-end;
+  align-items: center; white-space: nowrap;
+}
+.row-actions .btn-sm { padding: 3px 8px; }
+
 .muted { color: var(--text-dim); }
 .kv { display: grid; grid-template-columns: 160px 1fr; gap: 6px 16px; }
 .kv dt { color: var(--text-dim); }

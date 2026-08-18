@@ -150,7 +150,7 @@ MENTIONED="$(printf '%s' "${MENTION}" | jqf "print(','.join(sorted(d.get('mentio
     && ok "bob, working the same case, is notified" || bad "the mention did not reach bob: '${MENTIONED}'"
 
 # The negative has to be on the COMPARTMENTED case. An unassigned analyst may read an open
-# case by design, so mentioning carol there is correct behaviour, not a leak — only a
+# case by design, so mentioning carol there is correct behavior, not a leak — only a
 # restricted case can tell the two apart.
 SEALED_MENTION="$(req "${T_ALICE}" POST "/tasks/${SEALED_TASK}/notes/" '{"body": "@uat-collab-carol can you take a look at this one?"}')"
 SEALED_TO="$(printf '%s' "${SEALED_MENTION}" | jqf "print(','.join(sorted(d.get('mentioned', []))))")"

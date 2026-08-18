@@ -23,6 +23,11 @@
 #      a grant that reaches only the primary lets the app authenticate, migrate the first
 #      database, and then die on the second — blaming everything but the bootstrap.
 #
+#   6. AN ADMIN CAN RETRIEVE THE SETUP CREDENTIALS. The values a deployment generates are
+#      in Vault, readable by the admin's own userpass login, and current — a stored
+#      credential the service rejects is worse than none, because it is believed. Reading
+#      them is not impersonation: the AppRole secret-ids stay refused.
+#
 # Every check runs from a running container, against the deployment the codebase produced.
 # ==============================================================================
 set -uo pipefail
@@ -220,6 +225,67 @@ else
         "import urllib.request as u; u.urlopen('http://127.0.0.1:8000/api/health/', timeout=5)" >/dev/null 2>&1 \
         && ok "platform healthy on the rotated credential" \
         || bad "platform DOWN after rotation"
+fi
+
+# ============================================================ 9. the admin's own way in
+say "Setup credentials — an admin retrieves what the deployment generated"
+# Driven through the admin's OWN userpass login rather than a root token: the claim is that a
+# human can reach these, so a privileged read would prove the wrong thing.
+vx() { ${RUNTIME} exec -e VAULT_ADDR=https://127.0.0.1:8200 \
+        -e VAULT_CACERT=/certs/vault-ca.crt.pem "$@" ; }
+ADM_USER="${IR_PLATFORM_ADMIN_USER:-platform-admin}"
+if [[ -z "${IR_PLATFORM_ADMIN_PASSWORD:-}" ]]; then
+    bad "IR_PLATFORM_ADMIN_PASSWORD is unset — no human credential exists to test"
+else
+    ADM_TOKEN="$(vx -e AP="${IR_PLATFORM_ADMIN_PASSWORD}" "${VAULT}" sh -c \
+        "vault login -method=userpass -token-only username='${ADM_USER}' password=\"\$AP\" 2>/dev/null" \
+        2>/dev/null | tr -dc '[:print:]' | tail -1)"
+    if [[ -z "${ADM_TOKEN}" ]]; then
+        bad "${ADM_USER} cannot log in to Vault — an admin has no way in when the IdP is what is broken"
+    else
+        ok "${ADM_USER} logs in to Vault with userpass (no dependency on Keycloak)"
+        adm() { vx -e VT="${ADM_TOKEN}" "${VAULT}" sh -c "VAULT_TOKEN=\$VT $1" 2>/dev/null; }
+
+        SETUP_KEYS="$(adm 'vault kv get -format=json ir/setup' \
+            | python3 -c 'import json,sys
+try: print(" ".join(sorted(json.load(sys.stdin)["data"]["data"])))
+except Exception: print("")' 2>/dev/null)"
+        if [[ -z "${SETUP_KEYS}" ]]; then
+            bad "${ADM_USER} cannot read ir/setup — the deployment's generated credentials exist only in deploy/.env on the deploying host"
+        else
+            ok "${ADM_USER} reads ir/setup ($(wc -w <<<"${SETUP_KEYS}") field(s))"
+            MISSING=""
+            for f in keycloak_admin_password oidc_client_secret platform_admin_password \
+                     receiver_puller_token boundary_worker_auth_key; do
+                grep -qw "${f}" <<<"${SETUP_KEYS}" || MISSING="${MISSING} ${f}"
+            done
+            [[ -z "${MISSING}" ]] \
+                && ok "every credential the deploy generates is in the store — nothing is recoverable only from the host that ran it" \
+                || bad "ir/setup is missing:${MISSING}"
+
+            # A store holding a stale value is worse than none: it is consulted and believed.
+            STORED_KC="$(adm 'vault kv get -field=keycloak_admin_password ir/setup' | tr -dc '[:print:]')"
+            if [[ -z "${STORED_KC}" ]]; then
+                bad "no keycloak_admin_password in ir/setup to spend"
+            else
+                KCOK="$(${RUNTIME} exec -i -e TPW="${STORED_KC}" ir-enclave_keycloak_1 sh -c \
+                    '/opt/keycloak/bin/kcadm.sh config credentials --server http://127.0.0.1:8080 \
+                       --realm master --user "${KC_BOOTSTRAP_ADMIN_USERNAME:-admin}" \
+                       --password "$TPW" >/dev/null 2>&1 && echo OK' 2>/dev/null | tr -dc 'A-Z')"
+                [[ "${KCOK}" == "OK" ]] \
+                    && ok "the password stored in Vault is the one Keycloak accepts — the store tracks the deployment rather than a past one" \
+                    || bad "ir/setup holds a keycloak_admin_password Keycloak REJECTS — an admin acting on it would be locked out and blame the account"
+            fi
+
+            # The withheld capability. Reading these would let an admin BECOME the app tier and
+            # act with no trace in the platform's own audit chain.
+            SID="$(adm 'vault write -f -field=secret_id auth/approle/role/ir-platform/secret-id' \
+                   | tr -dc '[:alnum:]-')"
+            [[ -z "${SID}" ]] \
+                && ok "the same admin CANNOT mint the app tier's AppRole secret-id — read access is not impersonation" \
+                || bad "${ADM_USER} minted an AppRole secret-id — an admin can silently act as the app tier"
+        fi
+    fi
 fi
 
 # ============================================================ summary

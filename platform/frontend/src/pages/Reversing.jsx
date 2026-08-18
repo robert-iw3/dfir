@@ -229,6 +229,102 @@ function AnalyzeForm({ region, onDone, onCancel }) {
   );
 }
 
+
+/**
+ * The commands that open a region on a reverse-engineering workstation.
+ *
+ * The platform cannot start the disassembler: the workstation is air-gapped, on its own
+ * hardware, and reaching into it would defeat the reason it exists. What it can do is name
+ * exactly which regions the session is for and hand over the two commands that stage them,
+ * so nothing has to be looked up by hand.
+ */
+function SessionCommands({ session, onClose }) {
+  const [copied, setCopied] = useState(false);
+  const text = (session.commands || []).join("\n");
+
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // A kiosk without clipboard permission still has to be usable, so the block stays
+      // selectable and says so rather than failing silently.
+      setCopied(false);
+    }
+  };
+
+  return (
+    <div className="panel" style={{ padding: 14, marginBottom: 16 }}>
+      <h2 style={{ marginTop: 0 }}>Open in {session.tool === "ghidra" ? "Ghidra" : "Binary Ninja"}</h2>
+      <p className="page-sub" style={{ margin: "0 0 14px" }}>
+        Workset <code>{session.workset}</code> · {session.host} · {session.regions} region
+        {session.regions === 1 ? "" : "s"} · case {session.investigation}
+      </p>
+
+      <div className="row-actions" style={{ justifyContent: "flex-start", marginBottom: 18 }}>
+        <a className="btn" href={session.kit} download>download session kit</a>
+        <button className="btn-sm" onClick={copy}>{copied ? "copied" : "copy commands"}</button>
+        <button className="btn-sm" onClick={onClose}>close</button>
+      </div>
+
+      <p className="page-sub" style={{ margin: "0 0 16px", maxWidth: "72ch" }}>
+        The kit carries the scripts and a <code>run.sh</code> pinned to this workset. It holds
+        no evidence: the regions are pulled by the mediator, verified against the hash recorded
+        when they were carved, and wiped when the session ends.
+      </p>
+
+      {(session.steps || []).map((st) => (
+        <div key={st.step} style={{ marginBottom: 18 }}>
+          <div className="page-sub" style={{ margin: "0 0 8px", maxWidth: "72ch" }}>
+            <strong>{st.step}. {st.where}</strong> — {st.why}
+          </div>
+          <pre className="mono" style={{ whiteSpace: "pre-wrap", userSelect: "all",
+                                         padding: "12px 14px", margin: 0, lineHeight: 1.7 }}>
+            {st.commands.join("\n")}
+          </pre>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * Worksets that have been assembled or staged — what is in session, where, and by whom.
+ *
+ * Advisory, never a lock: two people may examine the same region, and the platform says so
+ * rather than preventing it.
+ */
+function OpenSessions({ rows, onClose, mayAnalyze }) {
+  if (!rows.length) return null;
+  return (
+    <div className="panel" style={{ padding: 14, marginBottom: 16 }}>
+      <h2 style={{ marginTop: 0 }}>Reverse-engineering sessions</h2>
+      <table className="table">
+        <thead>
+          <tr><th>Workset</th><th>Host</th><th>Regions</th><th>State</th>
+            <th>Assembled by</th><th>Staged</th><th /></tr>
+        </thead>
+        <tbody>
+          {rows.map((w) => (
+            <tr key={w.slug}>
+              <td className="mono">{w.slug}</td>
+              <td>{w.hostname}</td>
+              <td>{w.region_count}</td>
+              <td><span className={`status-pill status-${w.state}`}>{w.state}</span></td>
+              <td>{w.created_by}</td>
+              <td>{w.staged_at ? new Date(w.staged_at).toLocaleString() : "—"}</td>
+              <td>{mayAnalyze && (
+                <button className="btn-sm" onClick={() => onClose(w.slug)}>close</button>
+              )}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 export default function Reversing() {
   const { user } = useAuth();
   const [params] = useSearchParams();
@@ -243,8 +339,47 @@ export default function Reversing() {
   const { data: queue, reload: reloadQueue } = useData(
     () => api.regionQueue(), [], { refreshMs: 30000, paused: Boolean(selected) });
   const [result, setResult] = useState(null);
+  const [picked, setPicked] = useState([]);
+  const [tool, setTool] = useState("binja");
+  const [session, setSession] = useState(null);
+  const [opening, setOpening] = useState(false);
 
   const mayAnalyze = can(user, "reverse_engineer", "admin");
+
+  const { data: sessions, reload: reloadSessions } = useData(
+    () => api.worksets("?page_size=25"), [], { refreshMs: 60000, paused: Boolean(selected) });
+  const openSessions = (sessions?.results || []).filter((w) => w.state !== "closed");
+
+  const toggle = (id) =>
+    setPicked((cur) => (cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]));
+
+  // One click from a region to a running disassembler: assemble the workset, then ask for
+  // the commands that stage it. Both steps are the platform's; running them is the
+  // operator's, on the workstation.
+  const openInRE = async (ids) => {
+    setOpening(true);
+    setResult(null);
+    try {
+      const ws = await api.createWorkset({ region_ids: ids });
+      const cmd = await api.worksetStageCommand(ws.slug, { tool });
+      setSession(cmd);
+      setPicked([]);
+      reloadSessions();
+    } catch (e) {
+      setResult(`Could not open a session: ${e.message}`);
+    } finally {
+      setOpening(false);
+    }
+  };
+
+  const closeSession = async (slug) => {
+    try {
+      await api.closeWorkset(slug);
+      reloadSessions();
+    } catch (e) {
+      setResult(e.message);
+    }
+  };
 
   const done = (res) => {
     setResult(res.raised_finding
@@ -279,6 +414,10 @@ export default function Reversing() {
 
       {result && <div className="notice">{result}</div>}
 
+      {session && <SessionCommands session={session} onClose={() => setSession(null)} />}
+
+      <OpenSessions rows={openSessions} onClose={closeSession} mayAnalyze={mayAnalyze} />
+
       {selected && mayAnalyze && (
         <AnalyzeForm region={selected} onDone={done} onCancel={() => setSelected(null)} />
       )}
@@ -297,6 +436,19 @@ export default function Reversing() {
           <option value="">Host: all</option>
           {(queue?.hosts || []).map((h) => <option key={h} value={h}>{h}</option>)}
         </select>
+        {mayAnalyze && (
+          <>
+            <select value={tool} aria-label="Disassembler"
+                    onChange={(e) => setTool(e.target.value)}>
+              <option value="binja">Binary Ninja</option>
+              <option value="ghidra">Ghidra</option>
+            </select>
+            <button className="btn" disabled={!picked.length || opening}
+                    onClick={() => openInRE(picked)}>
+              {opening ? "opening…" : `open ${picked.length || ""} in RE session`}
+            </button>
+          </>
+        )}
         {!mayAnalyze && (
           <span className="muted">read-only — the reverse engineer role records determinations</span>
         )}
@@ -317,8 +469,18 @@ export default function Reversing() {
             ? "No carved regions. They appear once a capture is analyzed with symbols."
             : "Loading…"}
           columns={[
+            ...(mayAnalyze ? [{
+              key: "select", label: "", sortable: false,
+              render: (_v, r) => (
+                <input type="checkbox" checked={picked.includes(r.id)}
+                       aria-label={`Select region ${r.id}`}
+                       disabled={r.triage_status === "purged"}
+                       onChange={() => toggle(r.id)} />
+              ),
+            }] : []),
             { key: "hostname", label: "Host", mono: true, sortable: false },
             { key: "object_key", label: "Region", mono: true, sortable: false,
+              cellClass: () => "cell-key",
               render: (v) => v.split("/").pop() },
             { key: "size_bytes", label: "Size", render: (v) => bytes(v) },
             { key: "carved_by", label: "Carved by", sortable: false,
@@ -348,9 +510,22 @@ export default function Reversing() {
                 ? <Link to={`/investigations/${r.investigation_id}`}>{v}</Link> : v) },
             { key: "id", label: "", sortable: false,
               render: (_v, r) => (mayAnalyze
-                ? <button className="table-clear" onClick={() => { setSelected(r); setResult(null); }}>
-                    analyze
-                  </button>
+                ? (
+                  // Opening a session and recording what it found are opposite ends of the
+                  // work, so each is named for its end. Kept on one line: stacked at the
+                  // table's edge they wrap and clip.
+                  <div className="row-actions">
+                    <button className="btn-sm" disabled={r.triage_status === "purged"}
+                            title="Stage this region for a reverse-engineering session"
+                            onClick={() => openInRE([r.id])}>
+                      open in RE
+                    </button>
+                    <button className="btn-sm" title="Record determination — what this region is"
+                            onClick={() => { setSelected(r); setResult(null); }}>
+                      record
+                    </button>
+                  </div>
+                )
                 : null) },
           ]}
         />

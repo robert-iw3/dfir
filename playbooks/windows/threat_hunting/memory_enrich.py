@@ -47,7 +47,7 @@ _PERSIST_KEY_RE = re.compile(
     r"Services\\[^\\]+\\(ImagePath|ServiceDll)(\\|$)|"
     r"Services\\[^\\]+\\Parameters\\ServiceDll)")
 
-# A normal Windows mutant/event name has recognisable structure (a known prefix or a
+# A normal Windows mutant/event name has recognizable structure (a known prefix or a
 # colon-delimited form). An implant lock is typically a bare high-entropy token.
 # SM0:PID:session:NAME -- not blanket-suppressed; NAME component evaluated separately.
 # WilStaging is intentionally NOT in this list: state-sponsored APT groups use
@@ -92,7 +92,7 @@ _BENIGN_DOMAIN_RE = re.compile(
 
 
 # Real-looking-domain check - STRUCTURAL ONLY (we never resolve DNS). A host is "confident" when its
-# last label is a recognised TLD - any 2-letter ccTLD (every ccTLD is exactly 2 letters, so that rule
+# last label is a recognized TLD - any 2-letter ccTLD (every ccTLD is exactly 2 letters, so that rule
 # is complete), or one of the common gTLDs below - AND every label is RFC-1035 shaped.
 # NOTE: this gTLD set is deliberately a COMMON subset, not the full ~1450-entry IANA list. So a real
 # domain on an uncommon gTLD (e.g. `.ninja`) will NOT match here - which is exactly why a non-matching
@@ -270,7 +270,7 @@ def is_suspicious_object_name(name):
     1. SM0:PID:session:NAME format -- evaluate the NAME component via known-good list.
        WilError_* = known WIL error tracking (benign). WilStaging_* = NOT known-good:
        state-sponsored APT groups use WilStaging-named mutexes as a Windows camouflage technique.
-    2. Known-good prefix match -- Windows system objects have recognisable prefixes (Global\\,
+    2. Known-good prefix match -- Windows system objects have recognizable prefixes (Global\\,
        Local\\, Microsoft*, SmartScreen*, etc.). Hexacorn 'clean list' corroborates these.
     3. Bare hex token (e.g. '1BA6BD98D9') -- highest-confidence malware signal per SANS/Unit42.
     4. Undelimited long string (e.g. 'x9pv45dxghk') -- heuristic; requires process attribution
@@ -354,7 +354,7 @@ def extract_c2_iocs(data, bare_domains=True):
     domains, ips, unverified = set(), set(), set()
     # URLs are kept only when their host isn't benign infrastructure; the host seeds domains/ips.
     # A host that does NOT pass the TLD gate is NOT dropped - it is recorded under `unverified`
-    # ("captured, but not a recognised TLD - verify; may be an over-capture or an uncommon TLD") so
+    # ("captured, but not a recognized TLD - verify; may be an over-capture or an uncommon TLD") so
     # nothing is silently suppressed. The `domains` list stays high-confidence/actionable.
     urls = []
     for u in sorted(set(_URL_RE.findall(blob))):
@@ -364,7 +364,7 @@ def extract_c2_iocs(data, bare_domains=True):
         urls.append(u)
         if _IPV4_RE.fullmatch(h):
             ips.add(h)
-        elif _valid_host(h):                 # structured + recognised TLD -> confident domain IOC
+        elif _valid_host(h):                 # structured + recognized TLD -> confident domain IOC
             domains.add(h)
         else:                                # kept, not dropped: surfaced as "not resolvable - verify"
             unverified.add(h)
@@ -372,8 +372,8 @@ def extract_c2_iocs(data, bare_domains=True):
         # bare FQDNs only (NOT bare IPs - those collide with crypto OIDs / version numbers like 2.5.4.3)
         domains |= set(_DOMAIN_RE.findall(blob))
     ips = sorted({m for m in ips if m and not _BENIGN_IP_RE.match(m)})
-    # Confident domains: structurally valid + recognised TLD. A bare-scraped string with an unrecognised
-    # TLD is moved to `unverified` (kept, labelled), never deleted.
+    # Confident domains: structurally valid + recognized TLD. A bare-scraped string with an unrecognized
+    # TLD is moved to `unverified` (kept, labeled), never deleted.
     clean, maybe = set(), set(unverified)
     for d in domains:
         d = str(d).lower()
@@ -1196,7 +1196,7 @@ def build_attack_chain_mermaid(bundle):
     for d in bundle.get("dossiers", []):
         pid = d["pid"]
         ip = f"P{pid}"
-        # implant node labelled with the process, its RAM first-seen time, and its YARA rules.
+        # implant node labeled with the process, its RAM first-seen time, and its YARA rules.
         # Prefer the injected-thread time (true implant start) over the host process create time.
         rule_txt = _mm(", ".join(d.get("rules", []))) if d.get("rules") else ""
         fs = d.get("injected_thread_first_seen") or d.get("create_time")
@@ -1323,7 +1323,7 @@ def build_correlation_mermaid(corr):
         ph_node  = f"P{node_idx}"
         node_idx += 1
         ts_short = (earliest.get("timestamp") or "")[:16]  # YYYY-MM-DD HH:MM
-        # Summarise up to 3 artifact types in this phase
+        # Summarize up to 3 artifact types in this phase
         types = list(dict.fromkeys(e.get("type", "") for e in events_in_phase))[:3]
         type_summary = "<br/>".join(_mm(t[:40]) for t in types)
         label = f"{_mm(phase)}<br/>{_mm(ts_short)}<br/>{type_summary}"

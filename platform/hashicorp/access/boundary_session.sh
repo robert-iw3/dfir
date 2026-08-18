@@ -133,6 +133,14 @@ listening() {
         /proc/net/tcp /proc/net/tcp6 2>/dev/null
 }
 
+# Sessions do not die independently: one dial burst ends several at once, and a fixed delay
+# rebuilds them in lockstep — every supervisor authorizing against the controller in the same
+# instant, failing together, and leaving the analyst path with no listener at all. Spread by
+# port, so the farm rebuilds as a queue rather than a herd.
+respace() {  # <port>
+    sleep "$(( 2 + ($1 % 5) ))"
+}
+
 # One supervisor per session, supervising the LISTENER: `boundary connect` can hold a session and
 # report a listening proxy with nothing bound.
 supervise() {  # <port> <session-index>
@@ -161,11 +169,14 @@ supervise() {  # <port> <session-index>
         # still taken one, and it has to be cancelled on that path too.
         sid="$(sed -n 's/.*Session ID:[[:space:]]*\(s_[A-Za-z0-9]*\).*/\1/p' "${log}" | head -1)"
         if [ "${bound}" != "1" ]; then
-            echo "[broker:${port}] listener never bound — retrying this session only" >&2
+            # The client's own last line: a stall that says only that it stalled cannot be
+            # told apart from a refusal, and the two need different answers.
+            why="$(tail -1 "${log}" 2>/dev/null | cut -c1-160)"
+            echo "[broker:${port}] listener never bound — retrying this session only${why:+ (${why})}" >&2
             kill "${pid}" 2>/dev/null; wait "${pid}" 2>/dev/null
             [ -n "${sid}" ] && boundary sessions cancel -id "${sid}" \
                 -token "env://${tokvar}" >/dev/null 2>&1
-            sleep 3
+            respace "${port}"
             continue
         fi
         echo "[broker:${port}] listening on session ${sid:-unknown} — this share of the fleet has a path"
@@ -216,7 +227,7 @@ supervise() {  # <port> <session-index>
                 && echo "[broker:${port}] canceled its own ended session ${sid}"
         fi
         echo "[broker:${port}] session ended — re-establishing this one" >&2
-        sleep 3
+        respace "${port}"
     done
 }
 
@@ -227,17 +238,25 @@ while [ "${i}" -lt "${SESSIONS}" ]; do
 done
 
 # Container health is "at least one session is carrying". Losing all of them is the state a
-# restart fixes; in-script recovery stalls holding no listener.
+# restart fixes; in-script recovery stalls holding no listener. Only a SUSTAINED loss is that
+# state: a supervisor holds no listener while it replaces its client, so one all-down sample
+# during a burst would restart the container and discard every supervisor already recovering.
+down=0
 while :; do
-    sleep 30
+    sleep 10
     alive=0
     i=0
     while [ "${i}" -lt "${SESSIONS}" ]; do
         listening "$((SESSION_BASE + i))" && alive=$((alive + 1))
         i=$((i + 1))
     done
-    [ "${alive}" -gt 0 ] || {
-        echo "[broker] all ${SESSIONS} sessions are down — exiting so the container restarts clean" >&2
+    if [ "${alive}" -gt 0 ]; then
+        down=0
+        continue
+    fi
+    down=$((down + 1))
+    [ "${down}" -lt 6 ] || {
+        echo "[broker] all ${SESSIONS} sessions down for 60s — exiting so the container restarts clean" >&2
         exit 1
     }
 done

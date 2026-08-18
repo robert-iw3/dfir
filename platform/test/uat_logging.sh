@@ -135,7 +135,7 @@ print(d.get('bytes', 0), int('not evidence' in (d.get('note') or '').lower()))")
 [[ "$(num "${NBYTES:-}")" -ge 1 ]] \
     && ok "and one can be read back, ${NBYTES} bytes of it" || bad "the object read empty: ${BODY:0:200}"
 [[ "${HAS_NOTE}" == "1" ]] \
-    && ok "labelled as an operational record and NOT evidence — it carries no custody seal and must not imply one" \
+    && ok "labeled as an operational record and NOT evidence — it carries no custody seal and must not imply one" \
     || bad "a log was served without saying it is not evidence"
 CONTENT="$(printf '%s' "${BODY}" | jqf "print(1 if '${MARK}' in (d.get('text') or '') else 0)")"
 [[ "${CONTENT}" == "1" ]] \

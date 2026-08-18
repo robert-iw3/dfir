@@ -2,7 +2,7 @@
 
 *What passing proves:* A ransomware event correlates as ONE campaign despite its signature being on most of the fleet, 13 members having no movement record, two never being encrypted and one only being destroyed — and the hosts whose logs the actor cleared report their compromise date as unanswered rather than guessing.
 
-- Run: `uat_corpus_ransomware.sh` — 2026-08-15 00:35:45Z
+- Run: `uat_corpus_ransomware.sh` — 2026-08-17 22:55:18Z
 
 **Preconditions**
 
@@ -23,6 +23,7 @@
 
 | Result | Assertion — with evidence |
 |---|---|
+| · | collections are signed with the key the enclave verifies against |
 | ✅ PASS | all 24 bundles collected, sealed and accepted by the receiver |
 
 **Ingest — the puller delivers all 24 runs**
@@ -114,7 +115,7 @@
 
 | Result | Assertion — with evidence |
 |---|---|
-| · | deployment host population at correlation time: 140 |
+| · | deployment host population at correlation time: 141 |
 | ✅ PASS | INC-CORPUS-A still classifies 12 compromised with a third fleet present |
 | ✅ PASS | no INC-CORPUS-A campaign reaches a Vault Serpent endpoint |
 | ✅ PASS | INC-CORPUS-B still classifies 4 compromised with a third fleet present |

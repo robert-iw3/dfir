@@ -110,8 +110,8 @@ def test_valid_host_structural_tld_gate():
 
 def test_overcapture_recovered_at_boundary_and_unverified_kept():
     # mirrors a real-world capture: a clean dropper URL + adjacent run-on/over-captured hosts. Nothing is
-    # dropped: a TLD-then-uppercase concatenation is RECOVERED at the boundary; an unrecognised/no-TLD
-    # host is KEPT under `unverified` (labelled "not resolvable - verify"), never asserted as a domain.
+    # dropped: a TLD-then-uppercase concatenation is RECOVERED at the boundary; an unrecognized/no-TLD
+    # host is KEPT under `unverified` (labeled "not resolvable - verify"), never asserted as a domain.
     blob = (b"http://fhu77e.co/get http://evil-drop.comMicrosoft https://badpanel.netX "
             b"https://micr http://staging.zip flashupd.com")
     out = me.extract_c2_iocs(blob)
@@ -119,7 +119,7 @@ def test_overcapture_recovered_at_boundary_and_unverified_kept():
     assert "evil-drop.com" in out["domains"]                                    # recovered from comMicrosoft
     assert "badpanel.net" in out["domains"]                                     # recovered from netX
     assert not any("microsoft" in d or "netx" in d for d in out["domains"])     # the run-on tail is gone
-    assert "micr" in out["unverified"]                # no-TLD fragment: kept + labelled, not an IOC
+    assert "micr" in out["unverified"]                # no-TLD fragment: kept + labeled, not an IOC
     assert "staging.zip" in out["unverified"]         # real but uncommon TLD: kept, not silently dropped
     assert "micr" not in out["domains"] and "staging.zip" not in out["domains"]
     assert all(me._valid_host(d) for d in out["domains"])                       # every domain is real-looking

@@ -11,17 +11,31 @@ work reaches the incident, gets adjudicated alongside collector findings, feeds 
 correlation across hosts, and lands in the audit trail. Without it the analysis would sit
 in a silo that the analyst never sees.
 """
+import io
+import os
+import re
+import tarfile
+
 from django.db import transaction
+from django.db.models import Count
+from django.http import HttpResponse
+from django.utils import timezone
 from rest_framework import viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from . import audit as audit_mod
-from .models import CarvedRegion, Finding, IOC, RegionAnalysis
+from .models import (CarvedRegion, Finding, Host, IOC, Investigation, RegionAnalysis,
+                     ReWorkset, ReWorksetRegion)
 from .pagination import StandardPagination
-from .rbac import IsReverseEngineerOrAdmin, role_of
-from .serializers import CarvedRegionSerializer, RegionAnalysisSerializer
+from .rbac import IsReverseEngineerOrAdmin, may_see_investigation, role_of, scope_by_investigation
+from .serializers import (CarvedRegionSerializer, RegionAnalysisSerializer,
+                          ReWorksetSerializer)
+
+# The compartment path from a carved region up to its case. Quoted once: a wrong path does
+# not raise, it silently scopes nothing.
+REGION_INVESTIGATION = "analysis__capture__run__investigation_id"
 
 # A verdict that means "this is hostile" — only these raise a finding on the incident.
 ESCALATING = {"malicious", "suspicious"}
@@ -85,7 +99,11 @@ class CarvedRegionViewSet(viewsets.ReadOnlyModelViewSet):
     pagination_class = StandardPagination
 
     def get_queryset(self):
-        qs = super().get_queryset()
+        # Scoped like every other view of case data. Memory findings from a capture are
+        # compartment-scoped; the bytes carved out of that same capture were not, so a
+        # restricted case's malware was listable by anyone holding the RE role.
+        qs = scope_by_investigation(super().get_queryset(), self.request.user,
+                                    REGION_INVESTIGATION)
         params = self.request.query_params
         if params.get("status"):
             qs = qs.filter(triage_status=params["status"])
@@ -137,10 +155,27 @@ class CarvedRegionViewSet(viewsets.ReadOnlyModelViewSet):
 
         actor = getattr(request.user, "username", "?")
         run = region.analysis.capture.run
+        # A determination made while this region was staged for a session belongs to that
+        # session. Staged before assembled: if the region sits in two, the one an operator
+        # actually pulled is the one someone is looking at.
+        # A STAGED workset is one an operator actually pulled, so it wins outright over any
+        # number of assembled ones holding the same region. Stated as two lookups rather than
+        # one sort: ordering by a nullable timestamp made this depend on how the database
+        # sorts NULLs, and it named the wrong session when it got that wrong.
+        def _session_for(region_obj, states):
+            return (ReWorksetRegion.objects
+                    .filter(region=region_obj, workset__state__in=states)
+                    .select_related("workset")
+                    .order_by("-workset__staged_at", "-workset__created_at")
+                    .first())
+
+        session = (_session_for(region, (ReWorkset.STAGED,))
+                   or _session_for(region, (ReWorkset.ASSEMBLED,)))
 
         with transaction.atomic():
             analysis = RegionAnalysis.objects.create(
                 region=region,
+                workset=session.workset if session else None,
                 analyst=actor,
                 verdict=verdict,
                 confidence=confidence,
@@ -355,7 +390,466 @@ class RegionAnalysisViewSet(viewsets.ReadOnlyModelViewSet):
     pagination_class = StandardPagination
 
     def get_queryset(self):
-        qs = super().get_queryset()
+        # RegionAnalysis carries its own investigation id, backfilled on save.
+        qs = scope_by_investigation(super().get_queryset(), self.request.user,
+                                    "investigation_id")
         if self.request.query_params.get("region"):
             qs = qs.filter(region_id=self.request.query_params["region"])
         return qs
+
+
+# ---------------------------------------------------------------------------------------
+# Worksets: which regions a reverse-engineering session is for.
+# ---------------------------------------------------------------------------------------
+
+# The analyzer records its own severity on the YARA hit that caused the carve.
+SEVERITY_RANK = {"critical": 4.0, "high": 3.0, "medium": 2.0, "low": 1.0}
+
+# Examined regions sink rather than disappear: a second opinion is legitimate, re-staging the
+# same bytes by accident is not.
+TRIAGE_WEIGHT = {"unanalyzed": 1.0, "in_progress": -1.0, "analyzed": -3.0, "benign": -4.0}
+
+
+def _rank_regions(regions, host_counts, promoted=()):
+    """Score regions so the few worth a person's time surface out of the pile.
+
+    Every signal here is already recorded at carve time. Ranking proposes and the analyst
+    disposes, so the reasons travel with the score — a number nobody can question is worse
+    than no number.
+    """
+    ranked = []
+    for r in regions:
+        score, why = 0.0, []
+        hits = (r.trigger or {}).get("hits") or []
+
+        if (r.analysis_id, r.source_pid) in promoted:
+            score += 2.5
+            why.append("promoted to triage")
+
+        worst = max((SEVERITY_RANK.get(str(h.get("severity", "")).lower(), 0.0)
+                     for h in hits), default=0.0)
+        if worst:
+            score += worst * 1.5
+            why.append(f"severity {max(hits, key=lambda h: SEVERITY_RANK.get(str(h.get('severity','')).lower(), 0.0)).get('severity')}")
+
+        # Private RWX is where injected code lives; it is the difference between a region
+        # that is merely mapped and one that had no business being executable.
+        if any("rwx" in str(h.get("memory", "")).lower() for h in hits):
+            score += 2.0
+            why.append("rwx memory")
+
+        named = [h.get("rule") for h in hits
+                 if h.get("rule") and h.get("rule") != "unnamed rule"]
+        if named:
+            score += 1.5
+            why.append(f"rule {named[0]}")
+
+        distinct = {m.get("id") for h in hits for m in (h.get("matches") or []) if m.get("id")}
+        if distinct:
+            score += min(len(distinct), 5) * 0.3
+            why.append(f"{len(distinct)} matched string(s)")
+
+        # Confined to one host is the interesting case; the same bytes on thirty hosts are
+        # the environment, not the intrusion.
+        seen_on = host_counts.get(r.sha256, 0) if r.sha256 else 0
+        if seen_on == 1:
+            score += 2.0
+            why.append("seen on one host")
+        elif seen_on == 2:
+            score += 1.0
+            why.append("seen on two hosts")
+        elif seen_on > 5:
+            score -= 1.0
+            why.append(f"seen on {seen_on} hosts")
+
+        score += TRIAGE_WEIGHT.get(r.triage_status, 0.0)
+        if r.triage_status not in ("unanalyzed",):
+            why.append(r.triage_status)
+
+        ranked.append({"region": r, "score": round(score, 2), "why": why})
+    ranked.sort(key=lambda x: (-x["score"], -(x["region"].size_bytes or 0), x["region"].id))
+    return ranked
+
+
+def _promoted_pids(regions):
+    """(analysis, pid) pairs whose YARA hit was promoted into the triage queue.
+
+    Promotion is the platform having already said this hit is worth adjudicating, which is a
+    stronger statement than the rule firing at all.
+    """
+    from .models import MemoryFinding
+
+    analyses = {r.analysis_id for r in regions}
+    if not analyses:
+        return set()
+    promoted = set()
+    for mf in MemoryFinding.objects.filter(
+            analysis_id__in=analyses, promoted_finding__isnull=False,
+            finding_type__startswith="YARA Memory").only("analysis_id", "detail", "evidence"):
+        target = (mf.evidence or {}).get("target", "") if isinstance(mf.evidence, dict) else ""
+        hit = re.search(r"PID\s+(\d+)", str(target)) or re.search(r"PID\s+(\d+)", mf.detail or "")
+        if hit:
+            promoted.add((mf.analysis_id, int(hit.group(1))))
+    return promoted
+
+
+def _host_counts(regions):
+    """How many distinct hosts each of these regions' hashes has been seen on."""
+    hashes = {r.sha256 for r in regions if r.sha256}
+    if not hashes:
+        return {}
+    rows = (CarvedRegion.objects.filter(sha256__in=hashes)
+            .values("sha256")
+            .annotate(hosts=Count("analysis__capture__run__host_id", distinct=True)))
+    return {row["sha256"]: row["hosts"] for row in rows}
+
+
+def _safe_host(ws):
+    """A hostname fit to appear in generated text.
+
+    The hostname originates as the bundle's top-level tar directory name and is stored on a
+    bare CharField, so an adversary who controls the memory image controls it — newlines
+    included. `_run_script` writes it into a shell script the kit tells an analyst to run on
+    the machine that owns the platform runtime, which turned a passive image into execution
+    in the operator's context. Sanitised on the way OUT rather than trusted on the way in,
+    because the raw value still has to match what was collected.
+    """
+    raw = ws.host.hostname if ws.host else "?"
+    safe = "".join(c if (c.isalnum() or c in "-._") else "-" for c in raw)[:64]
+    return safe or "?"
+
+
+def _next_slug(investigation_id, hostname):
+    """ws-<case>-<host>-<n>, bounded to the audit column that has to carry it."""
+    safe = "".join(c if c.isalnum() else "-" for c in hostname.lower()).strip("-")[:24] or "host"
+    base = f"ws-{investigation_id}-{safe}"
+    n = ReWorkset.objects.filter(slug__startswith=f"{base}-").count() + 1
+    while ReWorkset.objects.filter(slug=f"{base}-{n}").exists():
+        n += 1
+    return f"{base}-{n}"[:64]
+
+
+# Where the mediator and launcher live on the host that runs the platform. Mounted into the
+# backend so a kit can carry them; a kit that only names them would still leave the operator
+# hunting for the scripts.
+RE_SCRIPT_DIR = os.environ.get("IR_RE_SCRIPT_DIR", "/opt/re-workstation")
+
+
+def _session_steps(ws, tool):
+    """The procedure, in the order someone actually performs it.
+
+    Written out rather than assumed: the two commands alone presume a shell already sitting
+    in the right directory with the scripts present, which is never where anyone starts.
+    """
+    session = f"./session-{ws.slug}"
+    kit = f"re-session-{ws.slug}"
+    return [
+        {
+            "step": 1,
+            "where": "on the machine running the platform runtime",
+            "why": "staging reads the enclave's object store, so it runs where the platform "
+                   "runs — the workstation has no route to it",
+            "commands": [
+                f"tar -xzf {kit}.tar.gz",
+                f"cd {kit}",
+                "./run.sh",
+            ],
+        },
+        {
+            "step": 2,
+            "where": "what run.sh does, if you would rather type it",
+            "why": "the same two commands the kit runs for you",
+            "commands": [
+                f"./stage_regions.sh --workset {ws.slug} --out {session}",
+                f"./launch.sh --regions {session} --tool {tool}",
+            ],
+        },
+    ]
+
+
+def _run_script(ws, tool):
+    """The kit's automated path: stage this workset, then open it."""
+    session = f"./session-{ws.slug}"
+    return f"""#!/usr/bin/env sh
+# Reverse-engineering session for workset {ws.slug}
+#   host {_safe_host(ws)} · case {ws.investigation_id} · """ f"""{ws.members.count()} region(s)
+#
+# Run this from the directory it was unpacked into, on the machine that runs the platform
+# runtime. It stages exactly this workset's regions and opens them in {tool}.
+set -eu
+# --stage-only pulls the regions and stops. Opening the tool blocks until a person closes
+# it, which is right for a session and wrong for anything that has to finish on its own.
+STAGE_ONLY=0
+[ "${{1:-}}" = "--stage-only" ] && STAGE_ONLY=1
+HERE="$(cd "$(dirname "$0")" && pwd)"
+cd "${{HERE}}"
+chmod +x ./stage_regions.sh ./launch.sh 2>/dev/null || true
+# Staged malware is wiped when the session ends. Left behind it accumulates on the host,
+# unencrypted, until somebody remembers — set IR_KEEP_SESSION=1 to keep it deliberately.
+cleanup() {{
+    if [ "${{IR_KEEP_SESSION:-0}}" = "1" ]; then
+        echo "[session] keeping {session} (IR_KEEP_SESSION=1)"
+    else
+        chmod -R u+w "{session}" 2>/dev/null || true
+        rm -rf "{session}"
+        echo "[session] staged regions wiped"
+    fi
+}}
+trap cleanup EXIT INT TERM
+
+echo "[session] staging {ws.members.count()} region(s) for workset {ws.slug}"
+./stage_regions.sh --workset {ws.slug} --out "{session}"
+if [ "$STAGE_ONLY" = "1" ]; then
+    echo "[session] staged only; {tool} not opened"
+    exit 0
+fi
+echo "[session] opening {tool}"
+./launch.sh --regions "{session}" --tool {tool}
+"""
+
+
+def _kit_readme(ws, tool, requested_by="", requested_at=None):
+    return f"""Reverse-engineering session kit
+===============================
+
+Workset : {ws.slug}
+Host    : {_safe_host(ws)}
+Case    : {ws.investigation_id}
+Regions : {ws.members.count()}
+Tool    : {tool}
+For     : {requested_by or "?"}
+Issued  : {requested_at.isoformat() if requested_at else "?"}
+
+This kit was issued to the person named above. Found later, it says whose session it was
+for; it is not a credential and grants nothing on its own.
+
+This archive contains NO EVIDENCE. The carved regions are not in it and never travel
+through a browser: they are pulled from the enclave's object store by stage_regions.sh,
+which is the only step holding credentials for it.
+
+To run the session:
+
+    tar -xzf re-session-{ws.slug}.tar.gz
+    cd re-session-{ws.slug}
+    ./run.sh
+
+run.sh stages this workset's regions into ./session-{ws.slug}, verifies each against the
+hash recorded when it was carved, opens them in {tool} with no network namespace at all,
+and WIPES the staged bytes when the session ends. Staging must run on the machine with the
+platform runtime; the regions are mounted read-only into the session.
+
+Set IR_KEEP_SESSION=1 to keep the staged regions after the tool exits.
+
+When the determination is written up, record it against the region in the platform so it
+reaches the investigation — a conclusion left in the disassembler is not part of the case.
+"""
+
+
+class ReWorksetViewSet(viewsets.ModelViewSet):
+    """Worksets — the unit a reverse-engineering session is granted.
+
+    The platform cannot deploy the workstation: it is air-gapped, launched by an operator on
+    its own hardware, and reaching into it would defeat the reason it exists. What it can do
+    is name exactly which regions a session is for and mint the command that stages them.
+    """
+
+    queryset = ReWorkset.objects.select_related("investigation", "host")
+    serializer_class = ReWorksetSerializer
+    permission_classes = [IsReverseEngineerOrAdmin]
+    pagination_class = StandardPagination
+    lookup_field = "slug"
+
+    def get_queryset(self):
+        return scope_by_investigation(super().get_queryset(), self.request.user,
+                                      "investigation_id")
+
+    def create(self, request, *args, **kwargs):
+        data = request.data or {}
+        region_ids = data.get("region_ids") or []
+        if not isinstance(region_ids, list) or not region_ids:
+            return Response({"detail": "region_ids must be a non-empty list"}, status=400)
+        if len(region_ids) > ReWorkset.MAX_REGIONS:
+            return Response({"detail": f"a workset holds at most {ReWorkset.MAX_REGIONS} "
+                                       f"regions; assemble more than one",
+                             "requested": len(region_ids)}, status=400)
+
+        # Read the regions THROUGH the scope, so a restricted case's region cannot be pulled
+        # into a workset by id alone.
+        regions = list(scope_by_investigation(
+            CarvedRegion.objects.select_related("analysis__capture__run__host",
+                                                "analysis__capture__run__investigation"),
+            request.user, REGION_INVESTIGATION).filter(id__in=region_ids))
+        missing = set(region_ids) - {r.id for r in regions}
+        if missing:
+            return Response({"detail": "some regions do not exist or are not visible to you",
+                             "missing": sorted(missing)}, status=404)
+
+        purged = [r.id for r in regions if r.triage_status == "purged"]
+        if purged:
+            return Response({"detail": "purged regions have no bytes to open",
+                             "purged": purged}, status=409)
+
+        cases = {r.analysis.capture.run.investigation_id for r in regions}
+        hosts = {r.analysis.capture.run.host_id for r in regions}
+        if len(cases) != 1 or len(hosts) != 1:
+            return Response({"detail": "a workset is one investigation and one host — the "
+                                       "per-host bucket is the wall a session sees",
+                             "investigations": sorted(cases), "hosts": sorted(hosts)},
+                            status=400)
+
+        investigation_id, host_id = cases.pop(), hosts.pop()
+        inv = Investigation.objects.filter(id=investigation_id).first()
+        if not may_see_investigation(request.user, inv):
+            return Response({"detail": "not found"}, status=404)
+        host = Host.objects.filter(id=host_id).first()
+
+        counts = _host_counts(regions)
+        order = {x["region"].id: i
+                 for i, x in enumerate(_rank_regions(regions, counts, _promoted_pids(regions)))}
+        actor = getattr(request.user, "username", "?")
+        with transaction.atomic():
+            ws = ReWorkset.objects.create(
+                slug=_next_slug(investigation_id, host.hostname if host else "host"),
+                investigation_id=investigation_id, host_id=host_id,
+                created_by=actor, note=str(data.get("note", ""))[:2000])
+            ReWorksetRegion.objects.bulk_create([
+                ReWorksetRegion(workset=ws, region=r, rank=order.get(r.id, 0), added_by=actor)
+                for r in regions])
+        audit_mod.audit(actor, "workset.create", role=role_of(request.user),
+                        method="POST", path=request.path, object_type="ReWorkset",
+                        object_id=ws.slug,
+                        detail={"investigation": investigation_id, "host": host_id,
+                                "regions": len(regions)})
+        return Response(ReWorksetSerializer(ws).data, status=201)
+
+    @action(detail=False, methods=["get"])
+    def propose(self, request):
+        """The ranked shortlist for one host — what a session SHOULD probably hold."""
+        hostname = request.query_params.get("host")
+        if not hostname:
+            return Response({"detail": "host is required"}, status=400)
+        try:
+            limit = min(int(request.query_params.get("limit", 20)), ReWorkset.MAX_REGIONS)
+        except (TypeError, ValueError):
+            return Response({"detail": "limit must be a number"}, status=400)
+
+        qs = scope_by_investigation(
+            CarvedRegion.objects.select_related("analysis__capture__run__host"),
+            request.user, REGION_INVESTIGATION).filter(
+                analysis__capture__run__host__hostname=hostname).exclude(
+                triage_status="purged")
+
+        # A hostname outlives an incident: the same machine collected again under a new case
+        # carries regions from both. A proposal spanning two cases is one a workset can never
+        # accept, so the proposal picks ONE — the newest, unless told otherwise — and names
+        # the others rather than quietly folding them in.
+        available = sorted({r[REGION_INVESTIGATION] for r in qs.values(REGION_INVESTIGATION)})
+        wanted = request.query_params.get("investigation")
+        if wanted:
+            if not str(wanted).isdigit() or int(wanted) not in available:
+                return Response({"detail": "that investigation has no regions for this host",
+                                 "investigations": available}, status=404)
+            chosen = int(wanted)
+        else:
+            newest = qs.order_by("-created_at", "-id").values(REGION_INVESTIGATION).first()
+            chosen = newest[REGION_INVESTIGATION] if newest else None
+        qs = qs.filter(**{REGION_INVESTIGATION: chosen}) if chosen else qs.none()
+
+        regions = list(qs[:500])
+        ranked = _rank_regions(regions, _host_counts(regions),
+                               _promoted_pids(regions))[:limit]
+        return Response({
+            "host": hostname,
+            "investigation": chosen,
+            "other_investigations": [i for i in available if i != chosen],
+            "considered": len(regions),
+            "proposed": [{"region": CarvedRegionSerializer(x["region"]).data,
+                          "score": x["score"], "why": x["why"]} for x in ranked],
+        })
+
+    @action(detail=True, methods=["post"], url_path="stage-command")
+    def stage_command(self, request, slug=None):
+        """Mint the commands that stage this workset on a reverse-engineering workstation."""
+        ws = self.get_object()
+        tool = request.data.get("tool", "binja") if request.data else "binja"
+        if tool not in ("binja", "ghidra"):
+            return Response({"detail": "tool must be binja or ghidra"}, status=400)
+        count = ws.members.count()
+        steps = _session_steps(ws, tool)
+        commands = [c for step in steps for c in step["commands"]]
+        audit_mod.audit(getattr(request.user, "username", "?"), "workset.stage-command",
+                        role=role_of(request.user), method="POST", path=request.path,
+                        object_type="ReWorkset", object_id=ws.slug,
+                        detail={"tool": tool, "regions": count})
+        return Response({
+            "workset": ws.slug,
+            "investigation": ws.investigation_id,
+            "host": ws.host.hostname if ws.host else "",
+            "regions": count,
+            "tool": tool,
+            "steps": steps,
+            "commands": commands,
+            "kit": f"/api/worksets/{ws.slug}/kit/?tool={tool}",
+            # Said plainly because it is the design, not an omission: the platform does not
+            # start the disassembler, an operator does.
+            "note": "the kit runs these for you; the commands are here for a machine "
+                    "that cannot take the download",
+        })
+
+    @action(detail=True, methods=["get"])
+    def kit(self, request, slug=None):
+        """A session kit: the scripts and one run.sh, pinned to this workset.
+
+        NO EVIDENCE TRAVELS IN THIS FILE. Regions are pulled by the mediator, which is the
+        only step holding object-store credentials — carrying malware out through a browser
+        would undo the reason the reverse-engineering workstation is separate at all.
+        """
+        ws = self.get_object()
+        tool = request.query_params.get("tool", "binja")
+        if tool not in ("binja", "ghidra"):
+            return Response({"detail": "tool must be binja or ghidra"}, status=400)
+
+        mediator = os.path.join(RE_SCRIPT_DIR, "stage_regions.sh")
+        if not os.path.exists(mediator):
+            # Without the mediator the kit cannot stage anything, and an archive that looks
+            # complete but is not would be discovered on the workstation, out of reach.
+            return Response({"detail": "this deployment cannot build a session kit — the "
+                                       "mediator scripts are not in the image",
+                             "expected": RE_SCRIPT_DIR}, status=503)
+
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+            def add(name, body, mode=0o644):
+                data = body.encode()
+                info = tarfile.TarInfo(f"re-session-{ws.slug}/{name}")
+                info.size, info.mode, info.mtime = len(data), mode, 0
+                tar.addfile(info, io.BytesIO(data))
+
+            who = getattr(request.user, "username", "?")
+            add("run.sh", _run_script(ws, tool), mode=0o755)
+            add("README.txt", _kit_readme(ws, tool, who, timezone.now()))
+            for name in ("stage_regions.sh", "launch.sh", "binja-settings.json",
+                         "ghidra-session.sh"):
+                src = os.path.join(RE_SCRIPT_DIR, name)
+                if os.path.exists(src):
+                    with open(src) as fh:
+                        add(name, fh.read(), mode=0o755 if name.endswith(".sh") else 0o644)
+
+        audit_mod.audit(getattr(request.user, "username", "?"), "workset.kit",
+                        role=role_of(request.user), method="GET", path=request.path,
+                        object_type="ReWorkset", object_id=ws.slug,
+                        detail={"tool": tool, "regions": ws.members.count()})
+        resp = HttpResponse(buf.getvalue(), content_type="application/gzip")
+        resp["Content-Disposition"] = f'attachment; filename="re-session-{ws.slug}.tar.gz"'
+        return resp
+
+    @action(detail=True, methods=["post"])
+    def close(self, request, slug=None):
+        """Close a workset. Determinations stay on the regions; this ends the session."""
+        ws = self.get_object()
+        ws.state, ws.closed_at = ReWorkset.CLOSED, timezone.now()
+        ws.save(update_fields=["state", "closed_at", "updated_at"])
+        audit_mod.audit(getattr(request.user, "username", "?"), "workset.close",
+                        role=role_of(request.user), method="POST", path=request.path,
+                        object_type="ReWorkset", object_id=ws.slug, detail={})
+        return Response(ReWorksetSerializer(ws).data)

@@ -2,7 +2,7 @@
 
 *What passing proves:* A Linux-native intrusion correlates through the production path on the Linux hunts' own vocabulary and verdict ceiling: persistence names reach the graph, two hosts reached without any movement record join on tradecraft alone, an unrelated compromise on the same fleet stays separate, and the estate's own units and accounts bind nothing.
 
-- Run: `uat_corpus_linux.sh` — 2026-08-15 00:28:49Z
+- Run: `uat_corpus_linux.sh` — 2026-08-17 22:48:19Z
 
 **Preconditions**
 
@@ -23,6 +23,7 @@
 
 | Result | Assertion — with evidence |
 |---|---|
+| · | collections are signed with the key the enclave verifies against |
 | ✅ PASS | all 22 bundles collected, sealed and accepted by the receiver |
 
 **Ingest — the puller delivers all 22 runs**
@@ -103,7 +104,7 @@
 
 | Result | Assertion — with evidence |
 |---|---|
-| · | deployment host population at correlation time: 140 |
+| · | deployment host population at correlation time: 141 |
 | ✅ PASS | Rust Fox is not attributed to the Windows actor — no habit is shared |
 | ✅ PASS | INC-CORPUS-A still classifies 12 compromised with a larger fleet around it |
 | ✅ PASS | INC-CORPUS-B still classifies 4 compromised with a larger fleet around it |

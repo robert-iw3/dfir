@@ -22,6 +22,23 @@ KC=ir-enclave_keycloak_1
 REALM=irplatform
 REALM_FILE="${HERE}/realm-irplatform.json"
 
+# The realm file describes STRUCTURE; the credential and the origins belong to the deployment.
+# A wildcard redirect plus a published client secret is the classic code-interception pair, so
+# neither is allowed to live in the tree. Rendered to a private temporary file because this
+# content is a secret for as long as it exists.
+render_realm() {
+    : "${IR_OIDC_CLIENT_SECRET:?IR_OIDC_CLIENT_SECRET is required — deploy.sh generates it}"
+    : "${PLATFORM_PUBLIC_URL:?PLATFORM_PUBLIC_URL is required}"
+    local out; out="$(mktemp)"; chmod 600 "${out}"
+    sed -e "s|__IR_OIDC_CLIENT_SECRET__|${IR_OIDC_CLIENT_SECRET}|g" \
+        -e "s|__PLATFORM_PUBLIC_URL__|${PLATFORM_PUBLIC_URL%/}|g" \
+        "${REALM_FILE}" > "${out}"
+    printf '%s' "${out}"
+}
+RENDERED_REALM="$(render_realm)"
+trap 'rm -f "${RENDERED_REALM}"' EXIT
+REALM_FILE="${RENDERED_REALM}"
+
 [[ -f "${REALM_FILE}" ]] || { echo "[realm-converge] ${REALM_FILE} missing" >&2; exit 1; }
 ${RUNTIME} inspect "${KC}" >/dev/null 2>&1 \
     || { echo "[realm-converge] ${KC} is not running on THIS host" >&2; exit 1; }

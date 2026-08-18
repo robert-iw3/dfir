@@ -38,6 +38,8 @@ services:
       # produces collections that look successful while the host's memory crossed the wire in
       # the clear — and nobody finds out until it no longer matters.
       RECEIVER_TLS_CERT: /certs/receiver.crt
+      # Demanded before the holding area is read or a bundle deleted. Unset means refuse.
+      RECEIVER_PULLER_TOKEN: ${RECEIVER_PULLER_TOKEN}
       RECEIVER_TLS_KEY: /certs/receiver.key
     volumes:
       - ../../dmz/certs:/certs:ro,z

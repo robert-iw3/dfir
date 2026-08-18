@@ -31,19 +31,18 @@ class SSOHeaderAuthentication(authentication.BaseAuthentication):
             return None
         if _header(request, "X-Proxy-Auth") != secret:
             return None
-        # oauth2-proxy forwards X-Auth-Request-*; Remote-* is accepted as a fallback.
-        email = (_header(request, "X-Forwarded-Email")
-                 or _header(request, "X-Auth-Request-Email")
-                 or _header(request, "Remote-Email")
-                 or _header(request, "X-Auth-Request-User")
-                 or _header(request, "Remote-User"))
+        # ONLY the X-Forwarded-* set, which oauth2-proxy replaces on the request it makes to
+        # the upstream. The X-Auth-Request-* form belongs to the RESPONSE side of an
+        # auth_request subrequest, and Remote-* is set by nothing in this deployment — so on
+        # the request path both are whatever the client sent, and accepting them as fallbacks
+        # let a caller name their own identity to a backend that had already decided to trust
+        # the hop because the shared secret was present.
+        email = _header(request, "X-Forwarded-Email")
         if not email:
             return None
 
         username = (_header(request, "X-Forwarded-Preferred-Username")
-                    or _header(request, "X-Auth-Request-Preferred-Username")
-                    or _header(request, "X-Auth-Request-User")
-                    or _header(request, "Remote-User")
+                    or _header(request, "X-Forwarded-User")
                     or email).split("@")[0]
         user, _ = User.objects.get_or_create(
             username=username, defaults={"email": email, "is_active": True})
@@ -52,24 +51,43 @@ class SSOHeaderAuthentication(authentication.BaseAuthentication):
             user.save(update_fields=["email"])
 
         # Role is authoritative from the Keycloak groups claim; highest privilege wins.
-        raw_groups = (_header(request, "X-Forwarded-Groups")
-                      or _header(request, "X-Auth-Request-Groups")
-                      or _header(request, "Remote-Groups"))
+        # ROLES rather than a literal tuple, so a role added there cannot be silently absent
+        # here — `reverse_engineer` was, which sent every RE session down the no-sync path.
+        raw_groups = _header(request, "X-Forwarded-Groups")
         groups = [g.strip().lstrip("/") for g in raw_groups.split(",") if g.strip()]
-        role = next((r for r in ("admin", "analyst", "auditor") if r in groups), None)
+        role = next((r for r in ROLES if r in groups), None)
         # Rights that compose with the role rather than replacing it. Read from the same
         # claim, so Keycloak stays authoritative in BOTH directions: withdrawing the group
         # there withdraws the right here on the next request.
         grants = [g for g in GRANT_GROUPS if g in groups]
         if role:
             _sync_role(user, role, grants)
-        elif not user.groups.exists():
+        else:
+            # An absent role is a REVOCATION, not "keep whatever this account had". Treating
+            # it as the latter made withdrawing someone's group in Keycloak a no-op — the
+            # platform's documented answer to a suspect insider, withdrawing nothing, while a
+            # stale local admin stayed admin across fresh logins.
+            _revoke(user)
             raise exceptions.AuthenticationFailed("SSO user has no platform role group")
 
         # Attribute the request to a sign-on, opening one on first sight. Stateless auth has
         # no login call to hook, so this is the point at which a login becomes observable.
         authevents.note_request(request, user, role or "")
         return (user, None)
+
+
+def _revoke(user):
+    """Strip every local right when the claim carries no role.
+
+    Refusing the request alone is not enough: the groups and the staff/superuser flags persist
+    on the account, so any other path that reads them — the Django admin site, a token, a
+    later request whose claim is momentarily present — still sees the old privilege.
+    """
+    if user.groups.exists():
+        user.groups.clear()
+    if user.is_superuser or user.is_staff:
+        user.is_superuser = user.is_staff = False
+        user.save(update_fields=["is_superuser", "is_staff"])
 
 
 def _sync_role(user, role, grants=()):

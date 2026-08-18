@@ -40,7 +40,9 @@ Usage: sudo ./respond.sh --receiver <URL> [options]
   --incident <ID>     Incident this collection belongs to               (required)
   --evidence <DIR>    Where to write evidence (default /var/tmp/ir-evidence-<incident>)
   --hostname <NAME>   Override the detected hostname (use when /etc/hostname is wrong)
-  --hmac-key <KEY>    Custody signing key; without it the bundle is sealed but unsigned
+  --hmac-key-file <F> File holding the custody signing key. Preferred: a key given as an
+                      argument is visible in /proc on a host under investigation.
+  --hmac-key <KEY>    Same, inline. Without either the bundle is sealed but unsigned
   --keep              Leave the evidence directory in place after a successful ship
   --collect-only      Collect and seal; do not ship
   --ship-only         Ship an evidence directory collected earlier
@@ -60,6 +62,9 @@ while [[ $# -gt 0 ]]; do
         --evidence) EVIDENCE="${2:-}"; shift 2 ;;
         --hostname) HOSTNAME_OVERRIDE="${2:-}"; shift 2 ;;
         --hmac-key) HMAC_KEY="${2:-}"; shift 2 ;;
+        --hmac-key-file)
+            [[ -r "${2:-}" ]] || die "cannot read the custody key file: ${2:-}"
+            HMAC_KEY="$(< "$2")"; HMAC_KEY="${HMAC_KEY%%$'\n'*}"; shift 2 ;;
         --keep) KEEP_EVIDENCE=1; shift ;;
         --collect-only) COLLECT_ONLY=1; shift ;;
         --ship-only) SHIP_ONLY=1; shift ;;
@@ -134,7 +139,20 @@ if ! "${RUNTIME}" image exists "${IMAGE}" 2>/dev/null; then
 fi
 
 EVIDENCE="${EVIDENCE:-/var/tmp/ir-evidence-${INCIDENT}}"
-mkdir -p "${EVIDENCE}" || die "cannot create ${EVIDENCE}"
+# The path is predictable — the incident id is on this command line, in world-readable /proc,
+# on the machine under investigation. A resident attacker who creates it first owns the
+# directory the host's full memory image lands in, so a pre-existing path is refused rather
+# than adopted, and a fresh one is created private to root.
+if [[ -e "${EVIDENCE}" ]]; then
+    owner="$(stat -c '%U %a' "${EVIDENCE}" 2>/dev/null || echo '? ?')"
+    [[ "${owner}" == "root 700" ]] \
+        || die "${EVIDENCE} already exists as [${owner}], not [root 700] — refusing to write
+        this host's memory into a directory this run did not create. Remove it, or pass
+        --evidence with a path that does not exist."
+else
+    (umask 077 && mkdir -p "${EVIDENCE}") || die "cannot create ${EVIDENCE}"
+    chmod 700 "${EVIDENCE}" || die "cannot secure ${EVIDENCE}"
+fi
 
 # A memory image is the size of this host's RAM, and the bundle is written beside it, so the
 # collection needs room for both. Checked before the capture rather than discovered part-way
@@ -168,7 +186,16 @@ if (( ! SHIP_ONLY )); then
         -v "${EVIDENCE}:/evidence"
         -e "IR_INCIDENT_ID=${INCIDENT}"
     )
-    [[ -n "${HMAC_KEY}" ]] && collect_args+=(-e "IR_CUSTODY_HMAC_KEY=${HMAC_KEY}")
+    # Through a file, never on the argv: `-e KEY=value` puts the fleet's custody key in
+    # /proc/<pid>/cmdline on the least trusted machine in the architecture, where anyone
+    # local can read it and then forge a seal for any hostname. vault-setup-ir.sh already
+    # avoids exactly this for the unseal key.
+    if [[ -n "${HMAC_KEY}" ]]; then
+        KEY_ENV_FILE="$(mktemp)"; chmod 600 "${KEY_ENV_FILE}"
+        printf 'IR_CUSTODY_HMAC_KEY=%s\n' "${HMAC_KEY}" > "${KEY_ENV_FILE}"
+        trap 'rm -f "${KEY_ENV_FILE}"' EXIT
+        collect_args+=(--env-file "${KEY_ENV_FILE}")
+    fi
     [[ -n "${HOSTNAME_OVERRIDE}" ]] && collect_args+=(-e "IR_HOSTNAME=${HOSTNAME_OVERRIDE}")
 
     "${RUNTIME}" "${collect_args[@]}" "${IMAGE}" || die "collection failed — see the output above"

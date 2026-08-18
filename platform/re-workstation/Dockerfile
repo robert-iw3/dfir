@@ -31,9 +31,20 @@ RUN groupadd -g 1001 binja \
 ENV LANG=en_US.UTF-8 \
     LC_ALL=en_US.UTF-8
 
+# The disassembler a reverse engineer forms conclusions in, so a substituted build changes
+# the analysis output the case record ends up carrying — and `--network none` at session time
+# does nothing about what the BUILD pulled in. Ghidra's Dockerfile in this directory already
+# pins a version and a digest; this is the same rule, and the build refuses without one
+# rather than fetching whatever the CDN is serving today.
+ARG BINJA_SHA256
 RUN mkdir -p /binja /regions \
     && cd /binja \
+    && test -n "${BINJA_SHA256}" || { \
+         echo "BINJA_SHA256 is required: pin the installer you intend to ship." >&2; \
+         echo "  podman build --build-arg BINJA_SHA256=<sha256 of binaryninja_free_linux.zip>" >&2; \
+         exit 1; } \
     && wget -q --progress=bar:force https://cdn.binary.ninja/installers/binaryninja_free_linux.zip -O binja.zip \
+    && echo "${BINJA_SHA256}  binja.zip" | sha256sum -c - \
     && unzip -q binja.zip \
     && chmod +x /binja/binaryninja \
     && rm -f binja.zip \

@@ -76,3 +76,11 @@ platform/deploy/dmz/rendered/
 # Per-run UAT logs (results/ ARE published; raw logs are not).
 platform/test/logs/
 platform/deploy/.compose-applied
+
+# Rendered Boundary configs. deploy.sh writes these from the .tmpl siblings with THIS
+# deployment's keys, so they are deployment state and carry live key material. The numbered
+# egress workers were not covered when track M3 added them, which is how two of them reached
+# this repository; the glob covers any worker count.
+platform/hashicorp/access/boundary-controller.hcl
+platform/hashicorp/access/boundary-egress.hcl
+platform/hashicorp/access/boundary-egress-*.hcl

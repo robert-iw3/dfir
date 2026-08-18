@@ -284,6 +284,21 @@ except Exception: sys.exit(1)
     sleep 5
 done
 
+# Rows this run's own setup already wrote — the export-grant checks use the same agent
+# accounts, so their decisions are in the ledger under the same marker and are not the
+# agents' to account for.
+LEDGER_BASE="$(be_py <<PY
+import json, os, django
+os.environ.setdefault("DJANGO_SETTINGS_MODULE", "ir_platform.settings"); django.setup()
+from cases.models import ExportLedger
+print(json.dumps({
+    "ok": ExportLedger.objects.filter(actor__startswith="${MARKER}", outcome="completed").count(),
+    "den": ExportLedger.objects.filter(actor__startswith="${MARKER}", outcome="denied").count()}))
+PY
+)"
+BASE_EOK="$(python3 -c "import json,sys;print(json.loads(sys.argv[1])['ok'])" "${LEDGER_BASE}" 2>/dev/null || echo 0)"
+BASE_EDEN="$(python3 -c "import json,sys;print(json.loads(sys.argv[1])['den'])" "${LEDGER_BASE}" 2>/dev/null || echo 0)"
+
 RUN_CID="$(edge_run "loadtest-run-${RUNID}" "${SCRATCH}/run.json" /t.py /cfg.json)"
 ${RUNTIME} wait "${RUN_CID}" >/dev/null 2>&1
 # The driver's LAST line is its JSON result; everything before it is progress or a traceback.
@@ -490,9 +505,19 @@ num_or_0() { local v="${1//[^0-9]/}"; printf '%s' "${v:-0}"; }
 # A write whose connection dropped before the response arrived may well have committed. The
 # agents counted those per operation, so the excess has a CAUSE to be measured against
 # instead of a percentage that is only ever a guess about how much drift looks normal.
-RC_RESETS="$(rj "d['activity']['write_verdict']['resets']")"
-EXP_RESETS="$(rj "d['activity']['export']['resets']")"
-FID_SLACK=$(( (L_NOTES + 199) / 200 ))       # 0.5%, at least 1
+# Every phase, not just the contended one: the row counts these are compared against are not
+# phase-scoped, so a bound taken from `activity` alone misses the ramp's own dropped and
+# re-sent writes and reports the difference as the platform writing twice.
+RC_RESETS="$(rj "d.get('uncounted', {}).get('write_verdict', 0)")"
+# Same rule for notes, which had been compared against a flat percentage — a guess about how
+# much drift looks normal, which is exactly what the other two assertions refuse to accept.
+NOTE_RESETS="$(rj "d.get('uncounted', {}).get('write_note', 0)")"
+# An export the agent could not count may still have had its decision recorded: a dropped
+# connection, a 5xx, a 429 — or a request the transport re-sent after it had already arrived,
+# which the platform ledgers twice and the agent answers once. The agents track all of them,
+# and that is the only honest bound on how far the ledger may exceed what they tallied.
+EXP_RESETS="$(rj "d.get('uncounted', {}).get('export', 0) + d['confidentiality'].get('export_unserved', 0)")"
+FID_SLACK="$(num_or_0 "${NOTE_RESETS}")"
 if [[ "${L_NOTES:-0}" -eq 0 ]]; then
     bad "note fidelity not measured — the agents recorded zero accepted notes to compare against"
 elif [[ "${L_NOTES}" == "${D_NOTES}" ]]; then
@@ -500,9 +525,9 @@ elif [[ "${L_NOTES}" == "${D_NOTES}" ]]; then
 elif [[ "${D_NOTES}" -lt "${L_NOTES}" ]]; then
     bad "FIDELITY: agents were told ${L_NOTES} notes were accepted, the database holds ${D_NOTES} — $(( L_NOTES - D_NOTES )) acknowledged write(s) LOST"
 elif [[ $(( D_NOTES - L_NOTES )) -le "${FID_SLACK}" ]]; then
-    ok "data fidelity: ${D_NOTES} notes for ${L_NOTES} the agents counted as accepted — $(( D_NOTES - L_NOTES )) committed with the response lost on the way back, which loses nothing"
+    ok "data fidelity: ${D_NOTES} notes for ${L_NOTES} the agents counted as accepted — $(( D_NOTES - L_NOTES )) written by a request that arrived without its answer getting back, within the ${FID_SLACK} the agents could not count"
 else
-    bad "FIDELITY: ${D_NOTES} notes for only ${L_NOTES} accepted — $(( D_NOTES - L_NOTES )) more than any lost acknowledgement explains; a retry is writing twice"
+    bad "FIDELITY: ${D_NOTES} notes for only ${L_NOTES} accepted — $(( D_NOTES - L_NOTES )) beyond the ${FID_SLACK} attempt(s) that went unanswered or were re-sent; a retry is writing twice"
 fi
 # Totals cannot tell a lost write from an unacknowledged one, and the two have opposite
 # meanings. The agents recorded the id of every adjudication the platform said it had
@@ -535,6 +560,9 @@ else
 fi
 D_EOK="$(python3 -c "import json,sys;print(json.loads(sys.argv[1])['exp_ok'])" "${FID}")"
 D_EDEN="$(python3 -c "import json,sys;print(json.loads(sys.argv[1])['exp_den'])" "${FID}")"
+# Only what the AGENTS caused, which is what their ledger can be reconciled against.
+D_EOK=$(( D_EOK - ${BASE_EOK:-0} ))
+D_EDEN=$(( D_EDEN - ${BASE_EDEN:-0} ))
 if [[ "$(( ${EXP_OK:-0} + ${EXP_DEN:-0} ))" -eq 0 ]]; then
     bad "export ledger accounting not measured — the agents attempted zero exports"
 elif [[ "${D_EOK}" == "${EXP_OK}" && "${D_EDEN}" == "${EXP_DEN}" ]]; then
@@ -542,9 +570,9 @@ elif [[ "${D_EOK}" == "${EXP_OK}" && "${D_EDEN}" == "${EXP_DEN}" ]]; then
 elif [[ "${D_EOK}" -lt "${EXP_OK}" || "${D_EDEN}" -lt "${EXP_DEN}" ]]; then
     bad "export ledger SHORT: agents were told ${EXP_OK}/${EXP_DEN}, the ledger holds ${D_EOK}/${D_EDEN} — an export decision was not recorded"
 elif [[ $(( (D_EOK - EXP_OK) + (D_EDEN - EXP_DEN) )) -le "$(num_or_0 "${EXP_RESETS}")" ]]; then
-    ok "the export ledger accounts for every attempt (${D_EOK} completed, ${D_EDEN} denied); $(( (D_EOK - EXP_OK) + (D_EDEN - EXP_DEN) )) decision(s) recorded whose response never reached the agent, within the ${EXP_RESETS} dropped connection(s)"
+    ok "the export ledger accounts for every attempt (${D_EOK} completed, ${D_EDEN} denied); $(( (D_EOK - EXP_OK) + (D_EDEN - EXP_DEN) )) decision(s) recorded whose answer never reached the agent, within the ${EXP_RESETS} attempt(s) it could not count"
 else
-    bad "export ledger drift beyond dropped connections: agents ${EXP_OK}/${EXP_DEN}, ledger ${D_EOK}/${D_EDEN}, only ${EXP_RESETS} response(s) lost"
+    bad "export ledger drift beyond what went unanswered: agents ${EXP_OK}/${EXP_DEN}, ledger ${D_EOK}/${D_EDEN}, only ${EXP_RESETS} attempt(s) unaccounted"
 fi
 
 # Integrity after the storm.

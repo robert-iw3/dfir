@@ -19,7 +19,7 @@ from .audit import audit
 from .models import (Finding, FindingReclassification, IOC, MemoryAnalysisRun,
                      MemoryCapture)
 from .exportledger import record_export
-from .rbac import CanExport, IsAnalystOrAdmin, role_of
+from .rbac import CanExport, IsAnalystOrAdmin, role_of, scope_by_investigation
 
 VALID_VERDICTS = {
     "True Positive", "Likely True Positive", "Indeterminate",
@@ -264,7 +264,13 @@ class FindingExportView(APIView):
         # Not "format": DRF reserves that query parameter for content negotiation and
         # answers 404 for a renderer it does not have.
         fmt = request.query_params.get("fmt", "csv")
-        qs = Finding.objects.select_related("run__host", "run__investigation")
+        # Scoped before any filter, exactly as the list route scopes the same model: holding
+        # the export right says what a reader may carry OUT, never which cases they may read.
+        # Unscoped, this is both a compartment bypass and the only sanctioned egress, and the
+        # ledger files the result as an authorized export.
+        qs = scope_by_investigation(
+            Finding.objects.select_related("run__host", "run__investigation"),
+            request.user, "run__investigation_id")
 
         investigation = request.query_params.get("investigation")
         verdict = request.query_params.get("verdict")
@@ -295,7 +301,10 @@ class FindingExportView(APIView):
                       filters={"investigation": investigation, "verdict": verdict, "run": run})
 
         if fmt == "ioc":
-            iocs = IOC.objects.select_related("run__host")
+            # The bundle is meant to be shared onward, so an unscoped one leaves the
+            # compartment by the widest door the platform has.
+            iocs = scope_by_investigation(IOC.objects.select_related("run__host"),
+                                          request.user, "run__investigation_id")
             if investigation:
                 iocs = iocs.filter(run__investigation_id=investigation)
             bundle = {}

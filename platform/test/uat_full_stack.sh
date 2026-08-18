@@ -88,6 +88,13 @@ BUNDLE=$(tar_bundle "$WORK" "$HOST")
 recv() { curl -s --cacert "${PLATFORM}/dmz/certs/receiver.crt" \
               --resolve "receiver:${RECEIVER_PORT}:127.0.0.1" \
               "$@" "https://receiver:${RECEIVER_PORT}${RECV_PATH}"; }
+
+# Reading the holding area is the puller's right, not everyone's — `/ingest` stays open because
+# a collected endpoint has no credential to offer. Taken from the receiver itself so the test
+# presents what the deployment issued rather than what a file claims.
+PULLER_TOKEN="$(${RUNTIME} exec -i ir-dmz_receiver_1 sh -c \
+    'printf %s "${RECEIVER_PULLER_TOKEN:-}"' 2>/dev/null || true)"
+recv_read() { recv -H "Authorization: Bearer ${PULLER_TOKEN}" "$@"; }
 RECV_PATH=/ingest
 CODE=$(recv -o /dev/null -w '%{http_code}' -X POST --data-binary @"$BUNDLE")
 [[ "$CODE" == "202" ]] && ok "DMZ receiver accepted + custody-verified the bundle over pinned TLS (${CODE})" \
@@ -114,11 +121,20 @@ done
 # The puller polls on an interval; give it a few cycles before asserting the drain.
 for _ in $(seq 1 12); do
     RECV_PATH=/pending
-    PEND=$(recv -f 2>/dev/null | python3 -c "import sys,json;print(len(json.load(sys.stdin)['pending']))" 2>/dev/null)
+    PEND=$(recv_read -f 2>/dev/null | python3 -c "import sys,json;print(len(json.load(sys.stdin)['pending']))" 2>/dev/null)
     RECV_PATH=/ingest
-    [[ "${PEND:-1}" == "0" ]] && break; sleep 5
+    [[ "${PEND}" == "0" ]] && break; sleep 5
 done
-[[ "${PEND:-1}" == "0" ]] && ok "DMZ holding drained after the pull" || bad "DMZ still holding ${PEND} bundle(s)"
+# An empty PEND means the holding area could not be READ, which is not the same claim as
+# "bundles are still held" — reporting it as the latter turns a refused request into evidence
+# of a stuck pipeline.
+if [[ -z "${PEND}" ]]; then
+    bad "could not read the DMZ holding area — the drain is unverified, not necessarily incomplete"
+elif [[ "${PEND}" == "0" ]]; then
+    ok "DMZ holding drained after the pull"
+else
+    bad "DMZ still holding ${PEND} bundle(s)"
+fi
 
 say "5/9  DATA FLOW: evidence is stored, analyzed and renderable"
 assert_data_flow ir-enclave_backend_1 "${IR_BROKER_TOKEN}" 4

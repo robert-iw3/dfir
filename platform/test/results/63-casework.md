@@ -2,13 +2,13 @@
 
 *What passing proves:* The tree serves the hierarchy in one request with counts that match the underlying tables; tags come from an admin-curated vocabulary and free text is refused; task moves are audited; and all three are scoped by case membership.
 
-- Run: `uat_casework.sh` — 2026-08-14 23:52:54Z
+- Run: `uat_casework.sh` — 2026-08-17 13:07:40Z
 
 **0/4  A case with two hosts, and two analyst identities**
 
 | Result | Assertion — with evidence |
 |---|---|
-| ✅ PASS | case 88: 2 hosts, 2 runs, 6 findings, 2 captures |
+| ✅ PASS | case 175: 2 hosts, 2 runs, 6 findings, 2 captures |
 
 **1/4  The tree is one request, and its counts match the tables**
 
@@ -41,7 +41,7 @@
 | ✅ PASS | evidence the platform already holds is linked, never copied |
 | ✅ PASS | a reference to a table outside the evidence vocabulary is refused |
 | ✅ PASS | the task carries its note, its attachment and the five stages it can move to |
-| ✅ PASS | every action is audited (110 -> 116: create, 3 moves, note, attach) |
+| ✅ PASS | every action is audited (199 -> 205: create, 3 moves, note, attach) |
 
 **4/4  All three respect the compartment**
 

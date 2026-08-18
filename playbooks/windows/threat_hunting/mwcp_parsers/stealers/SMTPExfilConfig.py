@@ -104,13 +104,13 @@ def _find_email_near(data: bytes, offset: int) -> str | None:
 
 
 def _find_password_near(data: bytes, offset: int, email: str | None) -> str | None:
-    """Find a password in the context window. Prefer labelled passwords, fall back to
+    """Find a password in the context window. Prefer labeled passwords, fall back to
     bare strings that appear after the email address."""
     lo = max(0, offset - _CONTEXT_WINDOW)
     hi = min(len(data), offset + _CONTEXT_WINDOW)
     ctx = data[lo:hi]
 
-    # Labelled password
+    # Labeled password
     for m in _PASS_LABEL_RE.finditer(ctx):
         val = _clean(m.group(1))
         if val and val not in ('smtp', 'mail', 'email', 'password', 'pass'):

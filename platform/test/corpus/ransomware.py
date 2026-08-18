@@ -20,7 +20,7 @@ leaving evidence that survives to be collected. A ransomware event is none of th
   time         the whole event fits in ninety minutes. Temporal coherence decays over
                thirty days, so it is 1.0 for every pair here and decides nothing.
 
-Partial completion is modelled too: the actor was interrupted, so some hosts carry the
+Partial completion is modeled too: the actor was interrupted, so some hosts carry the
 payload and the staging with no encryption, and one carries a note with no payload left on
 disk. A campaign whose members are at different stages is the normal case, not the exception.
 

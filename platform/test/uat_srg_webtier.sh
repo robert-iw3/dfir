@@ -310,14 +310,24 @@ grep -q "object(s) shipped" <<<"${SHIP}" \
 
 # What the bucket holds: records off the container filesystem (000071), resumable state, and
 # objects a security infrastructure can consume as-is (000163).
+# The shipper ships on an interval and is REPLACED by the destructive deploy the identity
+# suite runs just before this one, so a single read can land inside its first interval and
+# find a bucket that is correct and simply not written to yet. Settle, then assert.
+for _ in $(seq 1 12); do
 BUCKET="$(${RUNTIME} exec -i "${SHIPPER}" python3 - <<'PYEOF' 2>/dev/null
 import os, django
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "ir_platform.settings"); django.setup()
 from cases import storage
 from cases.management.commands import ship_logs as sl
 s3 = storage.client(); b = sl.bucket_name()
+# Asked BY PREFIX. One unpaginated page returns the first 1000 keys in lexical order, and
+# once backend-access alone fills that page the traefik objects are simply never seen — the
+# read reports an empty prefix while the shipper is writing to it every minute.
+access = sorted(o["Key"] for o in s3.list_objects_v2(
+    Bucket=b, Prefix="traefik-access/", MaxKeys=1000).get("Contents", []))
 keys = [o["Key"] for o in s3.list_objects_v2(Bucket=b, MaxKeys=1000).get("Contents", [])]
-access = sorted(k for k in keys if k.startswith("traefik-access/"))
+keys += [o["Key"] for o in s3.list_objects_v2(
+    Bucket=b, Prefix=sl.OFFSETS_KEY, MaxKeys=10).get("Contents", [])]
 body = s3.get_object(Bucket=b, Key=access[-1])["Body"].read().decode() if access else ""
 print("ACCESS_OBJECTS", len(access))
 print("OFFSETS", int(sl.OFFSETS_KEY in keys))
@@ -326,6 +336,9 @@ u = sl.log_storage()["log_storage"]
 print("ALLOC", u["alloc_bytes"], "USED", u["used_bytes"])
 PYEOF
 )"
+    [[ "$(awk '/^ACCESS_OBJECTS/{print $2}' <<<"${BUCKET}")" -gt 0 ]] 2>/dev/null && break
+    sleep 10
+done
 [[ "$(awk '/^ACCESS_OBJECTS/{print $2}' <<<"${BUCKET}")" -gt 0 ]] 2>/dev/null \
     && ok "SRG-APP-000125-WSR-000071: ingress access records are held in the object store, off the web tier's filesystems" \
     || bad "SRG-APP-000125-WSR-000071: no access-log objects in the bucket"
@@ -805,7 +818,16 @@ if [[ "$(${RUNTIME} inspect ir-enclave_ntp_1 --format '{{.State.Status}}' 2>/dev
 
     # It must never touch a clock it does not own: containers inherit the host's, and a time
     # service that tried to set it would fail and exit, leaving the enclave with no authority.
-    ${RUNTIME} logs ir-enclave_ntp_1 2>&1 | grep -qi 'Disabled control of system clock' \
+    # chronyd prints this a moment after it starts, so a read that arrives first sees a
+    # service that has not spoken yet rather than one controlling the clock.
+    NTP_SAFE=0
+    for _ in $(seq 1 10); do
+        if ${RUNTIME} logs ir-enclave_ntp_1 2>&1 | grep -qi 'Disabled control of system clock'; then
+            NTP_SAFE=1; break
+        fi
+        sleep 3
+    done
+    [[ "${NTP_SAFE}" == "1" ]] \
         && ok "and it runs without control of the system clock, as a container must" \
         || bad "the time service did not disable clock control — it is trying to set a clock it does not own"
 

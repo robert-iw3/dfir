@@ -29,8 +29,12 @@ ${RUNTIME} image exists "${IMAGE}" 2>/dev/null || {
 
 # Written back as the invoking user. Rootless podman maps the container's root to that user,
 # so a migration generated here is owned by whoever ran it rather than by root.
+# shared/custody.py is COPYed to /app/custody.py at build time, and mounting the source
+# backend over /app hides it — tiering.py imports it at module load, so every app fails to
+# import and makemigrations reports a missing module instead of a model diff.
 ${RUNTIME} run --rm \
     -v "${PLATFORM}/backend:/app:z" \
+    -v "${PLATFORM}/shared/custody.py:/app/custody.py:ro,z" \
     -e DJANGO_SETTINGS_MODULE=ir_platform.settings \
     -e IR_SECRET_KEY=makemigrations-only \
     -e POSTGRES_HOST=127.0.0.1 \

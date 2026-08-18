@@ -377,8 +377,44 @@ appear once a capture has been analyzed with symbols: carving happens in the per
 YARA pass, and regions are uploaded to a bucket per host.
 
 Rows carry the host, the region, its size, the rule that carved it, the PID and process it
-was attributed to, and its triage state — unanalyzed, in progress, analyzed, benign. A
-region is claimed before it is worked.
+was attributed to, and its triage state — unanalyzed, in progress, analyzed, benign. Each
+row offers the two ends of the work, named for which end they are: **open in RE** starts a
+session on those bytes, **record** writes up what they turned out to be.
+
+### Starting a session
+
+Tick regions and press **open in RE session**, or press **open in RE** on one row. That
+assembles a *workset* — one investigation, one host, at most 50 regions — and mints what is
+needed to open it. A host's whole carved bucket is the wrong unit: parallel analysis carves
+hundreds, and a disassembler pointed at all of them crashes rather than helps.
+
+![A minted session: the kit, the procedure, and the sessions already open](img/re_2.png)
+
+The panel names the workset, its host and case, and offers the kit. The procedure is written
+out rather than assumed — unpack, change directory, run — because two bare commands presume
+a shell already sitting in the right place with the scripts present, which is never where
+anyone starts. Step 2 shows what `run.sh` does for anyone who would rather type it.
+
+**The kit carries no evidence.** Carved regions are malware and never cross a browser: the
+kit holds `run.sh`, the mediator, the launcher and a README, and the mediator pulls the
+regions when it runs. `run.sh` stages them, verifies each against the hash recorded when it
+was carved, opens the tool, and wipes the staged bytes when the session ends — including
+when it is interrupted.
+
+![The kit downloading through the analyst kiosk](img/re_4.png)
+
+### Sessions already open
+
+*Reverse-engineering sessions* lists what is in session: the workset, its host, how many
+regions, who assembled it, and whether it has been staged. Advisory, never a lock — two
+people may examine the same region, and the platform says so rather than preventing it.
+
+![Worksets and their state, with the session panel above](img/re_3.png)
+
+What happens inside a session is not observable, deliberately: the workstation is contained
+and has no way to report. The platform records the ends — the kit it issued and the
+determination that came back — and a determination made during a staged session names that
+session.
 
 **Why a region was carved.** Opening a region states the signature hits that flagged it
 before asking for a verdict.

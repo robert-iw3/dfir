@@ -172,9 +172,23 @@ corpus_receiver_addr() {
 # pinned TLS. IR_MACHINE_ID is the collector's own identity override, resolved before any
 # hunt runs: every endpoint shares one container image, and without a distinct id the enclave
 # merges the whole corpus into a single host.
+# The key the ENCLAVE will verify with, taken from the receiver that does the verifying. Signing
+# with anything else proves nothing, and signing with nothing leaves every bundle unsigned — which
+# a custody assertion can only pass while unsigned counts as verified.
+corpus_signing_key() {
+    [[ -n "${IR_CUSTODY_HMAC_KEY:-}" ]] && { printf '%s' "${IR_CUSTODY_HMAC_KEY}"; return 0; }
+    ${RUNTIME} exec -i ir-dmz_receiver_1 sh -c 'printf %s "${IR_CUSTODY_HMAC_KEY:-}"' 2>/dev/null
+}
+
 corpus_collect_and_ship() {  # <scenario-dir>
-    local scen="$1" f host incident mid evid code
+    local scen="$1" f host incident mid evid code sign_key
     SHIPPED=0
+    sign_key="$(corpus_signing_key)"
+    if [[ -n "${sign_key}" ]]; then
+        info "collections are signed with the key the enclave verifies against"
+    else
+        warn "no custody key available — bundles ship unsigned and cannot verify on arrival"
+    fi
     for f in "${scen}"/*.json; do
         host="$(basename "${f}" .json)"
         [[ "${host}" == "manifest" ]] && continue
@@ -185,7 +199,7 @@ corpus_collect_and_ship() {  # <scenario-dir>
             -e IR_HOSTNAME="${host}" \
             -e IR_MACHINE_ID="${mid}" \
             -e IR_INCIDENT_ID="${incident}" \
-            -e IR_CUSTODY_HMAC_KEY="${IR_CUSTODY_HMAC_KEY:-}" \
+            -e IR_CUSTODY_HMAC_KEY="${sign_key}" \
             -e IR_SCENARIO_FILE=/scenario.json \
             -e IR_SAMPLE_BYTES=8388608 \
             -v "${f}:/scenario.json:ro,z" \
@@ -278,7 +292,7 @@ PYEOF
           && "$(num_or_zero "${NCAPS}")" -gt 0 ]]; then
         ok "every capture reached a terminal analysis and compromise settled (${TERMINAL}/${NCAPS} analyzed, ${NCOMP} compromised)"
     else
-        bad "only ${TERMINAL:-0}/${NCAPS:-0} captures finished analysing within the wait — still in flight: ${PENDING}. Everything downstream reads those hosts as having no findings."
+        bad "only ${TERMINAL:-0}/${NCAPS:-0} captures finished analyzing within the wait — still in flight: ${PENDING}. Everything downstream reads those hosts as having no findings."
     fi
 }
 

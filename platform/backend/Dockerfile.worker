@@ -4,6 +4,9 @@
 # reads the raw image via the ISF symbol table, and building THAT table needs the target distro
 # plus internet — which is why it happens outside the enclave, in symbols/.
 FROM docker.io/library/alpine:3.24@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b
+# Pinned: this parses hazardous evidence, and a floating version means the image that
+# produced a finding cannot be reconstructed from the tree that built it.
+ARG YARA_PYTHON_VERSION=4.5.4
 
 # yara-dev is required to build the YARA Python bindings from source: the published wheels
 # target CPython 3.13 and this base ships 3.14.
@@ -23,7 +26,7 @@ RUN python3 -m venv /venv \
 COPY vol3_wheels /tmp/vol3_wheels
 RUN /venv/bin/pip install --no-cache-dir /tmp/vol3_wheels/volatility3-*.whl \
                                          /tmp/vol3_wheels/pefile-*.whl \
-    && /venv/bin/pip install --no-cache-dir yara-python \
+    && /venv/bin/pip install --no-cache-dir "yara-python==${YARA_PYTHON_VERSION}" \
     && rm -rf /tmp/vol3_wheels
 
 # The proven analysis code: the analyzer, its enrichment pass, the custom Volatility

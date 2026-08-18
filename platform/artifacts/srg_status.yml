@@ -14,7 +14,7 @@ SRG-APP-000001-WSR-000001:
     that widens it to absorb accumulation fails the test
 SRG-APP-000001-WSR-000002:
   status: mitigated
-  mechanism: 'Sessions are held server-side in Redis, not in the client''s cookie, so signing out or cancelling
+  mechanism: 'Sessions are held server-side in Redis, not in the client''s cookie, so signing out or canceling
     a session ends it for real. The gate is a mesh service in its own right: Redis binds loopback only,
     so the gate reaches it through its own Connect sidecar and its access is an intention rather than
     network reachability. Database 1 keeps analyst sessions out of the task broker''s keyspace.'
@@ -280,7 +280,7 @@ SRG-APP-000315-WSR-000004:
   verified: test/uat_boundary.sh — the bastion cannot reach the enclave ingress except through a session
 SRG-APP-000316-WSR-000170:
   status: mitigated
-  mechanism: Cancelling a Boundary session immediately drops the analyst's connection, and the broker
+  mechanism: Canceling a Boundary session immediately drops the analyst's connection, and the broker
     is supervised so it re-establishes only as a new authorized session.
   evidence: hashicorp/access/boundary_session.sh
   verified: test/uat_boundary.sh §5a — a canceled session is replaced by a NEW authorized one, unattended

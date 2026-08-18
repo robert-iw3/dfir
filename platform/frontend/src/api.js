@@ -129,6 +129,16 @@ export const api = {
   analyzeRegion: (id, body) => post(`/regions/${id}/analyze/`, body),
   claimRegion: (id) => post(`/regions/${id}/claim/`),
   purgeRegion: (id, body) => post(`/regions/${id}/purge/`, body),
+
+  // Worksets: which regions a reverse-engineering session is for. The platform cannot
+  // deploy the air-gapped workstation, so the last call mints the commands an operator
+  // pastes onto it.
+  worksets: (qs = "") => get(`/worksets/${qs}`),
+  proposeWorkset: (host, limit = 20) =>
+    get(`/worksets/propose/?host=${encodeURIComponent(host)}&limit=${limit}`),
+  createWorkset: (body) => post(`/worksets/`, body),
+  worksetStageCommand: (slug, body) => post(`/worksets/${slug}/stage-command/`, body),
+  closeWorkset: (slug) => post(`/worksets/${slug}/close/`),
   platformMetrics: () => get("/admin/metrics/"),
   componentHealth: () => get("/admin/component-health/"),
   symbolRequests: () => get("/admin/symbols/"),

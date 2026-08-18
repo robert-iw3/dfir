@@ -88,7 +88,7 @@ Full procedure, including why the collecting and shipping containers are deliber
 
 Volatility needs an ISF matching the captured kernel. The enclave has no internet, so it
 cannot build one. When a capture arrives with no matching table, the platform records a
-symbol request and analyzes at reduced depth, labelled as such.
+symbol request and analyzes at reduced depth, labeled as such.
 
 **Platform Health → Symbol requests** lists outstanding kernels. The requisites export
 carries kernel identity only.

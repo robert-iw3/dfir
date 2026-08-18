@@ -2,7 +2,7 @@
 
 *What passing proves:* A component that errors shows it with a count and a message; one that recovers keeps the record but reads as recovered, with the moment it happened; and the roll-up degrades a component only for what is wrong NOW.
 
-- Run: `uat_health.sh` — 2026-08-14 23:53:29Z
+- Run: `uat_health.sh` — 2026-08-17 13:09:51Z
 
 **1/4  The self-report carries what an honest error record needs**
 

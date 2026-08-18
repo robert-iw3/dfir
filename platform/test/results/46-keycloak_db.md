@@ -2,7 +2,7 @@
 
 *What passing proves:* The identity store is a separate database the application is refused the CONNECTION to; both sides run on Vault leases with no static secret in any environment; accounts survive a Keycloak recreate through the deploy path; the realm file is enforced on existing realms; the database hop rides the mesh.
 
-- Run: `uat_keycloak_db.sh` — 2026-08-15 00:03:24Z
+- Run: `uat_keycloak_db.sh` — 2026-08-17 21:31:47Z
 
 **Preconditions**
 
@@ -19,7 +19,7 @@
 
 | Result | Assertion — with evidence |
 |---|---|
-| ✅ PASS | read the application's rendered credential (v-approle-ir-platf-BgdvrvQJSNbxmOIJ469A-1786751510) |
+| ✅ PASS | read the application's rendered credential (v-approle-ir-platf-cAaGuuKAPLZdCM6tMRSO-1787001296) |
 | ✅ PASS | the credential is Vault-issued (username shape v-…) |
 | ✅ PASS | control: that credential DOES open the evidence database over TCP |
 
@@ -50,7 +50,7 @@
 |---|---|
 | ✅ PASS | ir-enclave_backend_1 carries no POSTGRES_PASSWORD in its environment |
 | ✅ PASS | ir-enclave_worker_1 carries no POSTGRES_PASSWORD in its environment |
-| ✅ PASS | control: the application holds 23 live connection(s) to assert against |
+| ✅ PASS | control: the application holds 20 live connection(s) to assert against |
 | ✅ PASS | every live application connection is a Vault-issued non-superuser |
 | ✅ PASS | the only non-Vault-issued session is the credential broker's own (static admin, as vault) |
 
@@ -58,12 +58,12 @@
 
 | Result | Assertion — with evidence |
 |---|---|
-| ✅ PASS | Keycloak's rendered credential is Vault-issued (v-approle-keycloak-Jqsi6NjAYJ0uacpuGR1a-1786750883) |
+| ✅ PASS | Keycloak's rendered credential is Vault-issued (v-approle-keycloak-AroHy5BOMhEEiHw1glKA-1787001296) |
 | ✅ PASS | that user EXPIRES (VALID UNTIL set) — it is a lease |
 | ✅ PASS | the leased user acts as kc_app — objects survive rotation |
 | ✅ PASS | Keycloak is CONNECTED to its store with that lease (2 connection(s)) |
 | ✅ PASS | the running process holds the CURRENT credential — no superseded user in its pool |
-| · | superseded keycloak roles still present in the cluster: 2 |
+| · | superseded keycloak roles still present in the cluster: 1 |
 | ✅ PASS | no KC_DB_PASSWORD in Keycloak's configured environment |
 | ✅ PASS | no KC_DB_PASSWORD in compose or .env |
 

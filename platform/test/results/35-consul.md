@@ -2,7 +2,7 @@
 
 *What passing proves:* Which service may reach which is stated explicitly, denied by default, and enforced on the wire — and the policy itself is protected by TLS and ACLs, so the services it governs cannot read or rewrite it.
 
-- Run: `uat_consul.sh` — 2026-08-14 23:51:20Z
+- Run: `uat_consul.sh` — 2026-08-17 13:05:54Z
 
 **Consul is running in the enclave with Connect enabled**
 
@@ -84,28 +84,28 @@
 | ✅ PASS | ir-backend → ir-postgres: the allowed upstream carries traffic through its sidecar |
 | ✅ PASS | ir-backend → ir-redis: the queue upstream carries traffic through its sidecar |
 | ✅ PASS | ir-worker → ir-redis: the celery worker answers over the queue through the mesh |
-| ✅ PASS | ir-vault → ir-postgres: minted a live credential through the mesh (v-approle-ir-platf-KxT87HGdzCvYYebw461N-1786751492) |
+| ✅ PASS | ir-vault → ir-postgres: minted a live credential through the mesh (v-approle-ir-platf-qv4fqeR2rdXUF2Wgtx31-1786971964) |
 
 **Every sidecar authenticated to the hardened control plane**
 
 | Result | Assertion — with evidence |
 |---|---|
 | ✅ PASS | db-sidecar is up and stable (0 restarts) |
-| ✅ PASS | db-sidecar shares its service's live network namespace (net:[4026534354]) |
+| ✅ PASS | db-sidecar shares its service's live network namespace (net:[4026534351]) |
 | ✅ PASS | minio-sidecar is up and stable (0 restarts) |
-| ✅ PASS | minio-sidecar shares its service's live network namespace (net:[4026534416]) |
+| ✅ PASS | minio-sidecar shares its service's live network namespace (net:[4026534410]) |
 | ✅ PASS | redis-sidecar is up and stable (0 restarts) |
-| ✅ PASS | redis-sidecar shares its service's live network namespace (net:[4026534477]) |
+| ✅ PASS | redis-sidecar shares its service's live network namespace (net:[4026534469]) |
 | ✅ PASS | vault-sidecar is up and stable (0 restarts) |
-| ✅ PASS | vault-sidecar shares its service's live network namespace (net:[4026534672]) |
+| ✅ PASS | vault-sidecar shares its service's live network namespace (net:[4026534659]) |
 | ✅ PASS | backend-sidecar is up and stable (0 restarts) |
-| ✅ PASS | backend-sidecar shares its service's live network namespace (net:[4026534964]) |
+| ✅ PASS | backend-sidecar shares its service's live network namespace (net:[4026534581]) |
 | ✅ PASS | worker-sidecar is up and stable (0 restarts) |
-| ✅ PASS | worker-sidecar shares its service's live network namespace (net:[4026535130]) |
+| ✅ PASS | worker-sidecar shares its service's live network namespace (net:[4026534860]) |
 | ✅ PASS | frontend-sidecar is up and stable (0 restarts) |
-| ✅ PASS | frontend-sidecar shares its service's live network namespace (net:[4026535042]) |
+| ✅ PASS | frontend-sidecar shares its service's live network namespace (net:[4026534793]) |
 | ✅ PASS | puller-sidecar is up and stable (0 restarts) |
-| ✅ PASS | puller-sidecar shares its service's live network namespace (net:[4026535204]) |
+| ✅ PASS | puller-sidecar shares its service's live network namespace (net:[4026534996]) |
 
 **Result**
 

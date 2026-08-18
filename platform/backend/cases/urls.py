@@ -15,6 +15,7 @@ router.register("notes", views.NoteViewSet, basename="note")
 # Reverse-engineering workflow over carved regions.
 router.register("regions", reversing.CarvedRegionViewSet, basename="region")
 router.register("region-analyses", reversing.RegionAnalysisViewSet, basename="regionanalysis")
+router.register("worksets", reversing.ReWorksetViewSet, basename="workset")
 
 urlpatterns = [
     path("health/", views.health),

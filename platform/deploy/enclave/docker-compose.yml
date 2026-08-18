@@ -353,6 +353,11 @@ services:
       # Where VAULT reaches Postgres, written into the database engine's connection URL — its own
       # sidecar upstream with the mesh enforcing, the service name without it.
       IR_VAULT_DB_HOST: ${IR_DB_HOST_APP:-db}
+      # The infrastructure administrator's own login. Generated per deployment and written to
+      # deploy/.env, so whoever runs the stack can sign in to Vault as themselves rather than
+      # reaching for the root token.
+      IR_PLATFORM_ADMIN_USER: ${IR_PLATFORM_ADMIN_USER:-platform-admin}
+      IR_PLATFORM_ADMIN_PASSWORD: ${IR_PLATFORM_ADMIN_PASSWORD:-}
     volumes:
       - vault-certs:/certs:ro
       - vault-state:/vault/state
@@ -508,7 +513,10 @@ services:
     command: ["start-dev", "--import-realm"]
     environment:
       KC_BOOTSTRAP_ADMIN_USERNAME: "admin"
-      KC_BOOTSTRAP_ADMIN_PASSWORD: "admin"
+      # Generated per deployment by deploy.sh. A literal here is the same password in every
+      # deployment that clones this tree, on an admin API that mints identities the whole
+      # platform honours.
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KC_BOOTSTRAP_ADMIN_PASSWORD:?set by deploy.sh}
       KC_HTTP_ENABLED: "true"
       # The public base every OIDC leg uses. Keycloak derives its issuer from how it is
       # reached, so pinning it keeps the browser and back-channel legs on one issuer.
@@ -625,7 +633,9 @@ services:
       # internal address like the other server-to-server URLs above.
       - --backend-logout-url=http://keycloak:8080/realms/irplatform/protocol/openid-connect/logout?id_token_hint={id_token}
       - --client-id=ir-platform
-      - --client-secret=ir-platform-oidc-secret-dev
+      # Generated per deployment. Published as a literal it was half of the code-interception
+      # pair, the other half being the wildcard redirect this realm used to allow.
+      - --client-secret=${IR_OIDC_CLIENT_SECRET:?set by deploy.sh}
       - --redirect-url=${PLATFORM_PUBLIC_URL}/oauth2/callback
       - --http-address=0.0.0.0:4180
       - --reverse-proxy=true
@@ -1040,6 +1050,7 @@ services:
       # puller should ever talk to, so pinning it is stronger than trusting a public CA that
       # would vouch for anyone holding a certificate for that name.
       RECEIVER_CA_BUNDLE: /certs/receiver.crt
+      RECEIVER_PULLER_TOKEN: ${RECEIVER_PULLER_TOKEN}
       IR_API_URL: http://backend:8000
       S3_ENDPOINT_URL: ${IR_MINIO_ENDPOINT_APP:-http://minio:9000}
       IR_SYMBOLS_DIR: /symbols

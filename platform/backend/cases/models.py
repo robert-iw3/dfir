@@ -1035,6 +1035,14 @@ class RegionAnalysis(TimeStamped):
         "Investigation", related_name="region_analyses", on_delete=models.CASCADE,
         null=True, blank=True,
     )
+    # Which session produced this. Set when the region was in an open workset at the time,
+    # so the platform can answer what came out of a given session rather than only what is
+    # known about a region. SET_NULL: a workset can be tidied away; the determination is
+    # part of the investigation and outlives it.
+    workset = models.ForeignKey(
+        "ReWorkset", related_name="determinations", on_delete=models.SET_NULL,
+        null=True, blank=True,
+    )
 
     def save(self, *args, **kwargs):
         if self.investigation_id is None and self.region_id:
@@ -1047,6 +1055,70 @@ class RegionAnalysis(TimeStamped):
 
     def __str__(self):
         return f"{self.region_id}: {self.verdict} ({self.malware_family or 'unattributed'})"
+
+
+class ReWorkset(TimeStamped):
+    """A bounded selection of carved regions staged for one reverse-engineering session.
+
+    A host's carved bucket is the wrong unit to hand a human: parallel analysis carves regions
+    faster than anyone examines them, and a serious engagement produces hundreds. A disassembler
+    opened on all of them is a crash, and the twenty worth a person's time are indistinguishable
+    inside the pile. A workset names WHICH regions a session is for.
+
+    Scope stays one investigation and one host, because that is the wall the per-host carved
+    bucket already draws — a session sees one investigation's malware and nothing else.
+    """
+
+    ASSEMBLED = "assembled"      # selected, nothing pulled yet
+    STAGED = "staged"            # the mediator has pulled these regions for a session
+    CLOSED = "closed"            # the session is over; determinations are on the regions
+    STATES = [(s, s) for s in (ASSEMBLED, STAGED, CLOSED)]
+
+    # The cap is the feature: "stage everything" stays possible only by assembling more than
+    # one workset, deliberately. Raising it is a decision about what a disassembler can hold.
+    MAX_REGIONS = 50
+
+    slug = models.SlugField(max_length=64, unique=True)
+    investigation = models.ForeignKey(
+        "Investigation", related_name="re_worksets", on_delete=models.CASCADE)
+    host = models.ForeignKey("Host", related_name="re_worksets", on_delete=models.CASCADE)
+    created_by = models.CharField(max_length=128)
+    state = models.CharField(max_length=16, choices=STATES, default=ASSEMBLED, db_index=True)
+    note = models.TextField(blank=True)
+    staged_at = models.DateTimeField(null=True, blank=True)
+    closed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [models.Index(fields=["investigation", "state"])]
+
+    def __str__(self):
+        return f"{self.slug} ({self.host_id}, {self.state})"
+
+
+class ReWorksetRegion(TimeStamped):
+    """One region's membership of one workset.
+
+    A join rather than a copy: the same region can be examined in two sessions without its
+    bytes being duplicated, and the platform can answer which sessions have looked at it.
+    """
+
+    workset = models.ForeignKey(ReWorkset, related_name="members", on_delete=models.CASCADE)
+    region = models.ForeignKey(CarvedRegion, related_name="worksets", on_delete=models.CASCADE)
+    # Where the ranking put it when the workset was assembled, kept so a session's order is
+    # reproducible after the signals behind it have moved on.
+    rank = models.IntegerField(default=0)
+    added_by = models.CharField(max_length=128, blank=True)
+
+    class Meta:
+        ordering = ["rank", "id"]
+        constraints = [
+            models.UniqueConstraint(fields=["workset", "region"],
+                                    name="uniq_region_per_workset"),
+        ]
+
+    def __str__(self):
+        return f"{self.workset_id}:{self.region_id}"
 
 
 class RemediationAction(TimeStamped):

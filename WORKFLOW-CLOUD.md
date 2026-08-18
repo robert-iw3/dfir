@@ -23,7 +23,7 @@ flowchart TD
     AWS GuardDuty + full CloudTrail · GCP Audit/SCC
     Azure Activity/NSG/sign-in + Entra/M365 identity"]:::step
     B4 --> B5["③ adjudicate_cloud.py: normalize → verdict ladder
-    detectors (GuardDuty/SCC) + control-plane behaviour
+    detectors (GuardDuty/SCC) + control-plane behavior
     (IAM privesc · defense evasion · exposure) · data-plane
     exfil (S3/GCS bulk read · copy · M365 export) ·
     OAuth/inbox/directory · logging gaps · operator C2"]:::step
@@ -185,7 +185,7 @@ Beyond events, the workflow reads the identity **state** the investigation lands
 | **GCP IAM policy** (`normalize_gcp_iam_policy`)               | bindings granting `allUsers`/`allAuthenticatedUsers`                                                  | T1530     |
 | **GCP SA keys** (`normalize_gcp_sa_keys`)                     | user-managed service-account keys (long-lived credential / persistence risk)                          | T1098.001 |
 
-`principal_reachability.py` then builds the **blast radius** (`Blast_Radius_<stamp>.{json,md}`): per implicated principal (from `Principals.json`), the GCP roles it holds (privileged flagged), the CloudTrail actions it was observed making, and the adjudicated findings attributable to it - answering "what could they touch" and prioritising which principal to contain first.
+`principal_reachability.py` then builds the **blast radius** (`Blast_Radius_<stamp>.{json,md}`): per implicated principal (from `Principals.json`), the GCP roles it holds (privileged flagged), the CloudTrail actions it was observed making, and the adjudicated findings attributable to it - answering "what could they touch" and prioritizing which principal to contain first.
 
 ### Posture / exposure snapshot
 
@@ -249,7 +249,7 @@ All models are configurable (`IR_LLM_MODEL`). Output: `LLM_Incident_Review.{md,j
 ```bash
 cd test/
 pytest -v -k "cloud or flow or snapshot or terraform or docker or llm or custody or clock"   # cloud collection,
-# adjudication, control-plane behaviour, SaaS/identity, flow-log C2 confirmation, disk snapshots,
+# adjudication, control-plane behavior, SaaS/identity, flow-log C2 confirmation, disk snapshots,
 # evidence storage, logging pre-flight, and the ephemeral-container entrypoint
 ```
 

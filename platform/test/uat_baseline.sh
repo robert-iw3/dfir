@@ -65,9 +65,17 @@ RECV_ADDR="$(${RUNTIME} run --rm --network ir-dmzlink "${PROBE}" \
 
 # ------------------------------------------------------------- 2. collector identity
 say "Collector — identity is the machine's, not the container's"
+# Signed with the key the RECEIVER verifies against. Collecting without one produces a bundle
+# that can only be recorded unsigned, and the custody assertion below would then be satisfied by
+# a bundle whose origin was never checked.
+SIGN_KEY="$(${RUNTIME} exec -i ir-dmz_receiver_1 sh -c 'printf %s "${IR_CUSTODY_HMAC_KEY:-}"' 2>/dev/null || true)"
+[[ -n "${SIGN_KEY}" ]] \
+    && info "collection is signed with the key the receiver verifies against" \
+    || warn "no custody key from the receiver — the bundle will ship unsigned"
 ${RUNTIME} run --rm --privileged --pid=host --network none \
     -v /proc:/host/proc:ro -v /:/host/root:ro -v "${WORK}:/evidence:z" \
     -e IR_INCIDENT_ID=INC-UAT-BASELINE \
+    -e IR_CUSTODY_HMAC_KEY="${SIGN_KEY}" \
     localhost/ir-collector:latest >"${WORK}/collect.log" 2>&1
 COLLECT_LOG="$(cat "${WORK}/collect.log")"
 

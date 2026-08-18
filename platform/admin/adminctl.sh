@@ -6,11 +6,13 @@
 # while an admin is working and unreachable the rest of the time, which is a much smaller
 # window than leaving consoles published.
 #
-#   ./adminctl.sh up enclave          # MinIO console, Keycloak admin, Consul, Postgres
+#   ./adminctl.sh up enclave          # MinIO, Keycloak, Consul, Postgres, Vault, Boundary
 #   ./adminctl.sh up dmz              # receiver, headscale
 #   ./adminctl.sh up enclave --ttl 30m
 #   ./adminctl.sh status
 #   ./adminctl.sh down enclave|dmz|all
+#   ./adminctl.sh creds               # this deployment's generated credentials, from Vault
+#   ./adminctl.sh unseal              # Vault seals on every restart; this opens it
 #
 # Two forwarders exist rather than one because each joins only its own tier's network:
 # the DMZ forwarder has no route to an enclave service and the enclave forwarder has no
@@ -32,7 +34,9 @@ ok()   { printf '    %s✔%s %s\n' "$c_grn" "$c_off" "$1"; }
 warn() { printf '    %s!%s %s\n' "$c_ylw" "$c_off" "$1"; }
 die()  { printf '    %s✘%s %s\n' "$c_red" "$c_off" "$1" >&2; exit 1; }
 
-usage() { sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
+# Ends at the first non-comment line rather than a fixed line number, so extending the header
+# above cannot start printing code as usage.
+usage() { sed -n '2,/^[^#]/{/^[^#]/d;p;}' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
 
 [[ $# -ge 1 ]] || usage 1
 ACTION="$1"; shift || true
@@ -75,6 +79,12 @@ targets_enclave=(
     "18080=ir-enclave_keycloak_1:8080:ir-enclave_internal"  # Keycloak admin console
     "18501=ir-enclave_consul_1:8501:ir-enclave_internal"   # Consul UI (HTTPS, private CA)
     "15432=ir-enclave_db_1:5432:ir-enclave_internal"        # PostgreSQL (both stores)
+    # Vault's UI and API. Absent until now, which left the root token as the only human way in
+    # — sign in as platform-admin (deploy/.env) against the ir-admin policy instead.
+    "18200=ir-enclave_vault_1:8200:ir-enclave_internal"     # Vault UI + API
+    # The session farm and its controller: "the analyst cannot connect" is the failure this
+    # platform produces most, and answering it meant exec'ing into the broker to read a log.
+    "19200=ir-enclave_boundary_1:9200:ir-enclave_internal"  # Boundary API
 )
 
 # Address of a container on one specific network. Empty when it is not on that network —
@@ -166,6 +176,48 @@ status() {
     return 0
 }
 
+VAULT_C=ir-enclave_vault_1
+vault_exec() { ${RUNTIME} exec -e VAULT_ADDR=https://127.0.0.1:8200 \
+    -e VAULT_CACERT=/certs/vault-ca.crt.pem "$@" ; }
+
+# The credentials THIS deployment generated, read from Vault with the admin's own login. The
+# copy in deploy/.env is only on the host that ran the deploy, so an admin working anywhere else
+# had no way to obtain the credential a service is refusing.
+creds() {
+    ${RUNTIME} inspect "${VAULT_C}" >/dev/null 2>&1 \
+        || die "Vault is not running on this host — the setup credentials live in the enclave"
+    set -a; . "${DEPLOY}/.env" 2>/dev/null || true; set +a
+    local user="${IR_PLATFORM_ADMIN_USER:-platform-admin}" pw="${IR_PLATFORM_ADMIN_PASSWORD:-}" token
+    [[ -n "${pw}" ]] \
+        || die "IR_PLATFORM_ADMIN_PASSWORD is unset — run deploy.sh enclave to provision the admin"
+    say "Setup credentials · ir/setup (as ${user})"
+    # `|| true` because a failing login under `set -e` + pipefail aborts the assignment with
+    # Vault's own status and no message at all — the die below is what explains it.
+    local login_err
+    login_err="$(vault_exec -e AP="${pw}" "${VAULT_C}" sh -c \
+        "vault login -method=userpass -token-only username='${user}' password=\"\$AP\"" 2>&1 || true)"
+    token="$(printf '%s' "${login_err}" | tr -dc '[:print:]' | tail -1)"
+    if [[ "${token}" == *"denied"* || "${token}" == *rror* || -z "${token}" ]]; then
+        warn "$(printf '%s' "${login_err}" | tail -3)"
+        die "${user} could not log in to Vault — deploy.sh enclave provisions this account"
+    fi
+    vault_exec -e VT="${token}" "${VAULT_C}" sh -c 'VAULT_TOKEN=$VT vault kv get ir/setup' \
+        || die "could not read ir/setup — deploy.sh enclave is what writes it"
+    warn "live credentials were just printed to this terminal"
+}
+
+# Vault seals on every restart by design, and a sealed Vault answers health checks while serving
+# nothing. The unseal lives in the codebase; this is the admin's handle on it.
+unseal() {
+    ${RUNTIME} inspect "${VAULT_C}" >/dev/null 2>&1 || die "Vault is not running on this host"
+    say "Vault · unseal"
+    bash "${HERE}/../hashicorp/vault/vault-unseal.sh" || die "unseal failed — see the output above"
+    vault_exec "${VAULT_C}" sh -c 'vault status -format=json' 2>/dev/null \
+        | grep -q '"sealed": *false' \
+        && ok "Vault is unsealed and serving" \
+        || die "Vault is still sealed"
+}
+
 case "${ACTION}" in
     up)
         [[ "${TIER}" == "all" ]] && die "name a tier: up dmz|enclave (both at once is not the point)"
@@ -174,6 +226,8 @@ case "${ACTION}" in
         if [[ "${TIER}" == "all" ]]; then down_tier dmz; down_tier enclave
         else down_tier "${TIER}"; fi ;;
     status) status ;;
+    creds) creds ;;
+    unseal) unseal ;;
     -h|--help|help) usage 0 ;;
     *) usage 1 ;;
 esac

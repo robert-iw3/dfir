@@ -169,7 +169,7 @@ def _run(mwcp_mod, meta, parsers_to_run, file_path):
             report = mwcp_mod.run(pname, file_path=file_path)
             _extract_metadata(report.as_dict(), out)
         except Exception:
-            continue  # parser didn't match this file type -- expected behaviour
+            continue  # parser didn't match this file type -- expected behavior
     return out
 
 

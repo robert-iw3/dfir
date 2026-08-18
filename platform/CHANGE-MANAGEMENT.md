@@ -99,6 +99,21 @@ and on any file that is majority comment.
 an exposure wider than it needs to be, narrow it in the same change. Surplus permission never
 fails a test.
 
+**8. A vulnerability is closed by an assertion, not by a patch.** Every finding — from an
+assessment, a scan, or someone noticing — is fixed AND gets a test that fails if the weakness
+returns, in the same change. The test goes in the suite, so it runs in every regression from
+then on and a later refactor cannot quietly reopen what was closed.
+
+This is rule 2 applied to security, and it exists because security fixes decay differently from
+other work: the code that made an exploit possible is usually still nearby, the conditions that
+made it reachable come back, and nothing about a patched line announces what it was protecting.
+A fix with no assertion is indistinguishable from a fix that was reverted.
+
+**No release goes out with a known-unaddressed finding.** Addressed means one of: fixed with an
+assertion; refuted with the reasoning recorded; or **accepted, in writing, naming who accepted
+it and what would change the decision.** Silence is not a third option — an unresolved finding
+that nobody decided about is the one that reappears in an incident report.
+
 ---
 
 ## 3. Blast radius by change type
@@ -189,27 +204,36 @@ that is not listed here.
 
 ### Planning (`../planning/`, v1 scope unless marked otherwise)
 
+A plan whose track is delivered moves to `../archive/planning/` carrying a banner that says so.
+The tracker keeps the residue: an archived plan means the work is done, never that a leftover
+item was dropped.
+
 | Document | Claims |
 |---|---|
 | `ROADMAP-FORENSIC-PLATFORM.md` | Roadmap and delivery status |
 | `CONSOLIDATED-BACKLOG.md` | Every open item for v1 |
-| `BACKLOG.md` | Detection and engine backlog |
 | `DECISIONS.md` | Design decisions and their reasoning |
-| `SEQUENCE.md` | Delivery order |
-| `NEXT-SESSION.md` | Immediate next work |
-| `SCALE-50-WORKSTATIONS.md` | Fleet scale: sessions, distribution, measured limits |
-| `PARALLEL-ANALYSIS-CAPACITY.md` | Concurrent analysis capacity |
-| `STORAGE-TIERING.md`, `enterprise_storage_roadmap.md` | Evidence storage tiers and growth |
+| `PARALLEL-ANALYSIS-CAPACITY.md`, `SCALE-WORKERS-MEMORY-ANALYSIS.md` | Concurrent analysis capacity; W5/W6 remain |
+| `enterprise_storage_roadmap.md` | Evidence storage growth |
 | `DATA-PIPELINE.md` | Ingest through analysis |
-| `EVIDENCE-SCHEMA-INTEGRITY.md` | Schema and integrity constraints |
-| `CORRELATION-ENGINE-V2.md`, `CORRELATION-UI-PHASE.md` | Correlation engine and its UI |
-| `CASE-MANAGEMENT-UI.md`, `platform_ui_roadmap.md` | Case management and UI roadmap |
-| `VISUALIZATION.md` | Per-page visualization track |
-| `LINUX-ENDPOINT-COVERAGE.md`, `COLLECTOR-DEPLOYMENT.md` | Endpoint coverage and collector rollout |
-| `KEYCLOAK-POSTGRES.md` | Identity store on the platform database |
+| `CORRELATION-UI-PHASE.md` | Correlation phase sequencing; its DCO track is open |
+| `CORRELATION-ENGINE-V3.md` | Track C3: direction, rejected alternatives, sufficiency, absence, calibration |
+| `API-EXPOSURE-HARDENING.md` | Track H: what the API is exposed to, why not a WAF, and the per-principal limits that follow |
+| `SECURITY-ASSESSMENT-2026-08.md` | Track SEC: the 2026-08-16 assessment, post-refutation, and the workstreams that close it |
+| `platform_ui_roadmap.md` | UI roadmap |
+| `COLLECTOR-DEPLOYMENT.md` | Collector rollout |
 | `WEB-SERVER-SRG.md` | Web Server SRG implementation track |
 | `PROJECTION-INTEGRATION.md` | The sealed one-way projection to DCO |
+| `OBSERVABILITY.md` | Track O: the log forwarder (v1) and the optional dashboard (v2) |
+| `ADMIN-WORKSTATION.md` | **v2** — the administrator's console and its brokered reach |
+| `ORCHESTRATION-NOMAD.md` | **v2** — Nomad as the scheduler, and shipping a fix to a running deployment |
 | `PLATFORM-V2-VISION.md` | **Not planned work** — explicitly out of v1 |
+
+Delivered and archived to `../archive/planning/`: `BACKLOG.md`, `SEQUENCE.md`,
+`NEXT-SESSION.md`, `SCALE-50-WORKSTATIONS.md`, `STORAGE-TIERING.md`,
+`EVIDENCE-SCHEMA-INTEGRITY.md`, `CORRELATION-ENGINE-V2.md`, `CASE-MANAGEMENT-UI.md`,
+`VISUALIZATION.md`, `LINUX-ENDPOINT-COVERAGE.md`, `KEYCLOAK-POSTGRES.md`,
+`REPORT-BUILDER.md`, `RE-WORKSTATIONS-SCALE.md`.
 
 ---
 
@@ -283,6 +307,19 @@ rsync lists only what it would transfer and `--delete` never removes an excluded
 - [ ] `git status` in the mirror shows only what the sync intended; the commit lands on a
       branch, and **pushing is a separate, deliberate act** that never happens in the same
       breath as the sync.
+
+### Security (rule 8)
+- [ ] Every finding this change touches is **addressed**: fixed with an assertion, refuted with
+      the reasoning recorded, or accepted in writing with who accepted it and what would change
+      the decision. An open finding nobody decided about does not ship.
+- [ ] Each fix carries a test that **fails if the weakness returns**, in the suite rather than
+      run by hand — a security fix with no assertion is indistinguishable from one reverted.
+- [ ] The assertion targets the weakness, not the symptom: it exercises the path an attacker
+      would take, so a refactor that reopens the hole by another route still fails it.
+- [ ] `uat_security.sh` runs in the regression, and the scans it wraps report what they could
+      NOT check — a scanner that silently skipped half the tree reads as a clean result.
+- [ ] A newly reachable surface (a route, a port, a mount, a credential, a parser) is named in
+      the threat model it belongs to, not only in the change log.
 
 ---
 

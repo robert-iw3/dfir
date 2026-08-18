@@ -2,7 +2,7 @@
 
 *What passing proves:* A campaign that dwells for 238 days correlates as one, with four members carrying no movement record and every indicator rotated away — while two unrelated endpoints running the same unsanctioned tool 190 days apart stay separate, and the host whose delivery evidence aged out reports that it could not be established rather than that nothing was found.
 
-- Run: `uat_corpus_slow.sh` — 2026-08-15 00:43:18Z
+- Run: `uat_corpus_slow.sh` — 2026-08-17 23:02:48Z
 
 **Preconditions**
 
@@ -23,6 +23,7 @@
 
 | Result | Assertion — with evidence |
 |---|---|
+| · | collections are signed with the key the enclave verifies against |
 | ✅ PASS | all 20 bundles collected, sealed and accepted by the receiver |
 
 **Ingest — the puller delivers all 20 runs**
@@ -107,7 +108,7 @@
 
 | Result | Assertion — with evidence |
 |---|---|
-| · | deployment host population at correlation time: 140 |
+| · | deployment host population at correlation time: 141 |
 | ✅ PASS | INC-CORPUS-A still classifies 12 compromised with a fourth fleet present |
 | ✅ PASS | no INC-CORPUS-A campaign reaches a Glass Heron endpoint |
 | ✅ PASS | INC-CORPUS-B still classifies 4 compromised with a fourth fleet present |

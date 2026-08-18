@@ -764,7 +764,7 @@ a, b = runs.get("INC-CORPUS-A"), runs.get("INC-CORPUS-B")
 fps = list(CampaignFingerprint.objects.filter(run__in=[r for r in (a, b) if r]))
 chk(bool(fps), f"every campaign got a fingerprint ({len(fps)})")
 
-# Built from BEHAVIOUR. Quiet Fox rotated every indicator per host, so if a fingerprint
+# Built from BEHAVIOR. Quiet Fox rotated every indicator per host, so if a fingerprint
 # were resting on indicators it would have nothing to say about that campaign at all.
 qfp = [f for f in fps if b and f.run_id == b.id]
 chk(bool(qfp) and any(f.techniques for f in qfp),
@@ -858,7 +858,7 @@ else:
     seq = fp.get("technique_sequence") or []
     chk(bool(seq), f"the API serves the technique SEQUENCE, not only the id-sorted set ({len(seq)})")
     chk(seq and seq != sorted(seq),
-        f"and it is a real order rather than the set relabelled ({' > '.join(seq[:4])}...)")
+        f"and it is a real order rather than the set relabeled ({' > '.join(seq[:4])}...)")
     chk(seq and seq[0].startswith("T1566"),
         f"which starts at the initial access the scenario planted ({seq[0] if seq else '-'})")
 

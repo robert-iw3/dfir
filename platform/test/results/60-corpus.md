@@ -2,7 +2,7 @@
 
 *What passing proves:* 25 real collector runs — 16 compromised across two investigations, 9 clean, fleet-wide benign noise on all — ship, ingest, analyze and correlate through the production path; clean hosts classify clean and join no campaign.
 
-- Run: `uat_corpus.sh` — 2026-08-15 00:20:44Z
+- Run: `uat_corpus.sh` — 2026-08-17 22:40:26Z
 
 **Preconditions**
 
@@ -69,14 +69,14 @@
 | ✅ PASS | the Ember/miner pair was CONSIDERED — the shared fleet-wide account makes it a candidate (20 pairs) |
 | ✅ PASS | every Ember/miner candidate was DECLINED — G2 closed by weighting, not by absence |
 | ✅ PASS | the ubiquitous helpdesk account is in the behavior graph |
-| ✅ PASS | the fleet-wide account cannot link a pair BY ITSELF (contributes 0.175 at best, under 0.35; rarity 0.390 across 20 carriers of 140 deployment hosts) |
-| ✅ PASS | declined weights sit below the threshold (heaviest 0.2143 < 0.35) |
+| ✅ PASS | the fleet-wide account cannot link a pair BY ITSELF (contributes 0.176 at best, under 0.35; rarity 0.391 across 20 carriers of 141 deployment hosts) |
+| ✅ PASS | declined weights sit below the threshold (heaviest 0.2148 < 0.35) |
 | ✅ PASS | Ember's own pairs LINK on their real evidence (37 at or above threshold) |
 | ✅ PASS | every link decomposes into all four named factors plus their product |
-| ✅ PASS | campaign pz=WS-007: cohesion_min equals its weakest internal link (0.4631) |
+| ✅ PASS | campaign pz=WS-007: cohesion_min equals its weakest internal link (0.4637) |
 | ✅ PASS | campaign pz=DC-01: cohesion_min equals its weakest internal link (0.9998) |
-| ✅ PASS | campaign pz=WS-012: cohesion_min equals its weakest internal link (0.4482) |
-| ✅ PASS | the miner campaign scores visibly weaker than Ember (mean 0.4482 vs 0.5825; min 0.4482 vs 0.4631) |
+| ✅ PASS | campaign pz=WS-012: cohesion_min equals its weakest internal link (0.4483) |
+| ✅ PASS | the miner campaign scores visibly weaker than Ember (mean 0.4483 vs 0.5829; min 0.4483 vs 0.4637) |
 | ✅ PASS | the miner rests on shared indicators alone (['indicator']) |
 | ✅ PASS | Ember rests on observed movement as well (['artifact', 'movement']) |
 | ✅ PASS | Quiet Fox links are carried by tradecraft and movement, never a shared indicator (['artifact', 'movement']) |

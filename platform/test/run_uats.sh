@@ -40,6 +40,7 @@ SUITE=(
     "baseline:ir-enclave_backend_1 ir-dmz_receiver_1"
     "srg_webtier:ir-enclave_traefik_1"
     "audit:ir-enclave_backend_1 ir-enclave_boundary_1"
+    "security:ir-enclave_backend_1 ir-dmz_receiver_1"
     "load:ir-enclave_backend_1 ir-dmz_distributor_1"
     "corpus:ir-enclave_worker_1 ir-dmz_receiver_1"
     "corpus_linux:ir-enclave_worker_1 ir-dmz_receiver_1"
@@ -87,6 +88,35 @@ if [[ -n "${ONLY}" ]]; then
         }
     done
 fi
+# A regression answers what only the running platform can. Anything answerable from the tree —
+# a stale code graph, a narrative comment — is answered here in seconds instead of hours into
+# the run. Globbed rather than listed so a new gate is picked up without editing this.
+preflight() {
+    local rc=0 gate name
+    say "Preflight — static gates"
+    for gate in "${PLATFORM}"/ci/*-check.sh; do
+        [[ -f "${gate}" ]] || continue
+        name="$(basename "${gate}" .sh)"
+        if bash "${gate}" >"${LOGDIR}/preflight_${name}.log" 2>&1; then
+            printf '\033[1;32m  PASS %s\033[0m\n' "${name}"
+        else
+            rc=1
+            printf '\033[1;31m  FAIL %s — see test/logs/preflight_%s.log\033[0m\n' "${name}" "${name}"
+            sed -e 's/\x1b\[[0-9;]*m//g' "${LOGDIR}/preflight_${name}.log" 2>/dev/null \
+                | grep -iE 'fail|error|stale|missing|finding' | head -4 | sed 's/^/       /'
+        fi
+    done
+    return "${rc}"
+}
+
+if [[ "${IR_UAT_SKIP_PREFLIGHT:-0}" == "1" ]]; then
+    printf '\033[1;33m  preflight skipped (IR_UAT_SKIP_PREFLIGHT=1)\033[0m\n'
+elif ! preflight; then
+    printf '\n\033[1;31mpreflight failed — fix the tree before spending the suite on it\033[0m\n' >&2
+    printf 'IR_UAT_SKIP_PREFLIGHT=1 to run anyway.\n' >&2
+    exit 2
+fi
+
 START_ALL=$(date +%s)
 
 for entry in "${SUITE[@]}"; do
@@ -117,8 +147,12 @@ for entry in "${SUITE[@]}"; do
     # `grep -c` already prints 0 when nothing matches AND exits 1, so a `|| echo 0`
     # fallback appends a SECOND line and every later comparison sees "0\n0". `tail -1`
     # keeps one line and masks the exit status, which is the only failure mode here.
-    p="$(grep -c '^  .*PASS' "${LOGDIR}/uat_${name}.log" 2>/dev/null | tail -1)"
-    f="$(grep -c '^  .*FAIL' "${LOGDIR}/uat_${name}.log" 2>/dev/null | tail -1)"
+    # A suite's own closing banner ("<NAME> UAT FAILED") matches the same shape as an assertion
+    # and was counted as one, so every failing suite reported one more failure than it had.
+    p="$(grep -E '^  .*PASS' "${LOGDIR}/uat_${name}.log" 2>/dev/null \
+         | grep -cvE '(UAT|SUITE) PASSED' | tail -1)"
+    f="$(grep -E '^  .*FAIL' "${LOGDIR}/uat_${name}.log" 2>/dev/null \
+         | grep -cvE '(UAT|SUITE) FAILED' | tail -1)"
     if [[ "${p:-0}" -eq 0 ]]; then
         # A run that asserted NOTHING neither passed nor failed, whatever it exited with, and both
         # directions of that mistake are misleading. `uat_mesh_multihost` exits 0 on a single-host

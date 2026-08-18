@@ -2,7 +2,7 @@
 
 *What passing proves:* Two intrusions running at the same time, sharing commodity tooling and one victim host, separate into TWO campaigns rather than merging into one; the shared tools link nothing on their own; the shared victim belongs to both; and a host renamed mid-campaign stays one host.
 
-- Run: `uat_corpus_twin.sh` — 2026-08-15 00:49:49Z
+- Run: `uat_corpus_twin.sh` — 2026-08-17 23:09:03Z
 
 **Preconditions**
 
@@ -23,6 +23,7 @@
 
 | Result | Assertion — with evidence |
 |---|---|
+| · | collections are signed with the key the enclave verifies against |
 | ✅ PASS | all 26 bundles collected, sealed and accepted by the receiver |
 
 **Ingest — the puller delivers all 26 runs**
